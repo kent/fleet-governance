@@ -385,25 +385,70 @@ in `gcs.py` is wrapped, so that exception propagates all the way up through
 a port. This is why `STORAGE_EMULATOR_HOST` has to default to something
 usable rather than being left unset by default.
 
-### `STORAGE_EMULATOR_HOST` couldn't be scoped strictly to the `offline` compose profile
+### `STORAGE_EMULATOR_HOST`: moved from a profile-gated default to a separate overlay file (fix round 1)
 
-The brief's framing was "under the `offline` profile, also
-`STORAGE_EMULATOR_HOST=http://fake-gcs:4443`", implying it should only
-apply when `--profile offline` is active. Compose profiles gate whether a
-*service* starts, not individual env vars within one always-on service
-definition, and there's no conditional syntax to add one env var to
-`cpls` only when a given profile is requested. Given the crash mode
-above, leaving `STORAGE_EMULATOR_HOST` unset by default was not an
-option (it would crash-loop `docker compose up` with no profile and no
-real credentials configured). Instead, `infra/docker-compose.yml`'s
-`cpls` service defaults it to the fake-gcs address via
-`${STORAGE_EMULATOR_HOST:-http://fake-gcs:4443}` and documents the
-override in `infra/.env.example`. To use real GCS: set
-`STORAGE_EMULATOR_HOST=` (blank) and `GCS_CREDENTIALS_FILE=/path/to/real-key.json`
-in `infra/.env`, set `GCS_BUCKET_NAME` to the real bucket, and run
-`docker compose up` **without** `--profile offline` (fake-gcs then never
-starts, which is fine since nothing points at it once
-`STORAGE_EMULATOR_HOST` is blank).
+The first pass of this task set `STORAGE_EMULATOR_HOST` on `cpls` with a
+compose-level default, `${STORAGE_EMULATOR_HOST:-http://fake-gcs:4443}`,
+reasoning that Compose profiles gate whether a *service* starts, not
+individual env vars within one always-on service, so there's no
+conditional syntax to add one env var to `cpls` only when a profile is
+requested, and the crash mode above (see previous section) ruled out
+leaving it unset by default. Code review correctly flagged this as wrong
+regardless: it meant `STORAGE_EMULATOR_HOST` was set even on a plain
+`docker compose up` with no profile requested at all, so a real-GCS run
+had to explicitly override it, and the `${VAR:-default}` form makes an
+empty override (`STORAGE_EMULATOR_HOST=`) impossible to distinguish from
+"unset, use the default" (both render as the fake-gcs URL).
+
+Fixed per controller ruling by switching from a profile to a **second
+compose file used as an overlay**, which Compose merges on top of the
+base file rather than gating a single service's fields conditionally:
+- `infra/docker-compose.yml` (base) now describes the real-GCS
+  configuration: no `STORAGE_EMULATOR_HOST` anywhere, and no `fake-gcs`
+  service. `cpls`'s `GOOGLE_APPLICATION_CREDENTIALS`/`GCS_CREDENTIALS_FILE`
+  wiring is unchanged. Booting the base file alone without real
+  credentials configured now fails cpls's healthcheck (expected; there's
+  no local fallback in this file), rather than silently defaulting to an
+  emulator.
+- `infra/docker-compose.offline.yml` (new) adds the `fake-gcs` service
+  (moved here verbatim, `profiles:` key dropped since it's no longer
+  needed) and an override for `cpls` that adds
+  `STORAGE_EMULATOR_HOST: http://fake-gcs:4443` (a fixed value now, not
+  env-driven) and `depends_on.fake-gcs: condition: service_started`
+  (`fake-gcs` has no healthcheck, so `service_started` is the strongest
+  available condition).
+- Local/offline runs now use two `-f` flags:
+  `docker compose -f infra/docker-compose.yml -f infra/docker-compose.offline.yml up -d`.
+  Compose merges the two files' `services.cpls` maps key by key
+  (confirmed below), so the override only needs to state the two keys
+  that actually change; everything else from the base `cpls` definition
+  (ports, the rest of `environment`, `volumes`, `healthcheck`,
+  `depends_on.dao-node`) passes through untouched.
+
+Verified both renders with `docker compose ... config`:
+
+```
+$ docker compose -f docker-compose.yml config | grep -n "^  cpls:\|^  fake-gcs:\|STORAGE_EMULATOR_HOST"
+24:  cpls:
+# (no fake-gcs, no STORAGE_EMULATOR_HOST anywhere in the output)
+
+$ docker compose -f docker-compose.yml -f docker-compose.offline.yml config | grep -n "^  cpls:\|^  fake-gcs:\|STORAGE_EMULATOR_HOST"
+24:  cpls:
+46:      STORAGE_EMULATOR_HOST: http://fake-gcs:4443
+114:  fake-gcs:
+```
+
+And confirmed the `depends_on` maps merge by service name rather than
+one file's `depends_on` replacing the other's: the two-file render's
+`cpls.depends_on` has **both** `dao-node: {condition: service_healthy}`
+(from the base file) and `fake-gcs: {condition: service_started}` (from
+the overlay).
+
+To use real GCS: set `GCS_CREDENTIALS_FILE=/path/to/real-key.json` and
+`GCS_BUCKET_NAME` to the real bucket in `infra/.env`, and run
+`docker compose up` (base file only, no `-f infra/docker-compose.offline.yml`).
+`STORAGE_EMULATOR_HOST` no longer exists as an env var to override at
+all; it's simply absent from the real-GCS path now.
 
 ### No literal `sync_daonode` job type exists in `cpls/jobs.py`; `job.type` is a free-form label
 
@@ -538,10 +583,12 @@ the template's `deployments.<CONTRACT_DEPLOYMENT>:` key and CPLS's own
 
 ### Blocking dao-node regression found and worked around: fake token/gov addresses have no ABI anywhere
 
-Bringing the full stack up under `--profile offline` failed before CPLS
-was even reachable: `dao-node` crashed on every boot (container exited
-1, `docker compose ps` showed `Error dependency dao-node failed to
-start`). `infra/.env` (gitignored, not `.env.example`) had
+Bringing the full stack up (this was discovered before the overlay file
+existed, back when local/offline mode was still a compose profile)
+failed before CPLS was even reachable: `dao-node` crashed on every boot
+(container exited 1, `docker compose ps` showed `Error dependency
+dao-node failed to start`). `infra/.env` (gitignored, not `.env.example`)
+had
 `TOKEN_ADDRESS=0x1000000000000000000000000000000000000001` and
 `GOVERNOR_ADDRESS=0x1000000000000000000000000000000000000002` left over
 from Task 3's own verification (matching the addresses recorded in this
@@ -601,7 +648,13 @@ This is flagged as a concern in the task report rather than fixed at the
 source, since `dao-node/abis`'s population strategy belongs to Task 3/6,
 not this task.
 
-### Verification commands and outputs
+### Verification commands and outputs (initial pass, superseded below)
+
+This transcript is from before the fix-round-1 change from a compose
+profile to `infra/docker-compose.offline.yml` (see above), kept as an
+accurate historical record; the commands below use the profile syntax
+that no longer exists. See "Verification commands and outputs (fix round
+1: overlay)" further down for the current, working commands.
 
 ```
 $ cd infra && docker compose --profile offline up -d --build
@@ -656,16 +709,65 @@ $ curl -s http://localhost:8001/health
 {"status":"healthy","queue_size":0,"total_jobs":3,"current_job":"..."}
 ```
 
+### Verification commands and outputs (fix round 1: overlay)
+
+Re-ran the same end-to-end check after switching from the compose
+profile to `infra/docker-compose.offline.yml`, from a clean state (no
+containers running). The two local, gitignored ABI placeholder files
+from the earlier dao-node blocker were still present on disk, so
+dao-node came up healthy on the very first attempt this time:
+
+```
+$ docker compose -f docker-compose.yml -f docker-compose.offline.yml up -d --build
+...
+ Container infra-anvil-1 Healthy
+ Container infra-dao-node-1 Healthy
+ Container infra-cpls-1 Starting
+ Container infra-cpls-1 Started
+$ docker compose -f docker-compose.yml -f docker-compose.offline.yml ps
+NAME               STATUS
+infra-anvil-1      Up (healthy)
+infra-cpls-1       Up (healthy)
+infra-dao-node-1   Up (healthy)
+infra-fake-gcs-1   Up
+infra-postgres-1   Up (healthy)
+
+$ ./scripts/create-fake-bucket.sh
+create-fake-bucket: created bucket fleet-archive-dev
+
+$ curl -s -X POST localhost:8001/jobs -H 'content-type: application/json' -d @sync-daonode-job.json
+{"job_id":"86c5da1c-64d5-4733-8aea-81044e4df805","status":"queued"}
+$ curl -s http://localhost:8001/jobs/86c5da1c-64d5-4733-8aea-81044e4df805
+{"id":"86c5da1c-...","type":"sync_daonode","status":"completed","error":null,...}
+
+$ curl -s "http://localhost:4443/storage/v1/b/fleet-archive-dev/o" | python3 -c "import json,sys; [print(i['name'], i['size']) for i in json.load(sys.stdin)['items']]"
+data/fleet/proposal_list.full.ndjson 0
+data/fleet/proposal_list.full.ndjson.gz 20
+data/fleet/proposal_list/dao_node/raw.ndjson 0
+data/fleet/proposal_list/dao_node/raw.ndjson.gz 20
+jobs/sync_daonode/20260914_061638_86c5da1c-64d5-4733-8aea-81044e4df805.json 881
+
+$ docker compose -f docker-compose.yml -f docker-compose.offline.yml down
+ ...all containers and the network removed cleanly...
+```
+
+Same object set as the initial pass (minus the scheduler's own
+`jobs/scheduled/...` record, since this run was torn down before the
+1-minute scheduler interval elapsed), confirming the overlay produces
+identical archive behavior to the old profile-based setup, just without
+`STORAGE_EMULATOR_HOST` leaking into the real-GCS (base-file-only) path.
+
 ### Switching to real GCS
 
 Set in `infra/.env`:
 - `GCS_CREDENTIALS_FILE=/absolute/path/to/service-account.json` (a real
   service-account key with write access to the target bucket)
 - `GCS_BUCKET_NAME=<real-bucket-name>`
-- `STORAGE_EMULATOR_HOST=` (blank; overrides the fake-gcs default)
 
-Then run `docker compose up` **without** `--profile offline` (fake-gcs
-then never starts). No source or Dockerfile change needed; `cpls/gcs.py`
+Then run `docker compose up` (base file only, no
+`-f infra/docker-compose.offline.yml`); there is no `STORAGE_EMULATOR_HOST`
+to unset anymore since fix round 1, it simply isn't part of the base
+file's `cpls` environment. No source or Dockerfile change needed; `cpls/gcs.py`
 already falls through to plain `storage.Client()` reading
 `GOOGLE_APPLICATION_CREDENTIALS` (which compose sets to
 `/secrets/gcs.json`, the bind-mount target of `GCS_CREDENTIALS_FILE`)

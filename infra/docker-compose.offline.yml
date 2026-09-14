@@ -1,0 +1,25 @@
+# Local/offline overlay: local stand-in for the GCS archive bucket used by
+# cpls (infra/docker-compose.yml's base cpls service targets real GCS).
+# Use with the base file, not on its own:
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.offline.yml up -d
+#
+# This adds fake-gcs and points cpls at it via STORAGE_EMULATOR_HOST, which
+# google-cloud-storage's Client() reads directly: when set, it swaps in
+# AnonymousCredentials instead of resolving GOOGLE_APPLICATION_CREDENTIALS/ADC,
+# so the base file's /dev/null credentials placeholder is never actually
+# parsed while this overlay is applied.
+services:
+  cpls:
+    environment:
+      STORAGE_EMULATOR_HOST: http://fake-gcs:4443
+    depends_on:
+      fake-gcs:
+        condition: service_started
+
+  # infra/scripts/create-fake-bucket.sh creates the bucket cpls writes to
+  # once this is up.
+  fake-gcs:
+    image: fsouza/fake-gcs-server
+    command: ["-scheme", "http", "-port", "4443", "-public-host", "localhost:4443", "-external-url", "http://localhost:4443"]
+    ports:
+      - "${FAKE_GCS_PORT:-4443}:4443"

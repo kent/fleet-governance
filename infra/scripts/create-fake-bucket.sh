@@ -1,8 +1,10 @@
 #!/bin/sh
-# Creates the CPLS archive bucket in the offline fake-gcs-server container.
-# Idempotent: a second run against an already-created bucket is treated as
-# success, not an error. Task 6's bootstrap script is expected to call this
-# after bringing up the "offline" compose profile.
+# Creates the CPLS archive bucket in the local fake-gcs-server container
+# (infra/docker-compose.offline.yml, layered on top of the base
+# infra/docker-compose.yml). Idempotent: a second run against an
+# already-created bucket is treated as success, not an error. Task 6's
+# bootstrap script is expected to call this after bringing up the stack with:
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.offline.yml up -d
 set -eu
 
 HOST="${FAKE_GCS_HOST:-http://localhost:4443}"
