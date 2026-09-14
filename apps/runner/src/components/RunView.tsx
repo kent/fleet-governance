@@ -92,6 +92,10 @@ export default function RunView({ runId }: { runId: string }) {
     <main>
       <h1>Run {state.runId}</h1>
       <p>
+        <a href={`/runs/${state.runId}/briefing`}>What the fleet was told</a> ·{" "}
+        <a href={`/runs/${state.runId}/report`}>Report</a>
+      </p>
+      <p>
         <strong>Stage:</strong> {state.stage ?? "unknown"}
         {state.stageUpdatedAt ? ` (updated ${state.stageUpdatedAt})` : ""}
       </p>
