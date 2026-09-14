@@ -32,9 +32,11 @@ traces back to a real agent seat, never to an outside address.
 The public record of tasks, charters, and fleet decisions. Holds no funds. An `operator` opens
 tasks with a charter and a lifetime; the fleet's `timelock` (and only the timelock, reachable only
 through a successful governor proposal and vote) records decisions against an open task through
-`recordDecision`; a `guardian` can pause new decisions and stop individual tasks. A recorded
-decision means the fleet decided by vote, not that anything downstream obeyed it: offchain
-enforcement of a decision is out of scope for this contract.
+`recordDecision`; a `guardian` can pause and unpause the ledger and cancel queued timelock
+operations, and can do nothing else. Stopping a task is a `STOP_TASK` decision the fleet votes for,
+or the operator's `completeTask`, and the guardian can reach neither. A recorded decision means the
+fleet decided by vote, not that anything downstream obeyed it: offchain enforcement of a decision is
+out of scope for this contract.
 
 ### FleetHook
 
@@ -42,11 +44,12 @@ Every fleet-specific governance rule, attached to the unmodified `AgoraGovernor`
 system (permission mask `0x22C0`: `beforePropose`, `afterPropose`, `beforeVote`,
 `beforeVoteSucceeded`) instead of by forking the governor. `beforePropose`/`afterPropose` restrict
 proposals to a single `TaskLedger.recordDecision` call against an open, unexpired task with the
-right charter version; `beforeVote` restricts voting to members with a nonzero balance at the
-proposal snapshot; `beforeVoteSucceeded` implements the fleet's for-only-quorum rule (For must
-reach quorum on its own and exceed Against, Abstain does not count toward passing). The contract
-is deployed via a mined CREATE2 salt so its address carries exactly the permission bits the
-governor's hook dispatcher checks.
+right charter version; `beforeVote` restricts voting to members with nonzero delegated voting power
+at the proposal snapshot, which is not the same as a nonzero balance (a member who delegated its
+unit away still holds the balance and cannot vote); `beforeVoteSucceeded` implements the fleet's
+for-only-quorum rule (For must reach quorum on its own and exceed Against, Abstain does not count
+toward passing). The contract is deployed via a mined CREATE2 salt so its address carries exactly
+the permission bits the governor's hook dispatcher checks.
 
 `AgoraGovernor` and `TimelockController` themselves are vendored, unmodified upstream code (see
 Pins, below); this repository only wires them together and layers `FleetHook` on top.
@@ -118,12 +121,21 @@ network that holds anything of value. `deployments/configs/local-5.json` uses An
 accounts 1 through 5 as the five fleet members, account 6 as the operator, and account 7 as the
 guardian.
 
-The deploy script writes `deployments/<chainId>/latest.json` (`deployments/31337/latest.json` for
-this local run) and prints the six contract addresses; `VerifyDeployment.s.sol` re-reads that
-manifest and asserts every post-condition the deployment sequence promises (hook/governor cross-
-wiring, permission bits, admin/manager zeroed, timelock roles, token supply and member voting
-power, governor parameters, and the governor's on-chain codehash), printing `VERIFIED` when they
-all hold. See `docs/compatibility-notes.md` for the addresses this exact run produced, why they
+The deploy script writes two byte-identical files, `deployments/<chainId>/latest.json` (the pointer
+the next deployment overwrites) and `deployments/<chainId>/<deploymentTimestamp>.json` (the
+archive), and prints the six contract addresses. Setting `FLEET_MANIFEST_OUT` redirects the manifest
+to that path and skips the archive, for throwaway runs.
+
+`VerifyDeployment.s.sol` re-reads a manifest and asserts every post-condition the deployment
+sequence promises: hook, governor, registry, ledger, and token cross-wiring; the hook's permission
+bits; admin and manager zeroed; timelock roles and minimum delay; the ledger's operator, guardian,
+and maximum task lifetime; the registry's member list against the manifest's; token supply and
+per-member voting power; governor parameters; and the on-chain codehash of all six contracts. It
+prints `VERIFIED` when they all hold. Every check either passes or reverts with a message naming it.
+The one check with a timing precondition, per-member voting power, needs the chain's clock to have
+moved past the block the deployment landed in; if it has not, the verifier reverts with
+`clock has not advanced past deployment; retry in a moment` rather than skipping the check, so
+`VERIFIED` never means "everything except that one". See `docs/compatibility-notes.md` for the addresses this exact run produced, why they
 are deterministic for a fresh Anvil with this deployer, and what the broadcast looked like under
 `vm.startBroadcast` for the governor's `create` and the hook's CREATE2 deployment.
 

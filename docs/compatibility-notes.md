@@ -464,7 +464,7 @@ the predicted and actual addresses were equal under broadcast. `p.create2Deploye
 (forge-std's `0x4e59b44847b379578588920cA78FbF26c0B4956C`, pre-deployed on Anvil) makes
 `HookMiner` search for a salt using the same deployer address Foundry's own `new X{salt: ...}`
 CREATE2 routing uses under `vm.startBroadcast`, so the two computations agree. The deployed hook
-address is `0xFE1Bf729317E6EAa74D91B3223964aA6EE0322C0`, whose low 16 bits (`0x22C0`) match
+address is `0x2Fa096005b0f85E26177C97c306AA0159e1c22C0`, whose low 16 bits (`0x22C0`) match
 `FleetHook.PERMISSION_MASK` exactly, and `broadcast/.../run-latest.json` records this transaction
 with `"transactionType": "CREATE2"`.
 
@@ -472,8 +472,10 @@ with `"transactionType": "CREATE2"`.
 
 Ran twice, on two independently started, fresh Anvil instances (`anvil --block-time 2 --port 8599
 --silent`), with the same deployer key (Anvil default account 0) and the same
-`deployments/configs/local-5.json`. Both runs produced byte-identical manifests
-(`diff` of the two `deployments/31337/latest.json` outputs was empty). This is expected: every
+`deployments/configs/local-5.json`. Both runs produced manifests differing only in
+`deploymentBlock` and `deploymentTimestamp`, which record when the run happened; every address,
+code hash, and the mined `hookSalt` were identical (`diff` of the two `deployments/31337/latest.json`
+outputs showed those two lines and nothing else). This is expected: every
 address below is either a `CREATE` address (a pure function of the deployer address and its nonce
 at that point) or the `CREATE2` hook address (a pure function of the factory address, the mined
 salt, and the init code hash), and both are fully determined by replaying the same sequence from
@@ -492,22 +494,28 @@ with `cast nonce 0xf39Fd6...92266 --rpc-url http://127.0.0.1:8599`.
 | FleetVotes     | `0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512`  |
 | TimelockController | `0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0` |
 | TaskLedger     | `0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9`  |
-| FleetHook      | `0xFE1Bf729317E6EAa74D91B3223964aA6EE0322C0`  |
+| FleetHook      | `0x2Fa096005b0f85E26177C97c306AA0159e1c22C0`  |
 | AgoraGovernor  | `0x5FC8d32690cc91D4c39d9d3abcBD16989F875707`  |
 
 `hookSalt` (the CREATE2 salt `HookMiner.find` mined for this exact deployer, config, and
-`FleetHook` init code): `0x000000000000000000000000000000000000000000000000000000000001e9db`.
+`FleetHook` init code): `0x0000000000000000000000000000000000000000000000000000000000000155`.
+
+The hook address and salt above are from the final-review re-run, after the `afterPropose` fix of
+that round changed `FleetHook`'s bytecode. The salt is mined against the hook's init code hash, so
+any change to the hook's code or constructor arguments moves both, and the governor's `codehash`
+moves with them because the hook address is one of the governor's immutables. Nothing else in the
+manifest changed: the five `CREATE` addresses are fixed by the deployer and its nonces.
 
 ### Governor bytecode hash outcome
 
 The manifest's `codeHashes.governor` is `address.codehash` (`EXTCODEHASH`) read from the live
 chain right after deployment, not a hash of the compiled artifact. For this run it is
-`0x313767f337ed7e36846a03bc9f1145b74c40e8cf7f483e8b86fd34ddb6667a6a`, and re-hashing the deployed
+`0x4b7ff2e4ce31fecaa995882f79ff2445cf8ed44709979480a3781f806c0363f2`, and re-hashing the deployed
 code directly reproduces it exactly:
 
 ```
 $ cast keccak $(cast code 0x5FC8d32690cc91D4c39d9d3abcBD16989F875707 --rpc-url http://127.0.0.1:8599)
-0x313767f337ed7e36846a03bc9f1145b74c40e8cf7f483e8b86fd34ddb6667a6a
+0x4b7ff2e4ce31fecaa995882f79ff2445cf8ed44709979480a3781f806c0363f2
 ```
 
 That hash does **not** equal `keccak256` of `deployedBytecode.object` in the compiled

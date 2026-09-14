@@ -295,8 +295,7 @@ There is no onchain factory. The pinned governor's init code (26,483 bytes) exce
   "proposalThreshold": "1000000000000000000",
   "quorumNumerator": 6000,
   "timelockDelay": 30,
-  "maxTaskLifetime": 7200,
-  "hookSalt": "0x…"
+  "maxTaskLifetime": 7200
 }
 ```
 
@@ -306,11 +305,11 @@ Order of operations, each a separate transaction from the deployer key:
 2. `FleetVotes(tokenName, tokenSymbol, registry)`. Mints and self-delegates in the constructor.
 3. `TimelockController(timelockDelay, [], [], deployer)`. The deployer is a temporary admin.
 4. `TaskLedger(timelock, operator, guardian, maxTaskLifetime)`.
-5. `FleetHook{salt: hookSalt}(registry, ledger)` through the canonical CREATE2 deployer at `0x4e59b44847b379578588920cA78FbF26c0B4956C`, which Anvil, Base Sepolia, and Base all provide. The salt is mined offchain so the address carries exactly the hook's permission bits (section 7.4). The salt depends only on the hook init code hash, so one mined salt serves every chain.
+5. `FleetHook{salt: hookSalt}(registry, ledger, deployer)` through the canonical CREATE2 deployer at `0x4e59b44847b379578588920cA78FbF26c0B4956C`, which Anvil, Base Sepolia, and Base all provide. The salt is not a config input: the script mines it at deploy time, so the address carries exactly the hook's permission bits (section 7.4), and records the salt it used in the manifest. It cannot be reused across deployments, because the init code hash it is mined against covers the hook's constructor arguments, which include the registry, ledger, and deployer addresses from steps 1 to 4 of this same run.
 6. `AgoraGovernor(votingDelay, votingPeriod, proposalThreshold, quorumNumerator, token, timelock, address(0), address(0), hook)`. Unmodified pinned bytecode.
 7. `hook.initialize(governor)`. One-time; reverts on a second call.
 8. Timelock roles: grant `PROPOSER_ROLE`, `EXECUTOR_ROLE`, `CANCELLER_ROLE` to the governor; grant `CANCELLER_ROLE` to the guardian; renounce `DEFAULT_ADMIN_ROLE` from the deployer.
-9. Write `deployments/<chainId>/<timestamp>.json` and `deployments/<chainId>/latest.json` with every address, the deployment block, config hash, bytecode hashes, and compiler settings.
+9. Write `deployments/<chainId>/<deploymentTimestamp>.json` and `deployments/<chainId>/latest.json`, byte-identical, with every address, the deployment block and timestamp, the member list, operator and guardian, token name and symbol, the mined hook salt, the config path and config hash, bytecode hashes, and compiler settings. `latest.json` is a pointer that the next deployment overwrites; the timestamped copy is the archive.
 
 The verifier script (`VerifyDeployment.s.sol`) re-reads the manifest and asserts each step's post-condition. On a fresh Anvil with a fixed deployer, steps 1 to 4 and 6 produce the same addresses every run (CREATE with the same nonces) and step 5 is CREATE2, so a local redeploy needs no reconfiguration of the read side.
 
