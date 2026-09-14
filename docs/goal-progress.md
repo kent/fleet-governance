@@ -311,3 +311,38 @@ The [installer guide](package-installation.md) records the supported package typ
 bounds and remaining trust assumptions. There is no hard quota on the named dependency volume,
 crash janitor, production isolation proof or fleet-wide cancellation of external workloads. A
 new ledger read prevents subsequent requests; it cannot recall an already dispatched HTTP call.
+
+## Public record reconstruction
+
+Capture now rebuilds proposal capabilities, outcomes and identities from the actual Governor
+calldata, public description, ledger trace and registry. It no longer retains a saved permission
+or proposer identity as evidence. A description that fails verification stays in the raw events
+but supplies no verified action or permission. Proposal discovery and state read failures abort
+capture instead of silently falling back to the saved proposal list.
+
+Ballot reconstruction also matches both the proposal and voter before retaining a local model
+response. Previously, two proposals under the same fixture could share that metadata. Actual
+support, public reasons, transaction hashes and agent identities now come from their matching
+chain evidence. Cached ballots absent from chain lose those assertions. Local expectations,
+test results, jobs and inference responses remain explicitly offchain bookkeeping.
+
+The approval integration removes the saved proposal and execution sections. The rejection
+integration corrupts the saved outcome, summary, proposer and permission. Both corrupt saved
+voter identities and reasons. The capture CLI then recovers the exact permission, actual votes,
+outcome and resource state from fresh Anvil deployments. Both cases passed in 187.2 seconds,
+using scripted provider responses through the normal task loop and real contract transactions.
+
+The full unit suite passed 1,193 tests with 38 skipped. Typecheck and the production build passed.
+The existing build warning about `spawn-run.ts` remains. Evidence checksums and available local
+captures still match. Contract source was unchanged; the previous 129 passing contract tests
+remain its latest validation. No paid model calls were made.
+
+Chrome inspection of `execution-2000-1789411525744` confirmed Runner labels the unavailable chain
+and saved capture, displays both exact permissions and public reasons, and shows artifact
+revision zero after rejection and revision one after approval. This is the saved scripted run,
+not a new model experiment. The [reconstruction guide](record-reconstruction.md) explains what
+the command verifies and what it retains as local bookkeeping.
+
+The cost guide and bullet-point blog now include Muse Spark Contributor estimates for 20, 100
+and 500 calls per member: $32, $160 and $800 respectively for 2,000 agents at the stated token
+averages. The dedicated capped key required for the measured live pilot is still pending.

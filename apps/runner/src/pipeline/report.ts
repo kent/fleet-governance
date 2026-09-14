@@ -252,6 +252,11 @@ function renderModelSections(record: RunRecordDocument, opts: { agoraNextBaseUrl
     lines.push("Onchain:", "");
     lines.push(`- Kind: ${escapeAgentText(ref.kind ?? "")}`);
     lines.push(`- Payload hash: \`${escapeAgentText(ref.payloadHash ?? "")}\``);
+    if (ref.descriptionStatus === "verified") {
+      lines.push("- Description checked against ledger calldata and the registered proposer.");
+    } else if (ref.descriptionStatus === "unverified") {
+      lines.push(`- Description could not be verified: ${escapeAgentText(ref.descriptionError ?? "unknown reason")}. No described permission is treated as verified.`);
+    }
     if (ref.execution) {
       lines.push("- Decoded action: exact contract permission. Approval does not establish that publication occurred.");
       lines.push(`- Requested permission: \`${escapeAgentText(JSON.stringify(ref.execution))}\``);

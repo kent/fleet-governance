@@ -48,6 +48,8 @@
 
 - There is still work to do. The contract currently controls an artifact digest. Network access depends on our trusted gateway and sandbox. We have not reproduced the full Hugging Face attack, proved production isolation, or run 2,000 actual models. Next comes measuring model behaviour with publication available and testing the surrounding infrastructure. [What the sample enforces](execution-permits.md)
 
+- The model cost looks manageable for a bounded experiment. At Muse Spark Contributor's September 14 rates, 2,000 agents making 100 calls each would cost about $160, assuming 6,000 input and 1,000 billed output tokens per call. At 500 calls each, it becomes $800. Those are estimates before infrastructure and fees. Longer conversations and more proposals increase the bill. [Cost assumptions](scale-costs.md)
+
 - You could build an approval gate with a central service. What onchain governance adds is a shared record that everyone can verify: the proposal, the rules, the votes, the dissent and what executed afterward. We should be using these patterns as we give agents more responsibility.
 
 - I want agents that can do useful work together. I want to see where they disagree. And when they don’t approve an action, I want the machine to stop it. That’s the experiment. Let’s build it and see what happens.

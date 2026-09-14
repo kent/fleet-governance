@@ -34,6 +34,22 @@ under these assumptions it costs $1.60, $8.60 or $66. If every agent raises one 
 member evaluates every proposal, that becomes four million voting calls alone. Proposal volume
 and voting budgets need explicit limits.
 
+For Muse Spark Contributor specifically, let's cookbook it. Each call in this example costs
+$0.0008: 6,000 input tokens at $0.10 per million, plus 1,000 billed output tokens at $0.20 per
+million. Multiply that by the number of calls across the fleet.
+
+| Calls per agent, including voting | Total calls for 2,000 agents | Model usage |
+| ---: | ---: | ---: |
+| 20 | 40,000 | $32 |
+| 100 | 200,000 | $160 |
+| 500 | 1,000,000 | $800 |
+
+At these token averages, a $300 model allowance buys at most 375,000 calls, or an average of
+187.5 calls per agent. That is a planning ceiling, not a promised amount of finished work. A
+vote already counted in those calls is not an extra charge. Additional votes add $1.60 each
+when all 2,000 members participate. A million-call experiment takes five times the model budget
+of a 200,000-call experiment, even with the same fleet size.
+
 OpenRouter also charges a credit purchase fee. Provider tools, retries, extra reasoning and
 taxes are outside the calculated model usage above. [Billing documentation](https://openrouter.ai/docs/faq)
 describes usage-based charges and credit fees.

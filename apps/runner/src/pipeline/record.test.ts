@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { FixtureV1, ManifestV1 } from "@fleet/schemas";
-import { ProposalState } from "@fleet/sdk";
+import { ExecutionPermitV1 } from "@fleet/schemas";
+import { ProposalState, encodeRecordDecision, buildDecisionDescription, decisionForExecution, payloadHashForExecution } from "@fleet/sdk";
 import type { DecisionTrace, FleetClient } from "@fleet/sdk";
 import type { FixtureRunResult } from "./fixture-runner.js";
 import type { ModelRunResult } from "./model-runner.js";
@@ -17,12 +18,12 @@ const manifest = {
   deploymentTimestamp: 1_700_000_000,
   deployer: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb9226",
   addresses: {
-    registry: "0x5fbdb2315678afecb367f032d93f642f64180aa",
-    token: "0xe7f1725e7734ce288f8367e1bb143e90bb3f051",
-    timelock: "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e",
-    ledger: "0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc",
-    hook: "0xfe1bf729317e6eaa74d91b3223964aa6ee0322c",
-    governor: "0x5fc8d32690cc91d4c39d9d3abcbd16989f8757",
+    registry: "0x5fbdb2315678afecb367f032d93f642f64180aa3",
+    token: "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512",
+    timelock: "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
+    ledger: "0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9",
+    hook: "0xa8d43557a9d305d0b2f98bfebe07dc0a8db522c0",
+    governor: "0x5fc8d32690cc91d4c39d9d3abcbd16989f875707",
   },
   hookSalt: `0x${"00".repeat(32)}`,
   members: [],
@@ -73,7 +74,8 @@ function fakeTrace(): DecisionTrace {
         proposer: "0xagent1",
         targets: [manifest.addresses.ledger],
         values: [0n],
-        calldatas: ["0xdead"],
+        calldatas: [encodeRecordDecision({ taskId: 1n, kind: "GRANT_EXCEPTION", expectedVersion: 1,
+          payloadHash: `0x${"44".repeat(32)}`, newCharterText: "", summary: "test" })],
         description: "desc",
         blockNumber: 5n,
         logIndex: 0,
@@ -193,7 +195,15 @@ type FakeReceipt = { blockHash: string; gasUsed: bigint; effectiveGasPrice: bigi
 
 function fakeClient(receipts: Record<string, FakeReceipt>): FleetClient {
   return {
+    addresses: manifest.addresses,
+    chainId: manifest.chainId,
+    getProposalState: async () => ProposalState.Defeated,
+    getMember: async (address: string) => {
+      const match = /^0xagent(\d+)(?:voter)?$/.exec(address);
+      return match ? { agentId: Number(match[1]), account: address, manifest: "{}" } : null;
+    },
     publicClient: {
+      getContractEvents: async () => [],
       getTransactionReceipt: async ({ hash }: { hash: string }) => {
         const r = receipts[hash.toLowerCase()];
         if (!r) throw new Error(`no fake receipt for ${hash}`);
@@ -802,7 +812,7 @@ describe("captureFromChain rediscovers a model run's proposals from chain (task 
     expect(recaptured.proposals.map((p) => p.proposalId)).toEqual(original.proposals.map((p) => p.proposalId));
   });
 
-  it("keeps a scripted run's own proposal entry byte for byte when the chain names the same one", async () => {
+  it("refreshes a scripted proposal's chain fields and marks an unreadable description", async () => {
     const original = await buildRecord({
       client: fakeClient(RECEIPTS),
       runId: "run-scripted",
@@ -822,6 +832,98 @@ describe("captureFromChain rediscovers a model run's proposals from chain (task 
       async () => [100n],
     );
 
-    expect(recaptured.proposals).toEqual(original.proposals);
+    expect(recaptured.proposals[0]).toMatchObject({ ...original.proposals[0], kind: "GRANT_EXCEPTION",
+      payloadHash: `0x${"44".repeat(32)}`, summary: "test", proposerAgentId: 1, descriptionStatus: "unverified" });
+    expect(recaptured.proposals[0]?.descriptionError).toContain("no fenced");
+    expect(recaptured.proposals[0]?.execution).toBeUndefined();
+  });
+});
+
+describe("captureFromChain verifies public permissions and proposal-specific ballots", () => {
+  const permit = ExecutionPermitV1.parse({ schema: "fleet.execution-permit.v1", chainId: 31337,
+    executor: `0x${"ee".repeat(20)}`, ledger: manifest.addresses.ledger, taskId: "1", charterVersion: 1,
+    actor: `0x${"aa".repeat(20)}`, target: `0x${"bb".repeat(20)}`, targetCodeHash: `0x${"cc".repeat(32)}`,
+    data: "0x12345678", nonce: "1", deadline: "2000000000" });
+  const decision = decisionForExecution({ permit, proposerAgentId: 1, summary: "Publish the exact reviewed artifact", rationale: "Review before publication" });
+  const client = () => ({ ...fakeClient(RECEIPTS), addresses: { ...manifest.addresses, executor: permit.executor } }) as FleetClient;
+  const traceFor = (description = buildDecisionDescription(decision, "engineer")): DecisionTrace => {
+    const trace = fakeTrace();
+    const created = trace.events[0] as Extract<DecisionTrace["events"][number], { type: "ProposalCreated" }>;
+    trace.events[0] = { ...created, description, calldatas: [encodeRecordDecision({ taskId: 1n, kind: "GRANT_EXCEPTION", expectedVersion: 1,
+      payloadHash: payloadHashForExecution(permit), newCharterText: "", summary: decision.summary })] };
+    return trace;
+  };
+  const originalRecord = async () => buildRecord({ client: fakeClient(RECEIPTS), runId: "verify-chain", config: {}, configHash: `0x${"11".repeat(32)}`,
+    manifest, results: [fakeFixtureRunResult()], timings: {}, versions: {} });
+
+  it("replaces saved permission, identity, summary and outcome with verified chain data", async () => {
+    const original = await originalRecord();
+    original.proposals[0] = { ...original.proposals[0]!, outcome: "Executed", kind: "STOP_TASK", payloadHash: `0x${"00".repeat(32)}`,
+      proposerAgentId: 999, summary: "local forgery", action: { class: "shell", target: "forged", argsHash: `0x${"00".repeat(32)}` },
+      execution: { ...permit, data: "0x87654321" }, descriptionStatus: "verified" };
+    const rebuilt = await captureFromChain(client(), original, async () => traceFor(), async () => [100n]);
+    expect(rebuilt.proposals[0]).toMatchObject({ kind: "GRANT_EXCEPTION", payloadHash: decision.payloadHash, proposerAgentId: 1,
+      summary: decision.summary, outcome: "Defeated", execution: permit, descriptionStatus: "verified" });
+    expect(rebuilt.proposals[0]?.action).toBeUndefined();
+    expect(rebuilt.metrics.outcomeDistribution).toEqual({ Defeated: 1 });
+    expect(original.proposals[0]?.summary).toBe("local forgery");
+  });
+
+  it.each(["missing", "changed permit", "wrong proposer", "changed summary"])("never preserves a cached permit when the description is %s", async mode => {
+    const original = await originalRecord();
+    original.proposals[0]!.execution = permit;
+    const described = mode === "changed permit" ? { ...decision, execution: { ...permit, data: "0x87654321" } }
+      : mode === "wrong proposer" ? { ...decision, proposerAgentId: 42 }
+        : { ...decision, summary: "other summary" };
+    const trace = traceFor(mode === "missing" ? "No structured decision here" : buildDecisionDescription(described, "engineer"));
+    const rebuilt = await captureFromChain(client(), original, async () => trace, async () => [100n]);
+    expect(rebuilt.proposals[0]).toMatchObject({ descriptionStatus: "unverified", outcome: "Defeated", summary: decision.summary });
+    expect(rebuilt.proposals[0]?.execution).toBeUndefined();
+    expect(rebuilt.proposals[0]?.descriptionError).toBeTruthy();
+    expect(rebuilt.events.find(e => e.type === "ProposalCreated")?.description).toBe(trace.events[0]?.type === "ProposalCreated" ? trace.events[0].description : "");
+  });
+
+  it("rediscovers the permission and voter identities without saved proposals, votes or jobs", async () => {
+    const original = await originalRecord();
+    original.proposals = []; original.votes = []; original.jobs = [];
+    const rebuilt = await captureFromChain(client(), original, async () => traceFor(), async () => [100n]);
+    expect(rebuilt.proposals[0]).toMatchObject({ execution: permit, descriptionStatus: "verified", proposerAgentId: 1 });
+    expect(rebuilt.votes.map(v => v.agentId)).toEqual([1, 2]);
+    expect(rebuilt.votes.map(v => v.onchainReason)).toEqual(["FOR. because reasons", "AGAINST. because other reasons"]);
+    expect(rebuilt.votes.every(v => v.vote === null)).toBe(true);
+  });
+
+  it("keeps local vote objects and absences attached only to their own proposal", async () => {
+    const original = await originalRecord();
+    original.proposals.push({ ...original.proposals[0]!, proposalId: "101" });
+    const secondVotes = original.votes.map(v => ({ ...v, proposalId: "101", vote: { ...v.vote!, proposalId: "101", rationale: "second proposal only" } }));
+    original.votes.push(...secondVotes, { ...original.votes[0]!, agentId: 3, voterAddress: "0xagent3voter", proposalId: "101",
+      support: null, onchainReason: null, vote: null, txHash: null, jobState: "absent" });
+    const rebuilt = await captureFromChain(client(), original, async (_client, id) => {
+      const trace = traceFor(); trace.proposalId = id;
+      trace.events = trace.events.map(event => "proposalId" in event ? { ...event, proposalId: id } : event);
+      return trace;
+    }, async () => [100n, 101n]);
+    expect(rebuilt.votes.filter(v => v.proposalId === "100")).toHaveLength(2);
+    expect(rebuilt.votes.filter(v => v.proposalId === "101")).toHaveLength(3);
+    expect(rebuilt.votes.find(v => v.proposalId === "101" && v.agentId === 1)?.vote?.rationale).toBe("second proposal only");
+    expect(rebuilt.votes.find(v => v.proposalId === "100" && v.agentId === 1)?.vote).toEqual(original.votes[0]?.vote);
+  });
+
+  it("removes saved claims of ballots that are absent from chain", async () => {
+    const original = await originalRecord();
+    const trace = traceFor(); trace.events = trace.events.filter(e => e.type !== "VoteCast" || e.voter === "0xagent1voter");
+    original.votes[0]!.agentId = 999;
+    const rebuilt = await captureFromChain(client(), original, async () => trace, async () => [100n]);
+    expect(rebuilt.votes.find(v => v.voterAddress === "0xagent1voter")?.agentId).toBe(1);
+    expect(rebuilt.votes.find(v => v.voterAddress === "0xagent2voter")).toMatchObject({ agentId: 2,
+      support: null, onchainReason: null, txHash: null, jobState: "not_observed_onchain" });
+  });
+
+  it("fails instead of claiming complete reconstruction when proposal discovery or state is unreadable", async () => {
+    const original = await originalRecord();
+    await expect(captureFromChain(client(), original, async () => traceFor(), async () => { throw new Error("discovery unavailable"); })).rejects.toThrow("discovery unavailable");
+    const broken = { ...client(), getProposalState: async () => { throw new Error("state unavailable"); } } as FleetClient;
+    await expect(captureFromChain(broken, original, async () => traceFor(), async () => [100n])).rejects.toThrow("state unavailable");
   });
 });

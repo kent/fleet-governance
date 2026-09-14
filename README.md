@@ -16,7 +16,8 @@ reference implementation, with the enforcement boundaries described below.
 
 [Read the blog post](docs/blog-fleet-governance.md) ·
 [Inspect the 2,000-member results](docs/evidence/execution-2000-1789411525744/report.md) ·
-[Understand the execution permissions](docs/execution-permits.md)
+[Understand the execution permissions](docs/execution-permits.md) ·
+[Rebuild the public record](docs/record-reconstruction.md)
 
 ## Why build this?
 
@@ -142,7 +143,7 @@ cd contracts
 forge test
 ```
 
-Latest validation: **1,183 unit tests passed** with 38 skipped, and **129 contract tests passed**.
+Latest validation: **1,193 unit tests passed** with 38 skipped, and **129 contract tests passed**.
 Twenty contract tests cover execution permissions, including no ballots, all abstentions,
 insufficient yes votes, ties, pending approvals, revocation and replay. The model integration
 suite passed four scenarios, including approved and rejected task-loop publication. Its optional

@@ -510,12 +510,28 @@ describe.skipIf(!RUN_INTEGRATION)("fleet run, model driven, on a fresh Anvil wit
     expect(record.execution?.artifacts[0]?.revision).toBe(revision.toString());
     const resourceTxs = record.execution!.events.map(e => e.txHash);
     for (const hash of resourceTxs) expect(record.fees.some(fee => fee.txHash === hash)).toBe(true);
+    // The public record must recover the requested authority without trusting local metadata.
+    const damaged = structuredClone(record);
+    damaged.proposals = outcome === "approve" ? [] : damaged.proposals.map(ref => ({ ...ref,
+      outcome: "Executed", summary: "incorrect cached summary", proposerAgentId: 999,
+      execution: { ...ref.execution!, data: "0x87654321" }, descriptionStatus: "verified" }));
+    damaged.votes = damaged.votes.map(vote => ({ ...vote, agentId: 999, onchainReason: "incorrect cached reason" }));
+    damaged.events = [];
+    delete damaged.execution;
+    writeFileSync(recordPath, JSON.stringify(damaged, null, 2));
     const captured = await runCli(["capture", "--run-id", runId, "--from-chain", "--rpc", anvil.rpcUrl, "--report-dir", reportDir], runEnv());
     expect(captured.code, captured.output).toBe(0);
     const recaptured = JSON.parse(readFileSync(recordPath, "utf8")) as RunRecordDocument;
     expect(recaptured.execution?.events).toEqual(record.execution?.events);
     expect(recaptured.execution?.artifacts).toEqual(record.execution?.artifacts);
     expect(sortEvents(recaptured.events)).toEqual(sortEvents(record.events));
+    expect(recaptured.proposals).toHaveLength(1);
+    expect(recaptured.proposals[0]).toMatchObject({ proposalId: proposal.proposalId.toString(),
+      outcome: proposal.finalStateName, summary: proposal.decision.summary,
+      proposerAgentId: proposal.decision.proposerAgentId, kind: proposal.decision.kind,
+      execution: proposal.decision.execution, descriptionStatus: "verified" });
+    expect(sortVotes(recaptured.votes).map(vote => [vote.agentId, vote.support, vote.onchainReason, vote.txHash]))
+      .toEqual(sortVotes(record.votes).map(vote => [vote.agentId, vote.support, vote.onchainReason, vote.txHash]));
   }, 300_000);
 
   it(

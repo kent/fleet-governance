@@ -4,7 +4,7 @@ import type { Address, Hex } from "viem";
 import { fleetHookAbi } from "@fleet/abi";
 import type { ManifestV1, VoteV1 } from "@fleet/schemas";
 import type { DecisionTrace, FleetClient } from "@fleet/sdk";
-import { ProposalState, getDecisionTrace } from "@fleet/sdk";
+import { getDecisionTrace } from "@fleet/sdk";
 import type { FeeEntry, FixtureRunResult } from "./fixture-runner.js";
 import type { ExpectedEvaluation } from "./model-expected.js";
 import type { ModelRunResult } from "./model-runner.js";
@@ -12,6 +12,7 @@ import { InterventionLine, RUN_FILES, readJsonl } from "./runfiles.js";
 import type { GatewayLogLineType, InterventionLineType, ObjectionLineType, StepLineType } from "./runfiles.js";
 import { captureExecutionRecord } from "./execution-record.js";
 import type { ExecutionRecord } from "./execution-record.js";
+import { recaptureProposal } from "./record-proposal.js";
 
 /** JSON.stringify's replacer, applied everywhere a record document is written: every `bigint`
  *  becomes its decimal string, never a JS `number` (a run's self-review requirement: nothing in
@@ -66,6 +67,9 @@ export type RecordProposalRef = {
    *  for an `AMEND_CHARTER`, whose payload is a charter rather than one call. */
   action?: { class: string; target: string; argsHash: string };
   execution?: import("@fleet/schemas").ExecutionPermitV1;
+  /** Set by chain recapture after checking the description against calldata and registry identity. */
+  descriptionStatus?: "verified" | "unverified";
+  descriptionError?: string;
 };
 
 /** One agent's task loop, as the run's record remembers it (model runs only). `proposed` carries
@@ -517,11 +521,11 @@ async function feeFromChain(client: FleetClient, txHash: Hex): Promise<FeeEntry>
 
 /**
  * `fleet capture --from-chain`: rebuilds only the chain-derived sections of an existing
- * `record.json` (`events[]`, `votes[]`'s `onchainReason`/`support`, and `fees[]`) purely from
+ * `record.json` (proposal capabilities and outcomes, events, ballots, identities and fees) from
  * `proposals[]` (`{fixtureName, taskId, proposalId}`, already in the record) and chain logs,
  * never from `jobs[]` or any other locally-remembered bookkeeping. Everything else in the
- * document (`config`, `manifest`, `gatewayLog`, `jobs`, `timings`, `metrics`, `versions`) is kept
- * unchanged from `existing`.
+ * document (`config`, `manifest`, `gatewayLog`, `jobs`, `timings`, `versions`, local vote objects
+ * and test expectations) is retained as offchain bookkeeping. Chain-derived metrics are refreshed.
  *
  * `fees[]` is the union of the transactions in the re-fetched traces and the transaction hashes
  * the record already lists. Final review I7: rebuilding it from the trace alone silently dropped
@@ -543,9 +547,19 @@ export async function captureFromChain(
   const fees: FeeEntry[] = [];
   const feeCache = new Set<string>();
 
-  const proposals = await proposalsToRecapture(client, existing, discoverProposals);
+  const refs = await proposalsToRecapture(client, existing, discoverProposals);
+  const proposals: RecordProposalRef[] = [];
+  const members = new Map<string, Awaited<ReturnType<FleetClient["getMember"]>>>();
+  const readMembers = async (addresses: string[]): Promise<void> => {
+    const pending = [...new Set(addresses.map(address => address.toLowerCase()))].filter(address => !members.has(address));
+    for (let start = 0; start < pending.length; start += 32) {
+      await Promise.all(pending.slice(start, start + 32).map(async address => {
+        members.set(address, await client.getMember(address as Address));
+      }));
+    }
+  };
 
-  for (const ref of proposals) {
+  for (const ref of refs) {
     const proposalId = BigInt(ref.proposalId);
     const trace = await fetchTrace(client, proposalId);
     const fixtureEvents = await attachBlockHashes(
@@ -555,30 +569,36 @@ export async function captureFromChain(
     );
     events.push(...fixtureEvents);
 
-    const originalVotesForFixture = existing.votes.filter((v) => v.fixtureName === ref.fixtureName);
+    const originals = existing.votes.filter(v => v.fixtureName === ref.fixtureName && v.proposalId === ref.proposalId);
     const voteCasts = trace.events.filter((e): e is Extract<typeof e, { type: "VoteCast" }> => e.type === "VoteCast");
+    const created = trace.events.find(event => event.type === "ProposalCreated");
+    await readMembers([...originals.map(v => v.voterAddress), ...voteCasts.map(v => v.voter), ...(created ? [created.proposer] : [])]);
+    proposals.push(await recaptureProposal(client, ref, trace, created ? members.get(created.proposer.toLowerCase()) ?? null : null));
     const onchainVoters = new Set(voteCasts.map((v) => v.voter.toLowerCase()));
 
     // Agents whose job never produced an onchain vote at all (absent, missed, worker_failed, ...)
     // have nothing to rebuild from chain data (chain has no record of a vote that never happened);
-    // their original entry (already `onchainReason: null`) is kept verbatim.
-    for (const original of originalVotesForFixture) {
+    // Keep their local inference/job evidence, but clear any saved assertion of an onchain vote.
+    for (const original of originals) {
       if (!onchainVoters.has(original.voterAddress.toLowerCase())) {
-        votes.push(original);
+        votes.push({ ...original, agentId: members.get(original.voterAddress.toLowerCase())?.agentId ?? -1,
+          support: null, onchainReason: null, txHash: null,
+          jobState: original.onchainReason !== null || original.txHash !== null || original.support !== null
+            ? "not_observed_onchain" : original.jobState });
       }
     }
 
     for (const voteCast of voteCasts) {
-      const original = originalVotesForFixture.find((v) => v.voterAddress.toLowerCase() === voteCast.voter.toLowerCase());
+      const original = originals.find(v => v.voterAddress.toLowerCase() === voteCast.voter.toLowerCase());
       votes.push({
         fixtureName: ref.fixtureName,
-        agentId: original?.agentId ?? -1,
+        agentId: members.get(voteCast.voter.toLowerCase())?.agentId ?? -1,
         voterAddress: voteCast.voter,
         proposalId: ref.proposalId,
         support: voteCast.support,
         vote: original?.vote ?? null,
         onchainReason: voteCast.reason,
-        jobState: original?.jobState ?? "voted",
+        jobState: "voted",
         txHash: voteCast.txHash,
       });
     }
@@ -610,7 +630,12 @@ export async function captureFromChain(
     }
   }
   const { execution: _previousExecution, ...base } = existing;
-  return { ...base, proposals, events, votes, fees, ...(execution ? { execution } : {}) };
+  const outcomeDistribution: Record<string, number> = {};
+  for (const proposal of proposals) outcomeDistribution[proposal.outcome] = (outcomeDistribution[proposal.outcome] ?? 0) + 1;
+  return { ...base, proposals, events, votes, fees,
+    metrics: { ...base.metrics, proposalCount: proposals.length, outcomeDistribution,
+      totalFeesWei: fees.reduce((sum, fee) => sum + BigInt(fee.feeWei), 0n).toString() },
+    ...(execution ? { execution } : {}) };
 }
 
 
@@ -656,9 +681,8 @@ function fixtureNameForRecord(existing: RunRecordDocument): string {
 /**
  * The proposals a re-capture should cover: the ones the record already lists, in their existing
  * order, plus any the chain knows about for the record's task that the record does not. The
- * existing ones keep their entries byte for byte, so a scripted run re-captures exactly as it did
- * before; a model run gains whatever a crashed or partial run failed to write down, with its
- * outcome read from chain rather than assumed.
+ * entries only supply labels and expectations. The capture loop reconstructs their decisions
+ * and outcomes, including any proposal a crashed or partial run failed to write down.
  */
 async function proposalsToRecapture(
   client: FleetClient,
@@ -668,29 +692,18 @@ async function proposalsToRecapture(
   const proposals = [...existing.proposals];
   if (existing.taskId === null) return proposals;
 
-  let discovered: bigint[];
-  try {
-    discovered = await discoverProposals(client, BigInt(existing.taskId));
-  } catch {
-    // A log query that fails leaves the record's own list as the best available answer.
-    return proposals;
-  }
+  // An unreadable discovery query cannot establish that this is the complete proposal set.
+  const discovered = await discoverProposals(client, BigInt(existing.taskId));
 
   const known = new Set(proposals.map((p) => p.proposalId));
   const expectedOutcome = existing.proposals[0]?.expectedOutcome ?? "any";
   for (const proposalId of discovered) {
     if (known.has(proposalId.toString())) continue;
-    let outcome = "unknown";
-    try {
-      outcome = ProposalState[await client.getProposalState(proposalId)] ?? "unknown";
-    } catch {
-      // Leave it named but with an unknown outcome rather than dropping a real proposal.
-    }
     proposals.push({
       fixtureName: fixtureNameForRecord(existing),
       taskId: existing.taskId,
       proposalId: proposalId.toString(),
-      outcome,
+      outcome: "unknown", // Replaced by a fresh state read in recaptureProposal.
       expectedOutcome,
       pass: false,
     });

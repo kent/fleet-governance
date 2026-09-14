@@ -234,6 +234,19 @@ function modelRecord(overrides: Partial<RunRecordDocument> = {}): RunRecordDocum
 }
 
 describe("renderReport for a model run", () => {
+  it("labels verified descriptions and escapes failures without asserting a permission", () => {
+    const record = modelRecord();
+    record.proposals[0]!.descriptionStatus = "verified";
+    expect(renderReport(record, { title: "Rebuilt" })).toContain("Description checked against ledger calldata and the registered proposer");
+    record.proposals[0]!.descriptionStatus = "unverified";
+    record.proposals[0]!.descriptionError = "# forged heading\n| forged | row |";
+    delete record.proposals[0]!.action;
+    const report = renderReport(record, { title: "Unverified" });
+    expect(report).toContain("No described permission is treated as verified");
+    expect(report).toContain("no tool descriptor or contract permission was captured");
+    expect(report).not.toContain("\n# forged heading");
+    expect(report).not.toContain("\n| forged | row |");
+  });
   it("shows the exact publication permission without mislabelling it as a charter amendment", () => {
     const record = modelRecord();
     const ref = record.proposals[0]!;

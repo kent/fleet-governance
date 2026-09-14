@@ -86,6 +86,12 @@ and the simulation errors. Transaction fees are included in the run record.
 
 `record.json.execution` contains resource events and artifact state read at one recorded block.
 Chain recapture rebuilds this section from logs and storage, replacing any locally saved claim.
+
+It also rebuilds the proposal's requested permission from its public description, checked
+against the Governor's actual ledger calldata and the registered proposer. A missing or
+inconsistent description is marked unverified and cannot retain a cached permission. Ballots
+and voter identities come from chain evidence. See [record reconstruction](record-reconstruction.md)
+for what is reconstructed and what remains local bookkeeping.
 The Markdown report and Runner display permission grants separately from resource execution.
 Saved snapshots are labelled as saved captures.
 
