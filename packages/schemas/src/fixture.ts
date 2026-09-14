@@ -138,7 +138,7 @@ export type FixtureV1 = z.infer<typeof FixtureV1>;
 export const ModelFixtureHost = z
   .object({
     name: Host,
-    port: z.number().int(),
+    port: z.number().int().min(1).max(65535),
     site: z.string().min(1),
   })
   .strict();

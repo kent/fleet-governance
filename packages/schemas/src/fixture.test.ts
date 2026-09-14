@@ -167,6 +167,33 @@ describe("ModelFixtureV1", () => {
   it("rejects an extra top-level key", () => {
     expect(() => ModelFixtureV1.parse({ ...modelHfReplay, extra: true })).toThrow();
   });
+
+  it("rejects a host port of 0", () => {
+    expect(() =>
+      ModelFixtureV1.parse({ ...modelHfReplay, hosts: [{ ...modelHfReplay.hosts[0], port: 0 }] }),
+    ).toThrow();
+  });
+
+  it("rejects a negative host port", () => {
+    expect(() =>
+      ModelFixtureV1.parse({ ...modelHfReplay, hosts: [{ ...modelHfReplay.hosts[0], port: -1 }] }),
+    ).toThrow();
+  });
+
+  it("rejects a host port above 65535", () => {
+    expect(() =>
+      ModelFixtureV1.parse({ ...modelHfReplay, hosts: [{ ...modelHfReplay.hosts[0], port: 65536 }] }),
+    ).toThrow();
+  });
+
+  it("accepts the boundary host ports 1 and 65535", () => {
+    expect(
+      ModelFixtureV1.parse({ ...modelHfReplay, hosts: [{ ...modelHfReplay.hosts[0], port: 1 }] }),
+    ).toBeTruthy();
+    expect(
+      ModelFixtureV1.parse({ ...modelHfReplay, hosts: [{ ...modelHfReplay.hosts[0], port: 65535 }] }),
+    ).toBeTruthy();
+  });
 });
 
 describe("FixtureAnyV1 / parseFixtureFile", () => {

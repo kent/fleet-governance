@@ -140,41 +140,80 @@ describe("tiny-lib repository fixture", () => {
   });
 });
 
+type HostHandle = { child: ReturnType<typeof spawn>; port: number };
+
+/** Starts `server.mjs` with the given CLI args and resolves once its first stderr line reports
+ *  the bound port (`listening <port>`), shared by every test in the "examples-internal fake
+ *  host" describe block below. */
+async function startHost(args: string[]): Promise<HostHandle> {
+  const child = spawn(process.execPath, ["server.mjs", ...args], {
+    cwd: HOST_SERVER_DIR,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+
+  const port = await new Promise<number>((resolve, reject) => {
+    let buffer = "";
+    const onData = (chunk: Buffer) => {
+      buffer += chunk.toString("utf8");
+      const newlineIndex = buffer.indexOf("\n");
+      if (newlineIndex === -1) return;
+      const firstLine = buffer.slice(0, newlineIndex);
+      child.stderr?.off("data", onData);
+      const match = /^listening (\d+)$/.exec(firstLine);
+      if (match && match[1]) {
+        resolve(Number(match[1]));
+      } else {
+        reject(new Error(`examples-internal host: unexpected first stderr line: ${firstLine}`));
+      }
+    };
+    child.stderr?.on("data", onData);
+    child.once("error", reject);
+  });
+
+  return { child, port };
+}
+
+async function stopHost(handle: HostHandle): Promise<void> {
+  handle.child.kill("SIGTERM");
+  await new Promise((resolve) => handle.child.once("exit", resolve));
+}
+
 describe("examples-internal fake host", () => {
   it("serves /solutions/tiny-lib with 200 and /nope with 404", async () => {
-    const child = spawn(process.execPath, ["server.mjs", "--site", "solutions", "--port", "0"], {
-      cwd: HOST_SERVER_DIR,
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-
+    const host = await startHost(["--site", "solutions", "--port", "0"]);
     try {
-      const port = await new Promise<number>((resolve, reject) => {
-        let buffer = "";
-        const onData = (chunk: Buffer) => {
-          buffer += chunk.toString("utf8");
-          const newlineIndex = buffer.indexOf("\n");
-          if (newlineIndex === -1) return;
-          const firstLine = buffer.slice(0, newlineIndex);
-          child.stderr?.off("data", onData);
-          const match = /^listening (\d+)$/.exec(firstLine);
-          if (match && match[1]) {
-            resolve(Number(match[1]));
-          } else {
-            reject(new Error(`examples-internal host: unexpected first stderr line: ${firstLine}`));
-          }
-        };
-        child.stderr?.on("data", onData);
-        child.once("error", reject);
-      });
-
-      const ok = await fetch(`http://127.0.0.1:${port}/solutions/tiny-lib`);
+      const ok = await fetch(`http://127.0.0.1:${host.port}/solutions/tiny-lib`);
       expect(ok.status).toBe(200);
 
-      const missing = await fetch(`http://127.0.0.1:${port}/nope`);
+      const missing = await fetch(`http://127.0.0.1:${host.port}/nope`);
       expect(missing.status).toBe(404);
     } finally {
-      child.kill("SIGTERM");
-      await new Promise((resolve) => child.once("exit", resolve));
+      await stopHost(host);
+    }
+  });
+
+  // Fix round 1: resolveSitePath's decodeURIComponent threw URIError on malformed
+  // percent-encoding outside any try/catch, so a single bad request (curl reproduced it with
+  // "/%") killed the whole host process with an unhandled rejection. The fix moves the decode
+  // inside the request handler's try block, answers 404 for a decode failure the same as any
+  // other unresolvable path, and adds process-level unhandledRejection/uncaughtException guards
+  // as a last resort. This test asserts both the 404s and that the process is still alive and
+  // serving normally afterward, not just that the two malformed requests happen not to crash it.
+  it("survives malformed percent-encoding instead of crashing", async () => {
+    const host = await startHost(["--site", "solutions", "--port", "0"]);
+    try {
+      const bad1 = await fetch(`http://127.0.0.1:${host.port}/%`);
+      expect(bad1.status).toBe(404);
+
+      const bad2 = await fetch(`http://127.0.0.1:${host.port}/%zz`);
+      expect(bad2.status).toBe(404);
+
+      expect(host.child.exitCode).toBeNull();
+
+      const ok = await fetch(`http://127.0.0.1:${host.port}/solutions/tiny-lib`);
+      expect(ok.status).toBe(200);
+    } finally {
+      await stopHost(host);
     }
   });
 });

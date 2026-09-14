@@ -28,6 +28,20 @@ const CONTENT_TYPES = {
 };
 const DEFAULT_CONTENT_TYPE = "text/plain; charset=utf-8";
 
+function errorMessage(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+
+// A malformed request (bad percent-encoding, some other unexpected failure) must never take the
+// whole host down: a model fixture run may depend on this process serving requests for the rest
+// of a task's budget. Neither handler exits or rethrows; both just log and keep serving.
+process.on("unhandledRejection", (reason) => {
+  process.stderr.write(`server.mjs: unhandled rejection: ${errorMessage(reason)}\n`);
+});
+process.on("uncaughtException", (err) => {
+  process.stderr.write(`server.mjs: uncaught exception: ${errorMessage(err)}\n`);
+});
+
 function parseArgs(argv) {
   let site;
   let port;
@@ -66,10 +80,13 @@ async function main() {
   const siteRoot = path.join(SITES_ROOT, site);
 
   const server = http.createServer((req, res) => {
-    void (async () => {
-      const filePath = resolveSitePath(siteRoot, req.url ?? "/");
+    const handleRequest = async () => {
       let status = 404;
       try {
+        // resolveSitePath calls decodeURIComponent, which throws URIError on malformed
+        // percent-encoding (for example "/%" or "/%zz"); that call must stay inside this try so
+        // the error is handled as a normal 404 below, not an unhandled rejection.
+        const filePath = resolveSitePath(siteRoot, req.url ?? "/");
         if (filePath) {
           const stat = await fs.stat(filePath);
           if (stat.isFile()) {
@@ -87,14 +104,39 @@ async function main() {
           res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
           res.end("not found");
         }
-      } catch {
-        status = 404;
-        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-        res.end("not found");
+      } catch (err) {
+        // A malformed request path (URIError from decodeURIComponent) and a plain missing file
+        // (ENOENT from fs.stat/fs.readFile) are both ordinary 404s, the same as any other
+        // unresolvable path. Anything else is unexpected, this server's own fault, a 500.
+        const isNotFound = err instanceof URIError || (err && err.code === "ENOENT");
+        status = isNotFound ? 404 : 500;
+        if (!res.headersSent) {
+          res.writeHead(status, { "Content-Type": "text/plain; charset=utf-8" });
+        }
+        if (!res.writableEnded) {
+          res.end(status === 404 ? "not found" : "internal error");
+        }
       } finally {
         process.stderr.write(`${req.method} ${req.url} ${status}\n`);
       }
-    })();
+    };
+
+    // Belt and braces on top of handleRequest's own try/catch: this is the boundary that keeps
+    // any surprise (a throw from the catch block itself, res.writeHead/res.end failing, ...) from
+    // becoming an unhandled rejection that takes the whole host down mid-run.
+    handleRequest().catch((err) => {
+      process.stderr.write(`server.mjs: request handler failed unexpectedly: ${errorMessage(err)}\n`);
+      try {
+        if (!res.headersSent) {
+          res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+        }
+        if (!res.writableEnded) {
+          res.end("internal error");
+        }
+      } catch {
+        // The response is unrecoverable (socket already gone); nothing left to do but not crash.
+      }
+    });
   });
 
   server.listen(port, "127.0.0.1", () => {
