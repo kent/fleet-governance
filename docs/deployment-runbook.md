@@ -7,6 +7,9 @@ from `infra/README.md`, `docs/compatibility-notes.md`, and `docs/spec.md`.
 
 ## 1. Purpose and scope
 
+For GCP provisioning, repeatable resets and parameter changes, start with the
+[GCP checklist](gcp-todo.md). This runbook supplies the existing CLI and environment details.
+
 This runbook takes the owner from a funded Base Sepolia setup to a published pilot deployment
 (spec 14, milestone M4). It covers Base Sepolia only. Base mainnet is out of scope: see section 10.
 
@@ -24,7 +27,7 @@ This runbook takes the owner from a funded Base Sepolia setup to a published pil
 | Guardian private key | same | `FLEET_GUARDIAN_KEY` |
 | Keeper private key | same | `FLEET_KEEPER_KEY` |
 | N agent private keys (N = 5 recommended, matching `deployments/configs/local-5.json`'s shape) | same | `FLEET_AGENT_KEY_0` .. `FLEET_AGENT_KEY_<N-1>` |
-| `OPENROUTER_API_KEY` | string | only needed once model-driven agents are wired in; see section 6 |
+| `OPENROUTER_API_KEY` | string | required for model runs, with a matching provider credit cap; see section 6 |
 | Test ETH for every key above | Base Sepolia ETH | checked by the Runner's PREFLIGHT stage (section 3) |
 
 All keys are environment variables. None of them are ever written into a config file or a
@@ -32,17 +35,20 @@ manifest; only the derived public addresses go into `deployments/configs/sepolia
 
 ## 3. One-time setup
 
-**Bucket and IAM.** Create a GCS bucket. Grant public read on the bucket or on its `data/`
-prefix, since Agora Next reads the archive with unauthenticated GETs and a private bucket fails
-silently (empty pages, no error):
+**Bucket and IAM.** Create a dedicated GCS bucket containing only the intended public governance
+archive. The current Agora reader uses unauthenticated GETs, so that archive must be readable
+or the reader must be adapted for authentication. Keep complete run bundles and secrets in a
+separate private bucket. For a deliberately public archive, the bucket-level binding is:
 
 ```
 gcloud storage buckets add-iam-policy-binding gs://<bucket> \
   --member=allUsers --role=roles/storage.objectViewer
 ```
 
-Create a service account with write access to the bucket, download its JSON key, and note the
-local path. `GCS_CREDENTIALS_FILE` authenticates only CPLS's writes; it does not gate reads.
+The current Compose setup mounts a writer service account JSON key through
+`GCS_CREDENTIALS_FILE`; it does not authenticate Agora reads. On GCP, prefer an attached service
+account and ADC. The [GCP checklist](gcp-todo.md) names the Compose and preflight changes needed
+for that path. Do not treat downloading a long-lived service account key as a GCP requirement.
 
 **RPC.** Get HTTP and WSS endpoints from a provider. Confirm its `eth_getLogs` range cap, since
 DAO Node backfills the archive in windows of `DAO_NODE_ARCHIVE_NODE_HTTP_BLOCK_COUNT_SPAN` blocks
@@ -53,7 +59,7 @@ DAO Node backfills the archive in windows of `DAO_NODE_ARCHIVE_NODE_HTTP_BLOCK_C
 config with `cast wallet address --private-key <key>`.
 
 **Funding.** Fund every key with Base Sepolia test ETH before running anything. Qualitatively:
-the deployer pays for the deployment transaction; each agent pays for one propose or one vote per
+the deployer pays for the deployment transactions; each agent pays for one propose or one vote per
 divergence; the keeper pays to queue and execute; the guardian pays only when it intervenes. The
 Runner's PREFLIGHT stage checks every one of these balances (deployer, operator, guardian, keeper,
 every agent) and fails the run outright if any of them is zero, so fund the guardian and keeper
@@ -176,7 +182,7 @@ fleet readside --manifest deployments/84532/latest.json --infra-dir infra --rest
 | blockcache-shim | nothing (only proxies to the chain) |
 | agora-next | nothing once `deployments/agora-next-deployment.json` is rewritten; it re-reads that file per request |
 | anvil | not applicable to Base Sepolia |
-| postgres | nothing, unless a `postgres/init/*.sql` file changed, which needs `down -v` |
+| postgres | preserve it; apply a migration or recreate only the explicitly disposable experiment database |
 
 **Health checks** (default ports; adjust if you changed `infra/.env`'s port variables):
 
@@ -184,14 +190,19 @@ fleet readside --manifest deployments/84532/latest.json --infra-dir infra --rest
 - `curl http://localhost:8001/health` (CPLS)
 - `open http://localhost:3000/proposals` (Agora Next)
 
-If the bucket is not public-read, Agora Next's pages render HTTP 200 with no proposals, no
-votes, and no error anywhere. Re-check the IAM binding from section 3 first if pages look empty.
+The archive reader now distinguishes failed reads from valid empty records. Missing or malformed
+vote archives return HTTP 503; fleet proposal list failures remain errors. Check archive access
+when records are unavailable. The separate Agora detail-page browser audit still has compilation
+memory failures, documented in [the infrastructure guide](../infra/README.md#docker-vm-sizing).
 
 ## 6. First run
 
 `fleet run` drives the full pipeline (spec 12.2): `PREFLIGHT -> CHAIN_READY -> DEPLOYED ->
 VERIFIED -> INDEXERS_READY -> TASK_OPENED -> AGENTS_RUNNING -> TASK_ENDED -> CAPTURED ->
-REPORTED`. Every stage checks chain or file state first, so it is resumable with `--run-id`.
+REPORTED`. It checkpoints completed stages and supports resuming with `--run-id`. Keep the
+same configuration, task, deployment and inference journal when resuming. Crash recovery needs
+transaction and provider-call reconciliation; it is not a promise that every external action
+can be resumed exactly once. Use a new run ID for a new experiment.
 
 **A path note.** `fleet run`'s own `DEPLOYED` stage deploys from
 `deployments/configs/<experiment name>.deploy.json` (the experiment config's own `name` field,
@@ -245,25 +256,30 @@ fleet run --experiment experiments/configs/sepolia-hf-replay.json --readside
 `fleet run --help`. `--readside` brings up and syncs the Docker Compose read side as part of the
 run; PREFLIGHT then also checks container health and the bucket, using the ports in `infra/.env`.
 
-**Model-driven `hf-replay`: not available from `fleet run` yet.** As of this runbook, `fleet
-run`'s `AGENTS_RUNNING` stage only loads fixtures from `experiments/fixtures/scripted/` and only
-accepts the `fleet.fixture.v1` shape (`apps/runner/src/fixtures.ts`'s `loadFixture`); it rejects
-`experiments/fixtures/model/hf-replay.json`'s `fleet.fixture.model.v1` shape outright. A
-`fleet.experiment.v1` config's per-member `provider` field (`scripted`, `claude-cli`,
-`openrouter`) is accepted by the schema but is never read anywhere in the current pipeline; only
-`scripted` behavior runs, regardless of what `provider` names. `apps/worker`, the standalone agent
-process, likewise only supports `FLEET_POLICY=scripted:<DIRECTIVE>` today. The model provider
-adapters themselves exist (`@fleet/agent-runtime`'s `openrouter.ts` and `claude-cli.ts`), but
-wiring them into a run is spec milestone M3 (Runner UI, model agents), a later task. Do not
-attempt a model-driven Sepolia run until that wiring lands; re-run this section once it does, and
-use `OPENROUTER_API_KEY` from the repo-root `.env` with the default model
-`meta/muse-spark-1.3-contributor` (or a Claude model on OpenRouter) per agent.
+**Model-driven runs are now wired through `fleet run`.** The pipeline resolves either a scripted
+or model fixture according to `scenario.agentsScripted`. Budgeted live runs currently require
+OpenRouter, explicit call/token/dollar limits and prices for every model. The provider key must
+have a non-resetting credit cap, positive remaining credit no larger than the run budget, and
+BYOK usage included in that cap.
+
+For publication, start from
+[`local-artifact-publication-model.experiment.json`](../experiments/examples/local-artifact-publication-model.experiment.json).
+Change the target to Base Sepolia and generate the matching deployment config with funded
+addresses. Keep `agentsScripted: false` and the `artifact-publication` model fixture. The default
+model is `meta/muse-spark-1.3-contributor`; the fixture does not prescribe its ballots or outcome.
+This path has local scripted integration coverage, but has not been run on Base Sepolia.
+
+Model fixtures supply their own charter and repository. Changing only the experiment's inline
+`task.charter` does not change the charter used by a model fixture. Version the fixture and its
+charter together, record their effective contents, and regenerate the deployment config when
+membership or governance settings change. See the parameter and reset checklist in
+[`gcp-todo.md`](gcp-todo.md).
 
 ## 7. Publishing the manifest and the Agora Next URL
 
 `fleet run` already writes `deployments/84532/latest.json` (the pointer) plus a per-run archive
 copy `deployments/84532/run-<runId>.json`, matching the local convention. Publish `latest.json`
-alongside: the chain id (84532), the six contract addresses from the manifest, and the Agora Next
+alongside: the chain id (84532), all contract addresses from the manifest, including the executor and artifact store, and the Agora Next
 URL you set in the experiment config's `display.agoraNextBaseUrl` (used by `fleet report`'s
 rendered links). Anyone with that URL and a public bucket can read the same archive Agora Next
 reads.

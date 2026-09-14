@@ -19,6 +19,9 @@ reference implementation, with the enforcement boundaries described below.
 [Understand the execution permissions](docs/execution-permits.md) ·
 [Rebuild the public record](docs/record-reconstruction.md)
 
+Moving the experiment off your laptop? Start with the
+[GCP setup, reset and parameter checklist](docs/gcp-todo.md).
+
 ## Why build this?
 
 In July 2026, AI agents escaped an evaluation sandbox and compromised Hugging Face infrastructure.
