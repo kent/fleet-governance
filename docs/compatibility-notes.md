@@ -772,3 +772,518 @@ already falls through to plain `storage.Client()` reading
 `GOOGLE_APPLICATION_CREDENTIALS` (which compose sets to
 `/secrets/gcs.json`, the bind-mount target of `GCS_CREDENTIALS_FILE`)
 whenever `STORAGE_EMULATOR_HOST` is unset.
+
+## Agora Next fleet tenant (Task 5), vendor pinned commit a9909c796ccb3d6fafb63a199d82c9d4af9ee48d
+
+### Step 1: exact edit points (line numbers in the pristine vendor tree)
+
+Recorded before editing, per the brief's Step 1.
+
+- `src/lib/constants.ts`: `TENANT_NAMESPACES` object opens at line 45,
+  closes at line 66; `SHAPE: "shape",` (the arm to add `FLEET: "fleet",`
+  after) is line 65. `DELEGATION_MODEL` enum at line 39. `GOVERNOR_TYPE`
+  enum at line 188. `TIMELOCK_TYPE` enum at line 200.
+- `src/lib/tenant/tenantSlugFactory.ts`: the `SHAPE` arm (`"SHAPE" as any`)
+  is lines 46-47, immediately before the `default:` throw. This file is
+  short (52 lines total); every arm follows the same two-line shape.
+- `src/lib/tenant/tenantContractFactory.ts`: `shapeTenantConfig` import at
+  line 22; its `case`/`return` arm at lines 69-70, immediately before
+  `default:`.
+- `src/lib/tenant/tenantUIFactory.ts`: `shapeTenantUIConfig` import at line
+  22; its `case`/`return` arm at lines 83-84 (this file blank-lines
+  between arms, unlike the others).
+- `src/lib/tenant/tenantTokenFactory.ts`: `SHAPE` arm starts at line 173,
+  immediately before `default:`.
+- `src/lib/tenant/tenant.ts`: `BRAND_NAME_MAPPINGS` object at lines 14-22
+  (`shape: "Structura",` is the last entry, line 21).
+- `src/lib/prismaUtils.ts`: 16 `switch (namespace)` statements, each with
+  a `case TENANT_NAMESPACES.B3:` arm right before the fleet-equivalent
+  needs to go, at lines 21, 83, 142, 201, 309, 367, 423, 489, 548, 600,
+  658, 719, 771, 829, 890, 949 (matches the brief's "about sixteen"
+  exactly). Every B3 arm has the shape
+  `return prismaWeb3Client.b3<Model>.<method>(<args>)`; the fleet arm is
+  the same call with `b3` swapped for `fleet` and namespace swapped for
+  `FLEET`, verified line-for-line against a scripted transform (see
+  "prismaUtils.ts: scripted, not hand-typed" below).
+- `src/lib/proposals/status/standard.ts`: `calculateQuorumNumber` switch
+  at lines 69-91 (function), `UNISWAP` arm at line 77 returning
+  `forVotes`; `calculateQuorumBigInt` switch at lines 96-111, `UNISWAP`
+  arm at line 98, same `forVotes` return. Fleet reuses the UNISWAP arm's
+  `forVotes` (For-only) rule in both.
+- `src/lib/proposalUtils.ts` (not `src/lib/proposalUtils/proposalStatus.ts`
+  as the brief guessed; that file only imports `getProposalCurrentQuorum`
+  from here): `getProposalCurrentQuorum` at lines 1107-1139, `UNISWAP` arm
+  at lines 1119-1120 (`return BigInt(proposalResults.for);`). Same
+  For-only rule.
+- `prisma/schema.prisma`: `datasource db` block at lines 7-11, `schemas =
+  [...]` list at line 10 (append `"fleet"`). The `b3*` views (`view
+  b3AdvancedDelegatees` through `view b3VotingPowerSnaps`, 14 views) span
+  lines 5219-5416, each `@@map("...")`-ed to a physical table name and
+  `@@schema("b3")`-ed. `enum DaoSlug` at lines 6072-6098 (`config` schema;
+  fleet does NOT get added here, see "DaoSlug: FLEET stays out of the
+  Prisma-side enum" below).
+- `src/lib/tenant/configs/contracts/b3.ts` and
+  `src/lib/tenant/configs/ui/b3.ts`: read whole (85 and ~270 lines
+  respectively), the template for `overlay/src/lib/tenant/configs/{contracts,ui}/fleet.ts`.
+
+### prismaUtils.ts: scripted, not hand-typed
+
+All 16 B3-to-fleet arms in `src/lib/prismaUtils.ts` were inserted by a
+small Python regex transform (matched each `case
+TENANT_NAMESPACES.B3:\n  return prismaWeb3Client.b3<X>.<method>(<args>);`
+block and inserted an identical block right after it with `b3`->`fleet`
+in the model reference and `B3`->`FLEET` in the case label), not typed by
+hand across 16 near-identical spots. `git -C vendor/agora-next diff --
+src/lib/prismaUtils.ts` after the transform showed exactly 16 insertions,
+one per switch, each a 2-line `case`/`return` pair matching the file's
+existing style. Verified by grepping `case TENANT_NAMESPACES.FLEET:`
+count (16) against `case TENANT_NAMESPACES.B3:` count (16, unchanged) in
+the patched file.
+
+### DaoSlug: FLEET stays out of the Prisma-side enum, matches TOWNS/SYNDICATE/SHAPE
+
+`prisma/schema.prisma`'s `enum DaoSlug` (config schema) already contains
+`TOWNS`, `SYNDICATE`, and `SHAPE` as real members, yet
+`tenantSlugFactory.ts` still returns them via `"TOWNS" as any` etc. rather
+than a plain `DaoSlug` value. The reason isn't semver-relevant docs, it's
+practical: the brief and controller notes both direct fleet to use the
+same `"FLEET" as any` escape hatch, and `infra/postgres/gen-stub.ts`
+already (from Task 2, unmodified by Task 5) does
+`const daoSlugValues = [...extractEnumValues(text, "DaoSlug"), "FLEET"]`
+i.e. it appends `"FLEET"` to the generated Postgres enum's label list
+even though `"FLEET"` is absent from the Prisma schema text. So the
+physical Postgres type `"config"."dao_slug"` does carry a `'FLEET'` label
+(needed for raw SQL and `@db.dao_slug`-typed columns to accept fleet's
+rows), but the generated TypeScript `DaoSlug` union type does not, hence
+the `as any` cast. Patch 0001 does NOT touch `enum DaoSlug` in
+`schema.prisma`; only `datasource.schemas` gets `"fleet"` appended (Step
+4 of the brief, confirmed as the only schema.prisma edit needed).
+
+### Timelock type: TIMELOCKCONTROLLER_WITH_ACCESS_CONTROL_ERC721_ERC115, not TIMELOCK_NO_ACCESS_CONTROL
+
+The brief's own Step 2 example code used
+`TIMELOCK_TYPE.TIMELOCK_NO_ACCESS_CONTROL`, but the controller notes
+correctly flagged this as needing verification against the real
+contracts. Checked `contracts/src/deploy/FleetDeployer.sol` (main tree,
+read-only, lines 57-84): fleet's timelock is a genuine OpenZeppelin
+`TimelockController` (`import {TimelockController} from
+"@openzeppelin/contracts/governance/TimelockController.sol"`), with
+`PROPOSER_ROLE`/`EXECUTOR_ROLE`/`CANCELLER_ROLE` explicitly granted to the
+governor and `DEFAULT_ADMIN_ROLE` renounced from the deployer after setup
+- real AccessControl-gated roles, not a plain executor. That is exactly
+what `TIMELOCK_TYPE.TIMELOCKCONTROLLER_WITH_ACCESS_CONTROL_ERC721_ERC115`
+represents (the enum name's `ERC721_ERC115` suffix is cosmetic/historical;
+the value just means "OZ TimelockController with AccessControl roles"),
+and it is the value `b3TenantConfig` already uses for its own OZ
+`TimelockController`. `overlay/src/lib/tenant/configs/contracts/fleet.ts`
+uses this value, not `TIMELOCK_NO_ACCESS_CONTROL`, with a comment citing
+this section.
+
+### ARCHIVE_GCS_BUCKET is not a real env var; the brief's framing needed a deviation
+
+`src/lib/constants.ts`'s `ARCHIVE_GCS_BUCKET` constant (despite its name)
+reads only `process.env.ARCHIVE_GCS_BUCKET_OVERRIDE`; there is no plain
+"which bucket" env var at all. Unset, it hardcodes a real, unrelated Agora
+production bucket URL
+(`https://storage.googleapis.com/cpls-usmr-dev-test-26q1` in dev, a
+different `cpls-usmr-prd-25q4` one in prod), confirmed by reading the
+source (`README.md`/`env.sample` don't document either var at all, so
+this is source-only knowledge). Every archive read
+(`src/lib/archiveUtils.ts`) is a plain unauthenticated `fetch()` of
+`<ARCHIVE_GCS_BUCKET>/data/<namespace>/...`, so leaving this unset for
+fleet would not fail loudly; it would silently read whichever unrelated
+proposals happen to live in Agora's own real dev bucket instead of
+fleet's `fleet-archive-dev` bucket (the one CPLS's `GCS_BUCKET_NAME`
+writes to).
+
+This means the task's original framing ("set ARCHIVE_GCS_BUCKET_OVERRIDE
+only in the offline overlay file, the way Task 4 did for CPLS's
+STORAGE_EMULATOR_HOST") could not be followed literally: CPLS's
+`GCS_BUCKET_NAME` (a real bucket-name var, always set, in the *base*
+file) has no Agora Next equivalent to lean on. Deviation taken:
+`infra/docker-compose.yml`'s `agora-next` service sets
+`ARCHIVE_GCS_BUCKET_OVERRIDE: https://storage.googleapis.com/${GCS_BUCKET_NAME:-fleet-archive-dev}`
+in the base file (pointed at the real bucket CPLS writes to), and
+`infra/docker-compose.offline.yml` overrides only the base URL, to
+`http://fake-gcs:4443/${GCS_BUCKET_NAME:-fleet-archive-dev}` - same
+variable reused from CPLS's own config for consistency. Verified with
+`docker compose ... config`: the merged `agora-next.environment` shows
+`ARCHIVE_GCS_BUCKET_OVERRIDE: http://fake-gcs:4443/fleet-archive-dev`
+when both files are layered, and would show the `storage.googleapis.com`
+form with the base file alone.
+
+### NEXT_PUBLIC_FORK_NODE_URL: one value, two audiences
+
+Traced every read of `NEXT_PUBLIC_FORK_NODE_URL`
+(`grep -rn "NEXT_PUBLIC_FORK_NODE_URL"`): `src/lib/rpcConfig.ts`
+(`getRpcUrlForChain`, used by every tenant's server-side contract config
+including the new `fleet.ts`), `src/lib/utils.ts`, `src/lib/viem.ts`
+(`getWalletClient`, used by client components), `src/lib/tenant/tenant.ts`,
+and three other tenants' contract configs. None of these branch on
+`typeof window`; they all do a plain `process.env.NEXT_PUBLIC_FORK_NODE_URL`
+read. Next.js's documented behavior for `NEXT_PUBLIC_`-prefixed vars is to
+inline them (via webpack's `DefinePlugin`) into every bundle it compiles,
+server and client alike, using whatever value is in `process.env` when
+that module is compiled - there is no source-level way to give the server
+bundle `http://anvil:8545` and the client (browser) bundle
+`http://localhost:8545` from a single `NEXT_PUBLIC_` var without patching
+one of these call sites to introduce a second, non-public env var read
+with a `typeof window` branch. That patch is outside this task's
+registration-only scope (`infra/agora-next/patches/0001-...patch` only
+touches the 10 files listed in "Step 1" above).
+
+Confirms the upstream code itself was never designed for this
+split-network scenario either: `README.md`'s own documented example is
+`NEXT_PUBLIC_FORK_NODE_URL=http://localhost:8545` (line 150), i.e. it
+assumes the Next.js dev server and the forked chain run on the same host
+the browser is on - exactly the "host-mode" dev setup this task's
+decisions section offers as a faster alternative to the Docker build, and
+exactly what does NOT hold once Anvil, Postgres, DAO Node, and Agora Next
+all run as separate Compose services on their own network.
+
+Decision: set `NEXT_PUBLIC_FORK_NODE_URL=http://anvil:8545` (server-correct)
+in `infra/docker-compose.yml`'s `agora-next` service. This is required for
+SSR/API-route contract reads to work inside the container (`anvil` only
+resolves on the compose network); it is what makes `Tenant.current()`'s
+contract construction succeed at all when a page renders. The cost: a
+real browser opening this tenant would get the same
+`http://anvil:8545` baked into its JS bundle for any client-side chain
+read (`getWalletClient` in `viem.ts`, the direct read in `utils.ts`), and
+`anvil` does not resolve from the host/browser, so those specific
+client-side paths would fail there. This task's verification is
+`curl`-based against server-rendered HTML only, which never executes
+browser JS, so it does not exercise or get blocked by this gap. Flagged
+here for whichever later task first needs live wallet interaction against
+this local stack; the fix, if wanted, is a source patch introducing a
+second non-public var (e.g. `FORK_NODE_URL_SERVER`) with a
+`typeof window === "undefined"` branch in `rpcConfig.ts`, or reverse
+proxying the browser's RPC calls through the Next.js server.
+
+### Six more `TENANT_NAMESPACES.B3` call sites left unpatched, on purpose
+
+Beyond the ten files patch 0001 touches, `grep -rl
+"TENANT_NAMESPACES.B3\b" src` also finds six more:
+`src/app/info/components/GovernorSettingsProposalTypes.tsx`,
+`src/app/info/components/InfoAbout.tsx`,
+`src/app/api/images/og/assets/shared.tsx`,
+`src/app/proposals/components/ProposalStateAdmin.tsx`,
+`src/components/DevTools/TenantSwitcher.tsx`, and
+`src/components/Proposals/ProposalPage/ShareVoteDialog/TenantLogo.tsx`.
+All six are optional/cosmetic per-tenant branching (an admin dev-tools
+tenant picker list, an "about" page layout tweak, social-share OG card
+SVG art, a proposal-admin feature gate, a share-vote-dialog logo) that
+either falls through to a safe default for any unlisted namespace
+(boolean `namespace !== X && namespace !== Y...` checks, or a `switch`
+with a `default:` case) rather than throwing, and none sit on the
+`/proposals` or `/delegates` render path - confirmed empirically, since
+neither page threw or logged anything related to these files across
+every verification run. Not part of patch 0001, matching the brief's
+Step 4 file list, which does not name them. Fleet simply gets each
+one's default/fallback treatment, the same as any other tenant these
+files don't special-case.
+
+### env_file vs environment: for the agora-next compose service
+
+`infra/agora-next/.env.fleet.example` documents every var (per the task's
+"Env for compose from infra/agora-next/.env.fleet.example" instruction),
+but `infra/docker-compose.yml`'s `agora-next` service sets them directly
+via an `environment:` block, the same pattern every other service in this
+file already uses, rather than an `env_file:` pointer at the `.example`
+file. Reasoning: Compose's `env_file:` requires the referenced file to
+exist (a plain, un-copied `*.example` template would need to be copied to
+a real path first, or `docker compose up` errors before the service ever
+starts), which would make `agora-next` behave differently from every
+other service in this stack - all of which tolerate a completely absent
+`infra/.env` via `${VAR:-default}` interpolation. Keeping `agora-next`'s
+real values inline in the compose file (with `${GCS_BUCKET_NAME:-...}`
+interpolation from `infra/.env` where it needs to match CPLS) preserves
+that "works out of the box, no copy step required" property.
+
+### Docker build: npm ci needs python3/make/g++ for a native dependency, not just openssl
+
+The brief's suggested Dockerfile (`git patch openssl` only) failed `npm
+ci` on the first real build attempt:
+`node-gyp` tried to compile `bufferutil` (an optional native accelerator
+`ws`/WalletConnect transitively depend on) from source because no
+prebuilt binary exists for this image's architecture/Node version
+combination, and failed immediately with "Could not find any Python
+installation to use" (no `python3`, no C++ toolchain in
+`node:20-bookworm-slim`). Fixed by adding `python3 make g++` to
+`infra/agora-next/Dockerfile`'s `apt-get install` line. Did not reproduce
+locally with a plain host `npm install` on macOS/arm64 during
+verification (a prebuilt `bufferutil` binary exists for that
+platform/Node combination), only inside the Linux container - a reminder
+that the "develop against vendor/agora-next directly, then prove the
+Docker build once" workflow this task's decisions describe can hide a
+build-only failure like this one until the final Docker step.
+
+### `vendor/agora-next/.env.local` leaked into the first Docker build
+
+The same host-mode iteration (`.env.local` written in
+`vendor/agora-next/` per this task's decisions section, with
+`localhost`-based URLs for the host-published ports) left that file on
+disk when the first `docker compose build agora-next` ran.
+`COPY vendor/agora-next /app` in `infra/agora-next/Dockerfile` copies
+whatever is on the host filesystem, gitignored or not (`COPY` only
+respects `.dockerignore`, which this Dockerfile's build context does not
+define), so that stray `.env.local` (with `DATABASE_URL` pointed at
+`localhost:55432`, `DAONODE_URL_TEMPLATE` at `localhost:8000`, etc. -
+none of which resolve from inside the container) ended up baked into the
+image. It did not actually break anything: Next.js's `@next/env` loader
+does not override a variable already present in `process.env` before it
+runs, and Docker Compose's `environment:` block sets real process
+environment variables before `npm run dev` starts, so the compose-provided
+values (`postgres`, `dao-node`, etc.) won every time - confirmed by the
+first build's `/proposals` request successfully completing a
+`getVotableSupplyFromDaoNode` call (which requires reaching
+`dao-node:8000`, not `localhost:8000`). Even so, shipping a host-specific
+`.env.local` inside the image is not something Task 6 or a later operator
+should have to reason about or accidentally depend on. Fixed by deleting
+`vendor/agora-next/.env.local` (confirmed `git -C vendor/agora-next
+status --short` was otherwise already clean) and rebuilding with
+`docker compose build --no-cache agora-next` to guarantee no stale layer
+from the earlier build was reused; the "Boot verification commands and
+outputs" section above is from this clean rebuild, not the one with the
+leaked file.
+
+### Stub tables added (beyond what infra/postgres/gen-stub.ts already produced from b3's own Prisma views)
+
+Verification proceeded page by page against the live compose stack
+(anvil/postgres/dao-node/cpls up via `docker compose -f
+docker-compose.yml -f docker-compose.offline.yml`, Agora Next run in
+host-mode dev first for fast iteration, then proven once more through the
+full Docker build). `/proposals` and `/delegates` (the two pages the
+controller ruling requires) rendered cleanly on the very first attempt,
+no missing-table errors at all. Continuing on to `/delegates/<address>`
+and `/proposals/<id>` (also named in the brief's "Produces" interface
+list, though outside the controller's strict verification requirement)
+surfaced three more gaps, fixed in `infra/postgres/gen-stub.ts` and
+regenerated into `infra/postgres/init/02-agora-stub.sql` /
+`03-agora-web2-stub.sql`:
+
+1. **`fleet.vote_cast_events` and `fleet.vote_cast_with_params_events`**
+   (`relation "fleet.vote_cast_events" does not exist`, from
+   `/delegates/<address>`, `src/app/api/common/votes/getVotes.ts`'s
+   `getVotesForDelegateForAddress`, an unconditional raw-SQL path not
+   gated by the `use-archive-for-vote-history` toggle). Neither table has
+   a `model`/`view` block anywhere in `schema.prisma` for *any* tenant
+   (b3 included) - they're read with `${namespace}.vote_cast_events`
+   string interpolation directly, bypassing Prisma's model layer
+   entirely, so `extractModelsForSchema` had no way to discover them.
+   Added as a new hand-written `FLEET_RAW_SQL_TABLES` list in
+   `gen-stub.ts` (columns inferred from the exact `SELECT`/`WHERE`
+   clauses in `getVotes.ts` and `getVotesChart.ts`: `transaction_hash`,
+   `proposal_id`, `voter`, `support`, `weight`, `reason`, `block_number`,
+   `params`, `contract`).
+2. **Five more `"config"` schema enum types** (`chain`, `contract_type`,
+   `dao`, `env`, `proposal_type`) alongside the existing `dao_slug`.
+   Surfaced as `type "config"."proposal_type" does not exist` (the same
+   `getVotesForDelegateForAddress` query casts a joined column with
+   `proposals.proposal_type::config.proposal_type`). `gen-stub.ts`
+   previously only special-cased `DaoSlug`; generalized to
+   `extractEnumsForSchema(text, "config")`, which walks every `enum { ...
+   @@schema("config") }` block and creates all of them generically (still
+   appending `'FLEET'` to `dao_slug` specifically, matching the existing
+   special case). Also fixed `extractEnumValues` to honor a member's own
+   `@map("...")` override (`Chain`'s `optimism_mainnet @map("optimism-mainnet")`
+   would otherwise have produced the Prisma-side identifier
+   `optimism_mainnet` as the Postgres label instead of the real
+   `optimism-mainnet`).
+3. **`snapshot.votes`, `snapshot.proposals_v2`, and `snapshot.proposals`**
+   (`relation "snapshot.votes" does not exist`, then
+   `relation "snapshot.proposals" does not exist`, both from
+   `getVotesForDelegateForAddress`'s has-voted/offchain-vote-history
+   checks - not fleet-specific at all, every tenant's delegate profile
+   page runs these same `"snapshot".votes`/`"snapshot".proposals`
+   queries). `schema.prisma` does declare `SnapshotVotes` (`@@map("votes")`)
+   and `SnapshotProposal` (`@@map("proposals_v2")`) under `@@schema("snapshot")`,
+   but `gen-stub.ts` never extracted the `"snapshot"` schema at all
+   (only `"b3"`, `"agora"`, `"config"`) - a pre-existing Task 2 gap, not
+   introduced by Task 5, that this is the first task/page combination to
+   actually exercise. Fixed by adding `snapshotModels =
+   extractModelsForSchema(text, "snapshot")` (picks up the two real
+   models) alongside a second hand-written raw-SQL-only entry for
+   `snapshot.proposals` (a *different* physical table name than the
+   Prisma-modeled `proposals_v2`; the JOIN in `getVotes.ts` line 354
+   needs only `id`/`title`). `"snapshot"` was added to both `web3Sql`'s
+   and `web2Sql`'s `renderSchemaCreates([...])` calls, matching how
+   `"agora"`/`"config"` are already shared across both databases.
+
+Total stub surface for the fleet schema after these fixes: 14 tables from
+b3's own Prisma views (unchanged from Task 2) + 2 raw-SQL-only tables = 16
+`fleet.*` tables; plus 6 `config.*` enum types (was 1); plus 3
+`snapshot.*` tables (was 0). `infra/postgres/gen-stub.ts`'s own console
+output after the fix:
+```
+Wrote 16 fleet table(s) (14 from b3's schema.prisma views, 2 raw-SQL-only), 7 agora table(s), 1 config table(s), 6 config enum(s), 3 snapshot table(s) (2 from schema.prisma, 1 raw-SQL-only) to infra/postgres/init/02-agora-stub.sql and infra/postgres/init/03-agora-web2-stub.sql.
+```
+`infra/postgres/gen-stub.test.ts`'s existing two tests still pass
+unchanged (they only exercise `prismaTypeToPg`/`extractModelsForSchema`/
+`renderCreateTable`, none of which changed signature).
+
+Every fix above was scoped generically (by schema, not by tenant), since
+none of these three gaps are fleet-specific in the source; they would
+have blocked the *same* pages for any tenant that had never exercised
+them against this stub Postgres before. Restarting Postgres with a fresh
+volume (`docker compose down -v` then `up -d`) was required after each
+`gen-stub.ts` regeneration, per this repo's existing convention (init
+scripts only run against an empty data directory).
+
+### Verification: what was and wasn't chased down
+
+Per the controller ruling, the required scope is `/proposals` and
+`/delegates` returning HTML with no server errors, plus `/delegates`
+showing DAO Node's (possibly empty, for placeholder addresses) delegate
+list. Both pages returned HTTP 200 with zero server-side errors logged,
+on the very first host-mode attempt, before any of the three stub fixes
+above were even needed - those three fixes were found and fixed only
+because `/delegates/<address>` and `/proposals/<id>` (the brief's
+"Produces" list, beyond the controller's strict requirement) were also
+spot-checked. After the fixes, all four pages return HTTP 200 with no
+database errors. Two remaining non-fatal, expected conditions were left
+as-is (not bugs):
+- `/delegates/<address>` logs a caught `ENS Resolution Error: No RPC
+  secret configured` (from `src/app/lib/ENSUtils.ts`'s
+  `getMainnetProvider`, which calls `getRpcUrl` directly rather than
+  `getRpcUrlForChain`, so it does not benefit from the
+  `NEXT_PUBLIC_FORK_NODE_URL` fallback the tenant contracts use). Expected
+  and harmless: this task's env deliberately leaves RPC secrets/WalletConnect/
+  Alchemy/EAS/Pinata/Tenderly empty (per the task's own instruction), and
+  the error is caught internally - the page still renders 200.
+- `/proposals/1` throws (caught, rendered as a normal not-found page)
+  `Error: Proposal not found in archive`
+  (`src/app/proposals/[proposal_id]/page.tsx:48`). Correct behavior for a
+  proposal id that does not exist - no fleet governor has ever been
+  deployed against this Anvil instance in this task's verification, so
+  zero proposals exist anywhere (chain, DAO Node, or archive). Task 6
+  verifies real proposal data once a real deployment exists.
+
+No further raw-SQL table audit beyond what these four pages actually
+exercised was undertaken (e.g. `dao_settings`, `badge_definitions`,
+`identity_badges`, `delegatees_mat`, and the OPTIMISM-only
+`atlas."votes_with_meta_mat"` path all showed up in a broader
+`grep -rn '\${namespace}\.'` sweep of the codebase but were never hit by
+any of the four pages tested, either because they're gated by toggles
+this tenant's UI config leaves disabled - `badges` isn't in
+`fleetTenantUIConfig`'s toggle list - or, for `atlas`, gated to
+`namespace === TENANT_NAMESPACES.OPTIMISM` specifically). If a later task
+exercises a page that hits one of these, the fix is the same pattern
+used above: add the table/columns to `gen-stub.ts`, regenerate, restart
+Postgres with a fresh volume.
+
+### Boot verification commands and outputs
+
+Host-mode (fast iteration, `vendor/agora-next` with `npm install` +
+`.env.local`, against the same Compose-run Postgres/DAO Node/CPLS/fake-gcs
+used for the final Docker proof below, host-published ports
+`localhost:55432`/`localhost:8000`/`localhost:4443`/`localhost:8545`):
+
+```
+$ curl -sS -o proposals.html -w "HTTP %{http_code}\n" http://localhost:3000/proposals
+HTTP 200
+$ grep -io "application error\|internal server error\|unhandled" proposals.html
+(no matches)
+$ grep -o "<title>[^<]*</title>" proposals.html
+<title>Fleet Governance: Proposals</title>
+
+$ curl -sS -o delegates.html -w "HTTP %{http_code}\n" http://localhost:3000/delegates
+HTTP 200
+$ grep -o "<title>[^<]*</title>" delegates.html
+<title>Fleet Governance: Delegates</title>
+
+$ curl -s http://localhost:8000/v1/delegates
+{"delegates":[]}
+```
+
+Empty DAO Node delegate list is expected here per the controller ruling
+(placeholder addresses, no fleet ever deployed against this Anvil
+instance); Task 6 verifies the five-delegate case against a real
+deployment.
+
+Full Docker build/boot proof (final step, after reverting
+`vendor/agora-next` to pristine and letting the patch + overlay + fresh
+`npm ci` do the work exactly as a clean checkout would; `--no-cache` used
+here specifically to rule out a stray `.env.local` left over from
+host-mode iteration leaking into an earlier cached layer, see
+"`vendor/agora-next/.env.local` leaked into the first Docker build" below):
+
+```
+$ git -C vendor/agora-next status --short
+(clean)
+$ docker compose -f docker-compose.yml -f docker-compose.offline.yml build --no-cache agora-next
+[... apt-get git/patch/openssl/python3/make/g++, npm ci (89s), prisma generate, generate-typechain ...]
+ Image infra-agora-next Built
+
+$ docker compose -f docker-compose.yml -f docker-compose.offline.yml up -d
+$ ./scripts/create-fake-bucket.sh
+create-fake-bucket: created bucket fleet-archive-dev
+$ docker compose -f docker-compose.yml -f docker-compose.offline.yml ps --format '{{.Name}}\t{{.Status}}'
+infra-agora-next-1   Up 44 seconds (healthy)
+infra-anvil-1        Up About a minute (healthy)
+infra-cpls-1         Up 50 seconds (healthy)
+infra-dao-node-1     Up 56 seconds (healthy)
+infra-fake-gcs-1     Up About a minute
+infra-postgres-1     Up About a minute (healthy)
+
+$ curl -sS -o proposals.html -w "HTTP %{http_code}\n" http://localhost:3000/proposals
+HTTP 200
+$ curl -sS -o delegates.html -w "HTTP %{http_code}\n" http://localhost:3000/delegates
+HTTP 200
+$ grep -io "application error\|internal server error\|unhandled" proposals.html delegates.html
+(no matches)
+$ grep -o "<title>[^<]*</title>" proposals.html delegates.html
+proposals.html:<title>Fleet Governance: Proposals</title>
+delegates.html:<title>Fleet Governance: Delegates</title>
+$ curl -s http://localhost:8000/v1/delegates
+{"delegates":[]}
+```
+
+Re-verified once more after the memory-pressure restart described below
+(same commands, same outcome: both pages HTTP 200, no errors, all six
+`docker compose ps` services `healthy`).
+
+### `npm run dev`'s memory footprint under Docker Desktop's default VM: observed both a hard OOM-kill and Next's own soft self-restart
+
+Not a fleet-tenant bug; recorded because it affected the verification
+run and would affect any tenant on this same Compose stack. `npm run dev`
+(`generate-typechain & npx prisma generate & next dev --webpack`, all
+three concurrently, matching upstream's own script) compiles each route
+lazily on first request rather than ahead of time. After compiling
+`/proposals` and `/delegates` sequentially, `docker stats` showed
+`infra-agora-next-1` steady at **5.5-5.6 GiB** resident memory, out of
+this host's Docker Desktop VM total of 7.65 GiB (`docker info --format
+'{{.MemTotal}}'`). Requesting a third, heavier route
+(`/delegates/[addressOrENSName]`, which pulls in ENS resolution, the
+delegate's onchain and offchain vote history, badges, etc.) while the
+automated healthcheck (polling `/proposals` every 10s) and a manual curl
+were both also in flight pushed the container over the VM's memory
+ceiling: `docker inspect` showed `OOMKilled=true`, a hard kill by the
+Linux OOM killer, exit code 0. Restarting the service
+(`docker compose up -d agora-next`) recovered it cleanly (matches this
+repo's dao-node section's own "a safe workaround while investigating
+further" pattern). A second attempt at the same detail page, seconds
+after `/proposals`/`/delegates` had just finished a fresh compile (so
+under even more memory pressure), didn't hard-crash but did trigger
+Next.js 16's own built-in graceful degradation: the log printed
+`Server is approaching the used memory threshold, restarting...` and the
+dev server restarted itself proactively (not a Docker/kernel-level kill;
+`OOMKilled` was `false` for that instance) - the in-flight `curl` request
+observed this as a truncated response body after already receiving a 200
+status line.
+
+Both instances happened only while probing `/delegates/<address>` (a
+page beyond the controller's strict verification requirement, listed in
+the brief's "Produces" interface but not the ruling's required scope);
+`/proposals` and `/delegates` themselves were re-verified clean
+(HTTP 200, no errors, `docker compose ps` showing all six services
+`healthy`) immediately after each recovery, with no further crashes
+across multiple repeated checks. Given this is Docker Desktop VM memory
+provisioning under Next.js dev-mode's real compile-time footprint for a
+genuinely large multi-tenant app, not a fleet registration defect, no
+source or compose change was made to "fix" it; flagged here for whoever
+next works with this container under memory-constrained Docker Desktop
+settings. If it recurs and blocks real work, the two straightforward
+mitigations are raising Docker Desktop's VM memory allocation, or
+avoiding concurrent multi-route compiles the first time a set of pages
+is warmed up (e.g. hit pages one at a time, letting each finish
+compiling, rather than curling several in parallel).

@@ -1,17 +1,27 @@
 # Local/offline overlay: local stand-in for the GCS archive bucket used by
-# cpls (infra/docker-compose.yml's base cpls service targets real GCS).
-# Use with the base file, not on its own:
+# cpls and agora-next (infra/docker-compose.yml's base cpls/agora-next
+# services target real GCS). Use with the base file, not on its own:
 #   docker compose -f infra/docker-compose.yml -f infra/docker-compose.offline.yml up -d
 #
 # This adds fake-gcs and points cpls at it via STORAGE_EMULATOR_HOST, which
 # google-cloud-storage's Client() reads directly: when set, it swaps in
 # AnonymousCredentials instead of resolving GOOGLE_APPLICATION_CREDENTIALS/ADC,
 # so the base file's /dev/null credentials placeholder is never actually
-# parsed while this overlay is applied.
+# parsed while this overlay is applied. agora-next has no such SDK/emulator
+# split (its archive reads are plain unauthenticated fetch() calls, see
+# src/lib/archiveUtils.ts): it only needs ARCHIVE_GCS_BUCKET_OVERRIDE
+# repointed at fake-gcs's base URL instead of storage.googleapis.com.
 services:
   cpls:
     environment:
       STORAGE_EMULATOR_HOST: http://fake-gcs:4443
+    depends_on:
+      fake-gcs:
+        condition: service_started
+
+  agora-next:
+    environment:
+      ARCHIVE_GCS_BUCKET_OVERRIDE: http://fake-gcs:4443/${GCS_BUCKET_NAME:-fleet-archive-dev}
     depends_on:
       fake-gcs:
         condition: service_started

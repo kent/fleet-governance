@@ -125,5 +125,81 @@ services:
       retries: 10
       start_period: 15s
 
+  agora-next:
+    build:
+      context: ..
+      dockerfile: infra/agora-next/Dockerfile
+    ports:
+      - "${AGORA_NEXT_PORT:-3000}:3000"
+    environment:
+      NEXT_PUBLIC_AGORA_INSTANCE_NAME: fleet
+      NEXT_PUBLIC_AGORA_INSTANCE_TOKEN: FLEET
+      NEXT_PUBLIC_AGORA_ENV: dev
+      NEXT_PUBLIC_AGORA_BASE_URL: http://localhost:${AGORA_NEXT_PORT:-3000}
+      NEXT_PUBLIC_AGORA_API_KEY: dev
+      # getRpcUrlForChain() (src/lib/rpcConfig.ts) returns this verbatim for
+      # every chain id when set, read with plain process.env in several
+      # places (server AND client-bundled code, never gated on
+      # typeof window). Next.js inlines one NEXT_PUBLIC_ value into both
+      # bundles, so this is the server-correct value (the agora-next
+      # container reaches Anvil at "anvil", not "localhost"); a real
+      # browser session would need "http://localhost:8545" for any
+      # client-side chain read instead, and does not get it from this
+      # setting. See docs/compatibility-notes.md, Task 5,
+      # "NEXT_PUBLIC_FORK_NODE_URL: one value, two audiences".
+      NEXT_PUBLIC_FORK_NODE_URL: http://anvil:8545
+      # src/app/lib/prisma.ts reads only DATABASE_URL; prismaWeb2Client and
+      # prismaWeb3Client are the same PrismaClient instance (see
+      # docs/compatibility-notes.md's "Agora Next Prisma web2/web3 split").
+      # The two READ_*_DEV vars are set anyway since README.md documents
+      # them, in case a future upstream version starts reading them.
+      DATABASE_URL: postgres://agora:agora@postgres:5432/agora_web3
+      READ_WRITE_WEB2_DATABASE_URL_DEV: postgres://agora:agora@postgres:5432/agora_web2
+      READ_ONLY_WEB3_DATABASE_URL_DEV: postgres://agora:agora@postgres:5432/agora_web3
+      DAONODE_URL_TEMPLATE: http://dao-node:8000
+      # ARCHIVE_GCS_BUCKET_OVERRIDE is the ONLY env var
+      # src/lib/constants.ts's ARCHIVE_GCS_BUCKET reads; there is no plain
+      # bucket-name var. Left unset, it hardcodes a real, unrelated Agora
+      # production bucket, which would silently serve the wrong DAO's data
+      # instead of fleet's rather than failing loudly. So, unlike CPLS's
+      # STORAGE_EMULATOR_HOST (which only the offline overlay sets), this
+      # base file sets ARCHIVE_GCS_BUCKET_OVERRIDE too, pointed at the same
+      # real bucket CPLS's own GCS_BUCKET_NAME writes to; the offline
+      # overlay below only swaps which base URL it points at. See
+      # docs/compatibility-notes.md, Task 5, "ARCHIVE_GCS_BUCKET is not a
+      # real env var".
+      ARCHIVE_GCS_BUCKET_OVERRIDE: https://storage.googleapis.com/${GCS_BUCKET_NAME:-fleet-archive-dev}
+      # JSON written by Task 6's deployment script; the placeholder here
+      # (mounted from ../deployments below) lets this service boot before
+      # a real fleet is deployed. configs/contracts/fleet.ts re-reads this
+      # file on every call, so swapping it only needs a container restart.
+      FLEET_DEPLOYMENT_FILE: /deployments/agora-next-deployment.json
+      # Dev-only value; README.md recommends 32+ characters.
+      JWT_SECRET: dev-only-32-character-secret-key-fleet
+    volumes:
+      - ../deployments:/deployments:ro
+    depends_on:
+      anvil:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      dao-node:
+        condition: service_healthy
+      cpls:
+        condition: service_healthy
+    healthcheck:
+      # node:20-bookworm-slim has no curl by default; node itself is
+      # already guaranteed present and is the smallest reliable
+      # healthcheck tool here (same reasoning as dao-node/cpls using
+      # python3 instead of adding a curl package there).
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/proposals', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      # `npm run dev` compiles each route on first request rather than
+      # ahead of time; the very first hit to /proposals took around 30s in
+      # verification, so this is generous headroom above that.
+      start_period: 90s
+
 volumes:
   postgres-data:

@@ -6,6 +6,7 @@
 CREATE SCHEMA IF NOT EXISTS "fleet";
 CREATE SCHEMA IF NOT EXISTS "agora";
 CREATE SCHEMA IF NOT EXISTS "config";
+CREATE SCHEMA IF NOT EXISTS "snapshot";
 
 DO $$
 BEGIN
@@ -14,6 +15,56 @@ BEGIN
     WHERE t.typname = 'dao_slug' AND n.nspname = 'config'
   ) THEN
     CREATE TYPE "config"."dao_slug" AS ENUM ('OP', 'ENS', 'UNI', 'NOUNS', 'LYRA', 'ETHERFI', 'UNISWAP', 'CYBER', 'SCROLL', 'DERIVE', 'PGUILD', 'BOOST', 'XAI', 'B3', 'DEMO', 'LINEA', 'TOWNS', 'SYNDICATE', 'ZEROG', 'DEMO2', 'DEMO4', 'DEMO3', 'SHAPE', 'FLEET');
+  END IF;
+END$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE t.typname = 'chain' AND n.nspname = 'config'
+  ) THEN
+    CREATE TYPE "config"."chain" AS ENUM ('optimism-mainnet', 'ethereum-mainnet');
+  END IF;
+END$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE t.typname = 'contract_type' AND n.nspname = 'config'
+  ) THEN
+    CREATE TYPE "config"."contract_type" AS ENUM ('governor', 'token', 'alligator', 'proposal_types_configurator');
+  END IF;
+END$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE t.typname = 'dao' AND n.nspname = 'config'
+  ) THEN
+    CREATE TYPE "config"."dao" AS ENUM ('optimism');
+  END IF;
+END$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE t.typname = 'env' AND n.nspname = 'config'
+  ) THEN
+    CREATE TYPE "config"."env" AS ENUM ('dev', 'prod');
+  END IF;
+END$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE t.typname = 'proposal_type' AND n.nspname = 'config'
+  ) THEN
+    CREATE TYPE "config"."proposal_type" AS ENUM ('STANDARD', 'APPROVAL', 'OPTIMISTIC', 'SNAPSHOT', 'OFFCHAIN');
   END IF;
 END$$;
 
@@ -174,6 +225,30 @@ CREATE TABLE IF NOT EXISTS "fleet"."voting_power_snaps" (
   "contract" text
 );
 
+CREATE TABLE IF NOT EXISTS "fleet"."vote_cast_events" (
+  "transaction_hash" text,
+  "proposal_id" text,
+  "voter" text,
+  "support" text,
+  "weight" numeric,
+  "reason" text,
+  "block_number" bigint,
+  "params" text,
+  "contract" text
+);
+
+CREATE TABLE IF NOT EXISTS "fleet"."vote_cast_with_params_events" (
+  "transaction_hash" text,
+  "proposal_id" text,
+  "voter" text,
+  "support" text,
+  "weight" numeric,
+  "reason" text,
+  "block_number" bigint,
+  "params" text,
+  "contract" text
+);
+
 CREATE TABLE IF NOT EXISTS "agora"."delegate_statements" (
   "address" text,
   "dao_slug" "config"."dao_slug",
@@ -251,4 +326,47 @@ CREATE TABLE IF NOT EXISTS "config"."contracts" (
   "contract_type" text,
   "dao" text,
   "env" text
+);
+
+CREATE TABLE IF NOT EXISTS "snapshot"."proposals_v2" (
+  "id" text,
+  "dao_slug" "config"."dao_slug",
+  "author" text,
+  "body" text,
+  "choices" text[],
+  "created" numeric,
+  "end" numeric,
+  "link" text,
+  "network" text,
+  "scores" numeric[],
+  "scores_state" text,
+  "scores_total" numeric,
+  "scores_updated" numeric,
+  "snapshot" text,
+  "start" numeric,
+  "state" text,
+  "title" text,
+  "type" text,
+  "votes" numeric
+);
+
+CREATE TABLE IF NOT EXISTS "snapshot"."votes" (
+  "id" text,
+  "voter" text,
+  "created" integer,
+  "choice" text,
+  "metadata" jsonb,
+  "reason" text,
+  "app" text,
+  "vp" double precision,
+  "vp_by_strategy" jsonb,
+  "vp_state" text,
+  "proposal_id" text,
+  "choice_labels" jsonb,
+  "dao_slug" text
+);
+
+CREATE TABLE IF NOT EXISTS "snapshot"."proposals" (
+  "id" text,
+  "title" text
 );
