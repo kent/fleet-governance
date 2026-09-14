@@ -1,6 +1,8 @@
 # Fleet simulation progress
 
-Updated September 14, 2026. The thread goal remains active.
+Updated September 14, 2026. The code, blog and recorded demonstrations are published. The
+measured live pilot is blocked on a dedicated capped provider key. The separate Agora
+detail-page browser audit also remains incomplete because of compiler memory failures.
 
 The goal is a fleet with thousands of agents working under a constitution, a public onchain
 decision when an agent proposes a deviation, and execution authority tied to that decision.
@@ -20,6 +22,7 @@ that the fleet would reject one.
 | Thousands participate onchain | `scale-2000-1789408328458` verified 2,000 members and 4,000 ballots across a defeated exception and an executed amendment. Every voter had a public reason; no votes were missing. Deployment used 107 transactions, each below the 16,777,216 gas cap. | Verified with scripted participants and actual onchain transactions on owned Anvil. |
 | Governance controls a resource through contract permits | `FleetExecutor` and `GovernedArtifactStore` bind publication to an exact settled permission. Twenty contract tests cover enforcement, including no ballots, insufficient yes votes, all abstentions and a tie. The model task loop now builds and proposes exact file permissions too. | Verified for the artifact store at 2,000 scripted members, and through the normal task loop with three scripted providers. HTTP remains inside the trusted runtime boundary. |
 | Sustainable operation at the requested scale | Shared inference scheduling, voting reservations, durable call/token/dollar accounting, and bounded tool/vote job pools are implemented. OpenRouter requests carry price ceilings; preflight requires a capped provider key. Deployment gas is measured. | Partially implemented. Input reservations are conservative estimates, and one coordinator owns the budget. No 2,000-model run has been demonstrated. |
+| The public record preserves votes, reasons and missing evidence | Runner's saved record was inspected in Chrome. Twelve Agora archive checks pass, and all ten ballots in two local demo archives match chain evidence. Missing or corrupt vote records return an unavailable message. | Runner and archive paths verified. The separate Agora detail-page browser audit is incomplete because of compilation memory failures. |
 
 ## Sandbox changes verified earlier
 
@@ -353,3 +356,40 @@ Webpack memory option with a 4 GiB Node heap still produced a recorded Docker OO
 heap trial also reached the container limit without rendering the page. Those unproven settings
 were reverted. The existing Anvil, database and indexer were not restarted. A larger development
 VM or a verified reduction in the UI's compilation footprint is still needed for this audit.
+
+## Archive availability and chain comparison
+
+The Agora archive reader now preserves the difference between an empty record and unavailable
+evidence. Its vote API returns HTTP 503 with a plain unavailable message for missing objects,
+failed reads or malformed NDJSON. It no longer treats a partial file as a complete ballot list.
+An explicitly empty file remains readable, with wording that describes the archive rather than
+asserting that the chain has no votes.
+
+Fleet proposal lists reject missing or malformed archive files too. A proposal detail lookup
+can use a valid result from another configured source. When no source returns the proposal,
+failed reads remain errors. Only missing objects across all sources mean not found. Twelve
+tests passed against the actual patched reader and vote route in the built Agora image, using
+a local HTTP archive server inside a container with no external network.
+
+A separate read compared both five-member demo archives with the still-running local chain.
+The executed proposal had three For and two Against ballots; the defeated proposal had two
+For and three Against. All ten ballots matched on voter, support, weight, public reason,
+transaction, block and chain ID. These are existing demo records, not a new model run. The
+bundled evidence checksums and available local captures also still match.
+
+The tenant's transparency notice now distinguishes approval, execution, the contract artifact
+store and the runtime gateway. It no longer says all enforcement happens offchain. The health
+check consumes the full page response before exiting, avoiding cancellation of a successful
+streamed render. The Docker build now reuses installed dependencies when tenant copy or runtime
+patches change. All changes apply outside the pinned upstream Governor source.
+
+The Agora detail-page browser audit still did not complete. With a 7 GiB container, a 3 GiB
+V8 heap failed with a recorded JavaScript heap exhaustion. A 4 GiB heap served the list but
+triggered Next's memory restart during detail compilation. These trials were reverted; the
+tested archive changes do not claim to fix compilation. Anvil, Postgres and DAO Node kept their
+original container identities and start times throughout the audit.
+
+The read-only $1 OpenRouter preflight still rejects the available key because it does not meet
+the required non-resetting credit cap and accounting conditions. No paid model calls were made
+and no provider credit settings were changed. The dedicated capped key remains necessary for
+the measured live pilot.

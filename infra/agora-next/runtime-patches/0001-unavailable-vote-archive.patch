@@ -1,0 +1,151 @@
+# Preserve the difference between absent, empty and unreadable archive evidence.
+# Applied after the existing archive HTTP patch; upstream source stays unchanged.
+--- a/src/lib/archiveUtils.ts
++++ b/src/lib/archiveUtils.ts
+@@ -145,7 +145,7 @@
+ /**
+  * Parse NDJSON (Newline Delimited JSON) string to array of objects
+  */
+-function parseNDJSON<T>(ndjsonString: string): T[] {
++function parseNDJSON<T>(ndjsonString: string, strict = false): T[] {
+   const lines = ndjsonString
+     .split("\n")
+     .filter((line) => line.trim().length > 0);
+@@ -156,7 +156,8 @@
+       parsed.push(JSON.parse(lines[i]));
+     } catch (error) {
+       console.error(`Failed to parse NDJSON line ${i + 1}:`, error);
+-      // Skip malformed lines and continue
++      if (strict) throw new Error(`Invalid archive NDJSON on line ${i + 1}`);
++      // Legacy optional archives may skip malformed lines.
+     }
+   }
+
+@@ -166,12 +167,12 @@
+ /**
+  * Fetch and decompress a gzipped NDJSON file from the archive
+  */
+-async function fetchArchiveNdjson<T>(url: string): Promise<T[]> {
++async function fetchArchiveNdjson<T>(url: string, strict = false): Promise<T[]> {
+   const { status, statusText, buffer: arrayBuffer } = await fetchStatusAndBuffer(
+     withCacheBust(url)
+   );
+
+-  if (status === 404) {
++  if (status === 404 && !strict) {
+     return [];
+   }
+
+@@ -190,7 +191,7 @@
+     const decoder = new TextDecoder();
+     ndjsonText = decoder.decode(arrayBuffer);
+   }
+-  return parseNDJSON<T>(ndjsonText);
++  return parseNDJSON<T>(ndjsonText, strict);
+ }
+
+ /**
+@@ -235,7 +236,7 @@
+   try {
+     const archiveUrls = getArchiveSlugAllProposals(namespace);
+     const proposalBuckets = await Promise.all(
+-      archiveUrls.map((url) => fetchArchiveNdjson<ArchiveListProposal>(url))
++      archiveUrls.map((url) => fetchArchiveNdjson<ArchiveListProposal>(url, namespace === "fleet"))
+     );
+     const allProposals = proposalBuckets
+       .flat()
+@@ -275,17 +276,6 @@
+       data: filteredProposals,
+     };
+   } catch (error) {
+-    const errorMessage = error instanceof Error ? error.message : String(error);
+-    if (errorMessage.includes("404") || errorMessage.includes("Not Found")) {
+-      return {
+-        meta: {
+-          has_next: false,
+-          total_returned: 0,
+-          next_offset: 0,
+-        },
+-        data: [],
+-      };
+-    }
+     console.error("Error fetching proposals from archive:", error);
+     throw error;
+   }
+@@ -302,24 +292,22 @@
+   try {
+     const archiveUrls = getArchiveUrlsForProposal(namespace, proposalId);
+     // Fetch from all configured sources in parallel as gzipped JSON
+-    const results = await Promise.all(
++    const results = await Promise.allSettled(
+       archiveUrls.map((url) =>
+-        fetchArchiveGzipJson<ArchiveListProposal>(url).catch(() => null)
++        fetchArchiveGzipJson<ArchiveListProposal>(url)
+       )
+     );
+     // Return the first successful result
+     for (const result of results) {
+-      if (result) {
+-        return result;
++      if (result.status === "fulfilled" && result.value) {
++        return result.value;
+       }
+     }
+
++    const failed = results.find(result => result.status === "rejected");
++    if (failed?.status === "rejected") throw failed.reason;
+     return null;
+   } catch (error) {
+-    const errorMessage = error instanceof Error ? error.message : String(error);
+-    if (errorMessage.includes("404") || errorMessage.includes("Not Found")) {
+-      return null;
+-    }
+     console.error("Error fetching proposal from archive:", error);
+     throw error;
+   }
+@@ -382,13 +370,10 @@
+ }): Promise<ArchiveVoteRow[]> {
+   try {
+     return await fetchArchiveNdjson<ArchiveVoteRow>(
+-      getArchiveSlugForProposalVotes(namespace, proposalId)
+-    );
+-  } catch (error) {
+-    const errorMessage = error instanceof Error ? error.message : String(error);
+-    if (errorMessage.includes("404") || errorMessage.includes("Not Found")) {
+-      return [];
+-    }
++      getArchiveSlugForProposalVotes(namespace, proposalId),
++      true, // Missing or malformed evidence cannot establish that nobody voted.
++    );
++  } catch (error) {
+     console.error("Error fetching raw votes from archive:", error);
+     throw error;
+   }
+--- a/src/app/api/archive/votes/[proposalId]/route.ts
++++ b/src/app/api/archive/votes/[proposalId]/route.ts
+@@ -23,11 +23,9 @@
+
+     return NextResponse.json({ data: rawVotes });
+   } catch (error) {
+-    const errorMessage = error instanceof Error ? error.message : String(error);
+-    if (errorMessage.includes("404") || errorMessage.includes("Not Found")) {
+-      return NextResponse.json({ data: [] });
+-    }
+     console.error("Error fetching archive votes:", error);
+-    return NextResponse.json({ data: [] });
++    return new NextResponse("Vote records are temporarily unavailable. Please try again.", {
++      status: 503, headers: { "Cache-Control": "no-store" },
++    });
+   }
+ }
+--- a/src/components/Votes/ProposalVotesList/ArchiveProposalVotesList.tsx
++++ b/src/components/Votes/ProposalVotesList/ArchiveProposalVotesList.tsx
+@@ -125,7 +125,7 @@
+   if (!normalizedVotes.length) {
+     return (
+       <div className="px-4 pb-4 min-h-[160px] text-secondary text-xs">
+-        No votes yet.
++        No votes found in this archive.
+       </div>
+     );
+   }

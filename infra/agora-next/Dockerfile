@@ -19,6 +19,11 @@ COPY vendor/agora-next /app
 COPY infra/agora-next/patches /patches
 RUN for p in /patches/*.patch; do patch -p1 < "$p"; done
 
+# UI and tenant overlay edits do not change package dependencies. Install
+# first so those edits can reuse this layer; generate the final Prisma
+# client and contract bindings after applying the overlay below.
+RUN npm ci
+
 # Overlay: new files only (tenant contracts/UI config, ABI JSON, the fleet
 # Prisma views, and the two placeholder logo assets). Mirrors the upstream
 # repo layout under infra/agora-next/overlay/, copied straight over /app.
@@ -30,13 +35,16 @@ COPY infra/agora-next/overlay/ /app/
 # vendored file itself.
 RUN cat prisma/fleet-views.prisma >> prisma/schema.prisma
 
-RUN npm ci
-
 # Generates node_modules/.prisma/client (needs the fleet-views.prisma
 # content already appended above) and src/lib/contracts/generated/* (needs
 # the overlay's AgoraGovernorV2.json/FleetVotes.json already present under
 # src/lib/contracts/abis/).
 RUN npx prisma generate && npm run generate-typechain
+
+# Read-side fixes do not affect dependencies or generated contract bindings.
+COPY infra/agora-next/runtime-patches /runtime-patches
+RUN for p in /runtime-patches/*.patch; do patch -p1 < "$p"; done
+COPY infra/agora-next/tests /app/fleet-tests
 
 EXPOSE 3000
 CMD ["npm", "run", "dev"]

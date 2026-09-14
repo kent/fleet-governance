@@ -251,18 +251,10 @@ services:
       context: ..
       dockerfile: infra/agora-next/Dockerfile
     restart: unless-stopped
-    # `npm run dev` was measured at 5.5-5.6 GiB resident and was OOM-killed
-    # outright once (docs/compatibility-notes.md, "npm run dev's memory
-    # footprint under Docker Desktop's default VM"). Capping the container
-    # rather than letting it take the whole VM changes what happens when it
-    # runs out: the kill lands on this container alone (postgres, anvil and
-    # dao-node keep running) and the restart policy above brings it back,
-    # and Node sizes its own heap from the cgroup limit instead of from the
-    # VM, so it self-restarts gracefully more often than it dies. 6 GiB
-    # leaves headroom over the observed footprint and fits a Docker VM of
-    # 8 GiB with the rest of this stack (which totals well under 500 MiB).
-    # Raise AGORA_NEXT_MEM_LIMIT on a larger VM; see infra/README.md,
-    # "Docker VM sizing".
+    # Compilation needs both V8 heap and substantial native/buffer memory.
+    # The existing 6 GiB cap bounds the service, but is not enough for
+    # reliable proposal-detail compilation in this local development setup.
+    # See infra/README.md for the measured failures and sizing limits.
     mem_limit: ${AGORA_NEXT_MEM_LIMIT:-6g}
     ports:
       - "${AGORA_NEXT_PORT:-3000}:3000"
@@ -331,7 +323,9 @@ services:
       # already guaranteed present and is the smallest reliable
       # healthcheck tool here (same reasoning as dao-node/cpls using
       # python3 instead of adding a curl package there).
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/proposals', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      # Consume the SSR stream before exiting. Exiting on headers cancels
+      # a live render and can trigger Node's TransformStream cancel/write race.
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/proposals', (r) => { r.on('error', () => process.exit(1)); r.on('end', () => process.exit(r.statusCode === 200 ? 0 : 1)); r.resume(); }).on('error', () => process.exit(1))"]
       interval: 10s
       timeout: 10s
       retries: 12

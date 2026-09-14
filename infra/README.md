@@ -252,23 +252,58 @@ lists each key with its local default), so none of this needs an edit to
 
 ## Docker VM sizing
 
-`agora-next` runs `npm run dev`, which was measured at 5.5-5.6 GiB resident
-with this tenant and has been OOM-killed outright by the Linux OOM killer
-inside Docker Desktop's VM (see `../docs/compatibility-notes.md`,
-"`npm run dev`'s memory footprint"). The compose file caps it with
-`mem_limit: ${AGORA_NEXT_MEM_LIMIT:-6g}`, which changes what happens when
-it runs out: the kill lands on that container alone rather than on whatever
-the VM picks, `restart: unless-stopped` brings it back, and Node sizes its
-own heap from the cgroup limit instead of from the whole VM, so it tends to
-self-restart gracefully rather than die.
+`agora-next` runs `npm run dev`. Its proposal pages need both a V8 heap and
+substantial memory for compiler buffers and native allocations. The earlier
+6 GiB container limit killed detail-page compilation. A 7 GiB container with
+a 3 GiB V8 heap then exhausted that heap. A 4 GiB heap inside the same limit
+served the proposal list, but Next restarted at its memory threshold while
+compiling a detail page. Those settings did not complete the browser audit
+and were reverted. The existing 6 GiB container cap remains a resource bound,
+not a verified allowance for the full UI.
 
-Give the Docker VM **at least 8 GiB** at this setting. The rest of the
-stack (anvil, postgres, dao-node, cpls, blockcache-shim, fake-gcs) totals
-well under 500 MiB. On a larger VM, raise `AGORA_NEXT_MEM_LIMIT` in
-`infra/.env`. A follow-up worth considering, not done here: building
-agora-next once (`next build`) and serving it with `next start` would cut
-this footprint by most of it, at the cost of a rebuild whenever the overlay
-or a patch changes.
+The tested Docker VM had about 7.65 GiB available. Give it at least 8 GiB to
+start the stack, but do not assume this is sufficient for detail pages. More
+development memory or a verified reduction in the compilation footprint is
+still needed. The other local fleet services were measured below 500 MiB
+together. Keep room for native allocations, the VM and unrelated workloads.
+Existing `infra/.env` values override Compose defaults.
+
+The health check consumes the complete response before exiting, so a
+successful probe does not cancel a live page stream. This change does not
+solve the compiler's memory requirement. Runner's separate record UI and
+the archive tests below remain usable without completing this Agora audit.
+
+Do not recreate Anvil to adjust the UI. Build the image first, then update
+only Agora with `up -d --no-deps --no-build agora-next` using the same Compose
+files. The Dockerfile installs packages before copying the tenant overlay,
+so later UI edits can reuse the dependency layer.
+
+## Archive availability checks
+
+Vote archives distinguish a valid empty file from an unavailable or malformed
+file. Missing, failed and partially corrupt reads return HTTP 503. The vote
+list shows an unavailable message instead of claiming nobody voted. An empty
+archive is described as having no votes in that archive; it does not prove
+the current chain has no ballots. Chain reconstruction remains the stronger
+check against the configured deployment and RPC.
+
+The fleet proposal list also rejects missing or malformed evidence. A detail
+lookup can use a valid result from any configured archive source. If none
+returns the proposal, a read failure remains an error; only missing objects
+across every source produce a not-found result.
+
+The tests run the built route and HTTP archive reader against a local server
+inside an isolated container. They preserve valid ballots and public reasons,
+accept an explicitly empty archive, and reject missing, unavailable, corrupt
+and partially corrupt responses. The 12 checks also cover proposal lists,
+detail lookup failures and fallback to a valid detail source.
+
+```sh
+docker compose -f infra/docker-compose.yml -f infra/docker-compose.offline.yml build agora-next
+docker run --rm --network none --memory 1g \
+  --entrypoint ./node_modules/.bin/vitest infra-agora-next:latest \
+  run --config fleet-tests/vitest.config.ts
+```
 
 ## Restart matrix: what to do after a redeploy
 

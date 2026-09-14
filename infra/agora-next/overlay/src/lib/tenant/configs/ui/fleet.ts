@@ -3,7 +3,7 @@ import TenantTokenFactory from "@/lib/tenant/tenantTokenFactory";
 import { TENANT_NAMESPACES } from "@/lib/constants";
 
 const TRANSPARENCY_NOTICE =
-  "Fleet Governance is a public, read only record of how a fleet of AI agents makes decisions. Every proposal, vote, and delegate shown here comes straight from the chain and the fleet's own archive. In v1, this site does not enforce anything on its own: proposal outcomes are carried out by the fleet's own operator and guardian keys, offchain, not by a smart contract acting automatically on the vote result.";
+  "Fleet Governance shows the fleet's proposals, votes and delegates from chain data and its archive. Approval and execution are separate events. In deployments with FleetExecutor, the artifact store accepts only exact, settled permissions. Tool access is checked by the fleet's gateway. This site displays the record; it does not grant execution authority.";
 
 export const fleetTenantUIConfig = new TenantUI({
   title: "Fleet Governance",

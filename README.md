@@ -148,6 +148,8 @@ Twenty contract tests cover execution permissions, including no ballots, all abs
 insufficient yes votes, ties, pending approvals, revocation and replay. The model integration
 suite passed four scenarios, including approved and rejected task-loop publication. Its optional
 live-model test was skipped. Eight real Docker installer checks also passed.
+The separate Agora image has [12 archive availability checks](infra/README.md#archive-availability-checks)
+covering ballots, missing records, corrupt responses and proposal lookup failures.
 
 Docker is required for the sandbox integration tests. Prepare `node:22-alpine`, then run:
 
