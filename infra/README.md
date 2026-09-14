@@ -2,8 +2,8 @@
 
 Docker Compose stack that runs a fleet's governance read side (DAO Node,
 CPLS, Agora Next) against a real Anvil chain, plus one command that deploys
-a fresh fleet and drives one proposal through it end to end. See
-`../docs/spec.md` for the product spec and `../docs/compatibility-notes.md`
+a fresh fleet and drives two proposals through it end to end, one executed
+and one defeated. See `../docs/spec.md` for the product spec and `../docs/compatibility-notes.md`
 for every integration quirk found while building this, with commands and
 outputs.
 
@@ -15,13 +15,19 @@ bash infra/scripts/bootstrap-local.sh
 
 From an empty Anvil, this deploys a five-member fleet, configures DAO Node
 and Agora Next with the real addresses and ABIs, brings up the read side,
-and drives one scripted proposal (open task, propose, five reasoned votes,
-queue, execute) through the real governor with `cast`, syncing CPLS's
-archive after each safe stage. It prints the proposal's Agora Next URL when
-done. Safe to re-run against an already-running stack (Compose recreates
-only what changed); **not** idempotent against contracts already deployed
-on the same Anvil, by design (it always deploys a fresh fleet, per the
-spec's own end-to-end lifecycle). Start from a genuinely empty stack with:
+and drives two scripted proposals through the real governor with `cast`,
+syncing CPLS's archive after each safe stage: one that meets the For-only
+quorum and is queued and executed, and one that does not and ends Defeated.
+Each asserts that Agora Next's own status badge agrees with the governor's
+`state()`. It writes `../deployments/31337/bootstrap-status.json` (the
+addresses, both proposals with their ids, tallies, on-chain state, Agora
+Next status and URLs, the compose files and endpoints used, and the exact
+CPLS job payload a sync posts) and prints both URLs when done.
+
+Safe to re-run against an already-running stack (Compose recreates only what
+changed); **not** idempotent against contracts already deployed on the same
+Anvil, by design (it always deploys a fresh fleet, per the spec's own
+end-to-end lifecycle). Start from a genuinely empty stack with:
 
 ```bash
 cd infra
@@ -33,8 +39,9 @@ bash scripts/bootstrap-local.sh
 changes, since Compose only runs `postgres/init/*.sql` against a fresh
 volume.
 
-Each of the five scripts under `scripts/` can also be run on its own; see
-each script's header comment.
+Each runnable script under `scripts/` can also be run on its own; see each
+script's header comment. (`env-lib.sh` is the exception: it is sourced by
+the others, not run.)
 
 ## Ports (host access)
 

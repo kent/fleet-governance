@@ -2214,6 +2214,84 @@ Four specific gaps the section had:
   and copy from there, which is the same constraint `bootstrap-local.sh`
   already works around for the local chain.
 
+### Smaller fixes from the same review
+
+- **`fsouza/fake-gcs-server` was unpinned.** Now `:1.56.1`, which is what
+  `:latest` resolved to while this stack was verified
+  (`sha256:797ce226d62f947c009dc40246b30cfb456b8473d8241407f9d6f2c04e4d69ef`).
+  The emulator's path-style host gating (see "fake-gcs-server's path-style
+  object access is host-gated" above) is exactly the kind of behaviour a
+  silent upgrade could change underneath this stack.
+- **Agora Next patch 0002 now bounds and redirects its own fetches.**
+  Replacing `fetch()` with `node:http`/`node:https` also dropped two
+  behaviours `fetch()` provided: a request timeout and redirect following.
+  The patch now sets a 10 s timeout (`ARCHIVE_FETCH_TIMEOUT_MS`), since
+  node's default is none at all and every call site treats a failure as "no
+  data", and follows exactly one redirect, since a GCS object read can
+  answer 301/302 and the redirect's empty body would otherwise be gunzipped
+  and read as "no data". A second redirect is refused rather than chased.
+  **Scope, recorded deliberately:** `src/lib/archiveUtils.ts` is shared by
+  every tenant, so this patch changes archive fetching for all of them, not
+  only for fleet. That is justified: the behaviour it replaces was "every
+  server-side archive read throws and is silently swallowed", which is
+  equally broken for every tenant, and the replacement is strictly more
+  conservative than the `fetch()` it stands in for.
+- **blockcache-shim logged nothing when a contract call failed.** It
+  returned `{"result": "0x"}`, which on the CPLS side becomes `int('0x', 16)`
+  and then a swallowed `'0'`. That is exactly how the quorum bug above
+  stayed invisible for a whole task. It now logs the method, address, block
+  tag and exception first, which is also the only way to tell a genuine
+  revert from an RPC that is down.
+- **Two healthchecks had values hardcoded that are configurable
+  elsewhere.** blockcache-shim's healthcheck URL carried a literal `31337`
+  while the chain id comes from `CHAIN_ID`, and postgres's `pg_isready`
+  carried a literal `-U agora -d postgres` while the container is created
+  from `POSTGRES_USER`/`POSTGRES_DB`. The postgres one is the dangerous
+  half: change `POSTGRES_USER` in `infra/.env` and the healthcheck queries
+  a role that does not exist, the service never reports healthy, and every
+  `depends_on: service_healthy` in the file waits forever. Both now read the
+  same variables the container was created with.
+- **`scripted-proposal.sh`** validates `.params.timelockDelay` with `jq -e`
+  (a manifest without it used to become `sleep null`), and evaluates
+  `state()` once per loop iteration instead of up to four times, so the
+  condition, the timeout message and the branch that follows all see one
+  answer rather than answers from different blocks.
+
+### One tenant registration point was missed: `TENANT_PROPOSAL_SOURCES`
+
+Found while type-checking the rewritten patch 0002, not by the review.
+Running the project's own `tsc --noEmit --skipLibCheck` inside the built
+agora-next image reported exactly one error in the whole tree:
+
+```
+src/lib/constants.ts(253,14): error TS2741: Property 'fleet' is missing in type
+'{ optimism: string[]; ens: string[]; ... shape: never[]; }' but required in type
+'Record<TenantNamespace, readonly string[]>'.
+```
+
+`TENANT_PROPOSAL_SOURCES` was the one registration point patch 0001 did not
+add a `fleet` entry to. Next.js's dev server does not type-check, so nothing
+surfaced. At runtime `getParticipationSource()`
+(`src/lib/participation.ts` line 12) reads
+`TENANT_PROPOSAL_SOURCES[namespace] ?? []`, so for fleet it fell through to
+`"none"`, and `/delegates` plus every delegate card rendered no
+participation data at all rather than the DAO-node-sourced figures.
+`fleet: ["dao-node"]` added to patch 0001, which also makes the tree
+type-clean.
+
+### Machine-readable handoff: `deployments/31337/bootstrap-status.json`
+
+`bootstrap-local.sh` used to scrape `PROPOSAL_ID=` out of
+`scripted-proposal.sh`'s own log with `grep`, which stops working the moment
+there is more than one proposal. Each run of `scripted-proposal.sh` now
+writes a JSON result to `PROPOSAL_RESULT_FILE`, and the bootstrap merges
+both into `deployments/31337/bootstrap-status.json`, next to the manifest it
+belongs to: addresses and deployment block, both proposals (id, task, vote
+tally, on-chain state, Agora Next status, ledger exception version, URL),
+whether the run was offline, which compose files were layered, every
+endpoint and readiness check, and the exact CPLS job payload a sync posts.
+Anything downstream reads that file instead of parsing log lines.
+
 ### Agora Next's For-only status arm and `FleetHook.beforeVoteSucceeded` differ only at For equal to Against
 
 `FleetHook.beforeVoteSucceeded` is `forVotes >= governor.quorum(proposalId)

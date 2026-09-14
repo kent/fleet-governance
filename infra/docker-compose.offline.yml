@@ -29,7 +29,11 @@ services:
   # infra/scripts/create-fake-bucket.sh creates the bucket cpls writes to
   # once this is up.
   fake-gcs:
-    image: fsouza/fake-gcs-server
+    # Pinned rather than :latest, so a rebuild months from now brings up the
+    # same emulator this stack was verified against. 1.56.1 is what :latest
+    # resolved to at the time of writing
+    # (sha256:797ce226d62f947c009dc40246b30cfb456b8473d8241407f9d6f2c04e4d69ef).
+    image: fsouza/fake-gcs-server:1.56.1
     restart: unless-stopped
     # -public-host must match the Host header the REQUESTER actually sends,
     # not where fake-gcs itself listens: fake-gcs-server 404s a path-style

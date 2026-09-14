@@ -23,13 +23,39 @@
 # correctly. See docs/compatibility-notes.md, Task 6, "Agora Next's
 # archive reads all fail silently: Next.js's patched fetch() cannot read
 # a gzip response body server-side".
+# Two behaviours this replacement must not lose relative to fetch():
+#
+#   * a request timeout. fetch() has none by default either, but Next.js's
+#     wrapper and the platform both impose limits eventually; node:http
+#     imposes none at all, so an archive host that accepts a connection and
+#     then says nothing would hold every archive-reading page render open
+#     forever. ARCHIVE_FETCH_TIMEOUT_MS (10 s) bounds it, and the failure
+#     lands in the same catch every call site already has.
+#   * redirects. fetch() follows them; node:http/https never do. A GCS
+#     object read can answer 301/302 (a bucket in another location, or a
+#     name served through a different host), and the redirect's empty body
+#     would be gunzipped and read as "no data". One hop is followed; a
+#     second is refused rather than chased, so a redirect loop cannot hang
+#     a render either.
+#
+# Scope: this file is shared by every tenant, so this patch changes archive
+# fetching for all of them, not only for fleet. That is deliberate. The
+# behaviour it replaces was "every server-side archive read throws and is
+# silently swallowed", which is broken for every tenant equally, and the
+# replacement is strictly more conservative than the fetch() it stands in
+# for (bounded time, at most one redirect). Recorded in
+# docs/compatibility-notes.md, "Final review fixes".
 #
 --- a/src/lib/archiveUtils.ts
 +++ b/src/lib/archiveUtils.ts
-@@ -15,6 +15,64 @@
- };
+@@ -16,6 +16,111 @@
  
  const isBrowser = typeof window !== "undefined";
+ 
++/** How long a single server-side archive request may take before it is
++ * abandoned. Every call site treats a failure as "no data", so an archive
++ * host that hangs would otherwise stall a page render indefinitely. */
++const ARCHIVE_FETCH_TIMEOUT_MS = 10_000;
 +
 +/**
 + * Server-side fetch of a URL's raw bytes and status code, bypassing
@@ -64,34 +90,77 @@
 +  // Next.js server bundle at runtime (this file's archive fetches
 +  // failed exactly this way when it originally reached this file as a
 +  // single import(url.startsWith(...) ? "https" : "http")).
-+  const nodeHttpModule = url.startsWith("https:")
-+    ? await import("https")
-+    : await import("http");
-+  const { get } = nodeHttpModule;
++  const httpModule = await import("http");
++  const httpsModule = await import("https");
 +
-+  return await new Promise((resolve, reject) => {
-+    get(url, (res) => {
-+      const chunks: Buffer[] = [];
-+      res.on("data", (chunk) => chunks.push(chunk));
-+      res.on("end", () => {
-+        const body = Buffer.concat(chunks);
-+        resolve({
-+          status: res.statusCode ?? 0,
-+          statusText: res.statusMessage ?? "",
-+          buffer: body.buffer.slice(
-+            body.byteOffset,
-+            body.byteOffset + body.byteLength
-+          ),
++  const requestOnce = (
++    target: string,
++    redirectsLeft: number
++  ): Promise<{ status: number; statusText: string; buffer: ArrayBuffer }> =>
++    new Promise((resolve, reject) => {
++      const { get } = target.startsWith("https:") ? httpsModule : httpModule;
++
++      const request = get(target, (res) => {
++        const status = res.statusCode ?? 0;
++        const location = res.headers.location;
++
++        // node:http/https never follow redirects, unlike fetch(). A GCS
++        // object read can answer 301/302 (a bucket in another location,
++        // or a name served through a different host), and without this
++        // the redirect body, which is empty, would be gunzipped and
++        // treated as "no data". One hop only: a second is refused rather
++        // than chased, so a redirect loop can never hang a page render.
++        if (status >= 300 && status < 400 && location) {
++          res.resume();
++          if (redirectsLeft > 0) {
++            resolve(
++              requestOnce(new URL(location, target).toString(), redirectsLeft - 1)
++            );
++          } else {
++            reject(
++              new Error(`Too many redirects fetching archive data: ${target}`)
++            );
++          }
++          return;
++        }
++
++        const chunks: Buffer[] = [];
++        res.on("data", (chunk) => chunks.push(chunk));
++        res.on("end", () => {
++          const body = Buffer.concat(chunks);
++          resolve({
++            status,
++            statusText: res.statusMessage ?? "",
++            buffer: body.buffer.slice(
++              body.byteOffset,
++              body.byteOffset + body.byteLength
++            ),
++          });
 +        });
++        res.on("error", reject);
 +      });
-+      res.on("error", reject);
-+    }).on("error", reject);
-+  });
++
++      // Without a timeout an unreachable or hanging archive host holds the
++      // request open for Node's default (no timeout at all), and every
++      // page that reads the archive waits with it. Applies to the whole
++      // request, connection included; fires on an idle socket.
++      request.setTimeout(ARCHIVE_FETCH_TIMEOUT_MS, () => {
++        request.destroy(
++          new Error(
++            `Archive fetch timed out after ${ARCHIVE_FETCH_TIMEOUT_MS}ms: ${target}`
++          )
++        );
++      });
++      request.on("error", reject);
++    });
++
++  return await requestOnce(url, 1);
 +}
- 
++
  async function gunzipToString(buffer: ArrayBuffer): Promise<string> {
    if (!isBrowser) {
-@@ -62,21 +120,18 @@
+     const { gunzipSync } = await import("zlib");
+@@ -62,21 +167,18 @@
   * Fetch and decompress a gzipped NDJSON file from the archive
   */
  async function fetchArchiveNdjson<T>(url: string): Promise<T[]> {
@@ -119,7 +188,7 @@
    let ndjsonText: string;
    try {
      ndjsonText = await gunzipToString(arrayBuffer);
-@@ -95,19 +150,18 @@
+@@ -95,19 +197,18 @@
   * Fetch and decompress a gzipped JSON file from the archive
   */
  async function fetchArchiveGzipJson<T>(url: string): Promise<T | null> {

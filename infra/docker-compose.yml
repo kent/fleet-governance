@@ -47,11 +47,17 @@ services:
       # infra/blockcache-shim/server.py's GOVERNOR_CLOCK_MODE section and
       # docs/compatibility-notes.md, "Final review fixes".
       GOVERNOR_CLOCK_MODE: ${GOVERNOR_CLOCK_MODE:-timestamp}
+      CHAIN_ID: ${CHAIN_ID:-31337}
     depends_on:
       anvil:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/exact_blocktime/31337/0', timeout=3)"]
+      # Block 0 of this stack's own chain id, not a hardcoded 31337: the
+      # route is /exact_blocktime/<chain_id>/<block>, and on a chain that is
+      # not 31337 the hardcoded form still answered (the shim serves one
+      # chain and ignores the id in the path), so the healthcheck passed
+      # while naming a chain this stack was not on.
+      test: ["CMD-SHELL", "python3 -c \"import os, urllib.request; urllib.request.urlopen('http://localhost:8002/exact_blocktime/' + os.environ['CHAIN_ID'] + '/0', timeout=3)\""]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -72,7 +78,11 @@ services:
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U agora -d postgres"]
+      # User and database from the same variables the container was created
+      # with, not hardcoded: with POSTGRES_USER changed in infra/.env, the
+      # hardcoded form checked a role that does not exist and the service
+      # never went healthy, which every depends_on in this file waits for.
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
       timeout: 5s
       retries: 10

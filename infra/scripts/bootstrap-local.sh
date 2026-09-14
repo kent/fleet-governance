@@ -20,7 +20,9 @@
 #      executed, one that does not and ends Defeated, each syncing CPLS
 #      after its safe stages and each asserting that Agora Next's own
 #      status badge agrees with the governor.
-#   7. Print both proposals' Agora Next URLs.
+#   7. Write deployments/31337/bootstrap-status.json (addresses, both
+#      proposals and their outcomes, URLs, compose files, endpoints, CPLS
+#      job payload) and print both proposals' Agora Next URLs.
 #
 # Safe to re-run against an already-running stack (docker compose recreates
 # only what changed); NOT idempotent against contracts already deployed on
@@ -218,10 +220,61 @@ done
 executed_id=$(jq -r '.proposal_id' "$results_dir/succeed.json")
 defeated_id=$(jq -r '.proposal_id' "$results_dir/defeat.json")
 
-# --- 7. Print the result ----------------------------------------------------
+# --- 7. Write the handoff and print the result ------------------------------
+
+# One machine-readable record of everything this run produced, next to the
+# deployment manifest it belongs to: what was deployed, which compose files
+# and endpoints were used, what each proposal did, and the exact CPLS job
+# payload a sync posts. Anything downstream (a reviewer, a later script, a
+# report) reads this instead of parsing log lines.
+status_file="$(dirname "$manifest")/bootstrap-status.json"
+jq -n \
+  --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg manifest "${manifest#"$worktree_root/"}" \
+  --argjson offline "$([ "$OFFLINE" = "1" ] && echo true || echo false)" \
+  --argjson compose_files "$(printf '%s\n' "${compose_files[@]}" | grep -v '^-f$' | sed "s#^$worktree_root/##" | jq -R . | jq -s .)" \
+  --slurpfile manifest_json "$manifest" \
+  --slurpfile succeeded "$results_dir/succeed.json" \
+  --slurpfile defeated "$results_dir/defeat.json" \
+  --arg anvil "http://localhost:$ANVIL_PORT" \
+  --arg postgres "postgres://agora:agora@localhost:$POSTGRES_PORT/agora_web3" \
+  --arg dao_node "http://localhost:$DAO_NODE_PORT" \
+  --arg cpls "http://localhost:$CPLS_PORT" \
+  --arg fake_gcs "http://localhost:$FAKE_GCS_PORT" \
+  --arg agora_next "http://localhost:$AGORA_NEXT_PORT" \
+  '{
+     generated_at: $generated_at,
+     manifest: $manifest,
+     chain_id: $manifest_json[0].chainId,
+     deployment_block: $manifest_json[0].deploymentBlock,
+     addresses: $manifest_json[0].addresses,
+     offline: $offline,
+     compose_files: $compose_files,
+     endpoints: {
+       anvil: $anvil,
+       postgres: $postgres,
+       dao_node: $dao_node,
+       cpls: $cpls,
+       fake_gcs: (if $offline then $fake_gcs else null end),
+       agora_next: $agora_next
+     },
+     readiness_waited_on: [
+       ($anvil + " (cast chain-id)"),
+       "postgres (compose healthcheck)",
+       ($dao_node + "/v1/progress"),
+       ($cpls + "/health"),
+       ($agora_next + "/proposals")
+     ],
+     cpls_job_payload: $succeeded[0].cpls_job_payload,
+     proposals: [
+       ($succeeded[0] | del(.cpls_job_payload)),
+       ($defeated[0] | del(.cpls_job_payload))
+     ]
+   }' > "$status_file"
 
 echo "== [7/7] done =="
-jq -s '.' "$results_dir/succeed.json" "$results_dir/defeat.json"
+cat "$status_file"
+echo "bootstrap-local: wrote $status_file"
 echo "bootstrap-local: executed proposal $executed_id"
 echo "bootstrap-local:   http://localhost:$AGORA_NEXT_PORT/proposals/$executed_id"
 echo "bootstrap-local: defeated proposal $defeated_id"

@@ -132,29 +132,33 @@ compose() {
 
 # --- CPLS job trigger + archive wait -----------------------------------
 
-trigger_cpls_job() {
-  local body job_id status resp elapsed=0
-  body=$(jq -n --arg gov "$GOVERNOR_LOWER" --argjson chain_id "$CHAIN_ID" '{
-    type: "sync_daonode",
-    payload: {
-      infra_dao_slug: "fleet",
-      logic: "refresh_list",
-      sources: ["dao_node"],
-      reset: true,
-      config: {
-        schema: "fleet",
-        dao_slug: "FLEET",
-        index_tenant_prefix: "fleet",
-        features: {oodao: false, snapshot_proposals: false, dao_node_proposals: true},
-        deployment: {chain_id: $chain_id, gov: {address: $gov}, token: {address: $gov}}
-      }
+# The one job payload every sync posts. Built once, up front, so the
+# machine-readable result file below can report it verbatim rather than
+# describing it: it is the single thing a reader needs to reproduce a sync
+# by hand. token address is unused by DaoNodeSync's quorum/vote-source logic
+# for this local stack's purposes, but the field must be present; reusing
+# the governor address there is harmless (only gov.address and chain_id are
+# read from `deployment` by the code paths this script exercises).
+CPLS_JOB_BODY=$(jq -n --arg gov "$GOVERNOR_LOWER" --argjson chain_id "$CHAIN_ID" '{
+  type: "sync_daonode",
+  payload: {
+    infra_dao_slug: "fleet",
+    logic: "refresh_list",
+    sources: ["dao_node"],
+    reset: true,
+    config: {
+      schema: "fleet",
+      dao_slug: "FLEET",
+      index_tenant_prefix: "fleet",
+      features: {oodao: false, snapshot_proposals: false, dao_node_proposals: true},
+      deployment: {chain_id: $chain_id, gov: {address: $gov}, token: {address: $gov}}
     }
-  }')
-  # token address is unused by DaoNodeSync's quorum/vote-source logic for
-  # this local stack's purposes, but the field must be present; reusing the
-  # governor address there is harmless (only gov.address and chain_id are
-  # read from `deployment` by the code paths this script exercises).
-  resp=$(curl -fsS -X POST "$CPLS_URL/jobs" -H 'content-type: application/json' -d "$body")
+  }
+}')
+
+trigger_cpls_job() {
+  local job_id status resp elapsed=0
+  resp=$(curl -fsS -X POST "$CPLS_URL/jobs" -H 'content-type: application/json' -d "$CPLS_JOB_BODY")
   job_id=$(echo "$resp" | jq -r '.job_id')
   echo "scripted-proposal: cpls job $job_id queued"
   while true; do
@@ -391,7 +395,12 @@ else
 
   # --- 6. Wait past the timelock delay, then execute ------------------------
 
-  TIMELOCK_DELAY=$(jq -r '.params.timelockDelay' "$manifest")
+  # jq -e so a manifest without this key fails here, with the reason,
+  # instead of turning into `sleep null` further down.
+  if ! TIMELOCK_DELAY=$(jq -er '.params.timelockDelay' "$manifest"); then
+    echo "scripted-proposal: $manifest has no .params.timelockDelay" >&2
+    exit 1
+  fi
   echo "== sleeping past the timelock delay (${TIMELOCK_DELAY}s + 5s margin) =="
   sleep "$((TIMELOCK_DELAY + 5))"
 
@@ -489,12 +498,14 @@ if [ -n "$PROPOSAL_RESULT_FILE" ]; then
     --arg quorum "$ONCHAIN_QUORUM" \
     --arg exception_version "$EXCEPTION_VERSION" \
     --arg url "$AGORA_NEXT_URL/proposals/$PID" \
+    --argjson cpls_job "$CPLS_JOB_BODY" \
     '{outcome: $outcome, task_id: $task_id, proposal_id: $proposal_id,
       onchain_state: ($state | tonumber), agora_next_status: $agora_status,
       votes: {for: $for_votes, against: $against_votes, abstain: $abstain_votes},
       onchain_quorum: $quorum,
       ledger_exception_version: ($exception_version | tonumber),
-      agora_next_url: $url}' > "$PROPOSAL_RESULT_FILE"
+      agora_next_url: $url,
+      cpls_job_payload: $cpls_job}' > "$PROPOSAL_RESULT_FILE"
   echo "scripted-proposal: wrote $PROPOSAL_RESULT_FILE"
 fi
 

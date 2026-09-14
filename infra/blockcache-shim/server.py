@@ -93,6 +93,9 @@ def selector(method_signature):
 
 RPC_URL = os.environ.get("ANVIL_RPC_URL", "http://anvil:8545")
 PORT = int(os.environ.get("PORT", "8002"))
+# Only used by the compose healthcheck's URL; every route takes the chain id
+# from its own path and this shim serves exactly one chain.
+CHAIN_ID = os.environ.get("CHAIN_ID", "31337")
 # Matches infra/anvil/Dockerfile's --block-time.
 BLOCK_TIME_SECONDS = int(os.environ.get("BLOCK_TIME_SECONDS", "2"))
 # "timestamp" or "blocknumber"; see the module docstring. Defaults to
@@ -246,7 +249,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 result = rpc("eth_call", [{"to": m.group(2), "data": call_data}, block_tag])
                 self._send(200, {"result": result})
-            except Exception:  # noqa: BLE001
+            except Exception as e:  # noqa: BLE001
                 # Every caller of contract_call_encoded in cpls/sync_daonode.py
                 # is wrapped in try/except at the call site (quorum, votable
                 # supply) or only reached once a proposal is already
@@ -254,6 +257,17 @@ class Handler(BaseHTTPRequestHandler):
                 # result lets that code degrade the same way a genuine
                 # revert on the real blockcache service would, rather than
                 # this shim raising a 500 mid-response.
+                #
+                # Log it first, though: on the CPLS side this becomes
+                # `int('0x', 16)` and then a swallowed '0', with nothing
+                # anywhere saying why. That is exactly how the quorum bug
+                # stayed invisible. A genuine revert and an RPC that is
+                # down look identical to the caller; only this line tells
+                # them apart.
+                print(
+                    "blockcache-shim: eth_call %s on %s at %s failed, returning 0x: %s"
+                    % (method_signature, m.group(2), block_tag, e)
+                )
                 self._send(200, {"result": "0x"})
             return
 
@@ -262,5 +276,5 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"blockcache-shim: listening on :{PORT}, proxying {RPC_URL}")
+    print(f"blockcache-shim: listening on :{PORT}, proxying {RPC_URL} (chain {CHAIN_ID}, governor clock {GOVERNOR_CLOCK_MODE})")
     server.serve_forever()
