@@ -88,6 +88,17 @@ describe("buildBriefing", () => {
     expect(b.roles[0]?.promptFile).toBe("role-ombudsman.md");
   });
 
+  it("reads the members from the record when the run was started outside the UI", () => {
+    const recordConfig = {
+      task: { charter: charter("from the record"), repoFixture: "experiments/fixtures/repos/tiny-lib" },
+      fleet: { members: [{ role: "planner", provider: "openrouter", model: "m", promptVersion: "1", operatorLabel: "local" }] },
+    };
+    const b = buildBriefing(dir, "run-1", { experiment: null, recordConfig });
+
+    expect(b.roles.map((r) => r.role)).toEqual(["planner"]);
+    expect(b.roles[0]?.prompt).toContain("Fit with the goal");
+  });
+
   it("returns no charter and no roles when there is neither a record nor an experiment config", () => {
     const b = buildBriefing(dir, "run-1", { experiment: null, recordConfig: null });
 

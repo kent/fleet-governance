@@ -72,7 +72,10 @@ export function buildBriefing(
 ): Briefing {
   const promptsDir = path.join(repoRootDir, ...PROMPTS_SUBPATH);
 
-  const recordConfig = input.recordConfig as { task?: { charter?: CharterV1; repoFixture?: string } } | null;
+  const recordConfig = input.recordConfig as {
+    task?: { charter?: CharterV1; repoFixture?: string };
+    fleet?: { members?: ExperimentConfigV1["fleet"]["members"] };
+  } | null;
   const recordCharter = recordConfig?.task?.charter ?? null;
   const charter = recordCharter ?? input.experiment?.task.charter ?? null;
   const charterSource: Briefing["charterSource"] = recordCharter ? "record" : input.experiment ? "experiment" : "none";
@@ -80,7 +83,11 @@ export function buildBriefing(
   const repoFixture = recordConfig?.task?.repoFixture ?? input.experiment?.task.repoFixture ?? null;
   const taskReadme = repoFixture ? readIfExists(path.join(repoRootDir, repoFixture, "README.md")) : null;
 
-  const members = input.experiment?.fleet.members ?? [];
+  // A run started from the command line has no UI row and no config under `experiments/configs`,
+  // so its experiment config is reachable only through the record `CAPTURED` wrote. The record
+  // stores the whole `fleet.experiment.v1` document, members included, so prefer it for the same
+  // reason the charter does: it is what the run actually used.
+  const members = recordConfig?.fleet?.members ?? input.experiment?.fleet.members ?? [];
   const roles: RoleBrief[] = members.map((member, agentId) => {
     const promptFile = `role-${roleSlug(member.role)}.md`;
     return {
