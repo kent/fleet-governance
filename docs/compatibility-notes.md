@@ -544,3 +544,85 @@ both the creation and runtime bytecode makes them byte-for-byte identical (22,95
 code each, matching exactly). The code this repository builds and deploys for `AgoraGovernor` is,
 modulo compile-path metadata and immutable substitution, exactly the pinned upstream commit's code.
 
+## Final review: hooks calling back into the governor (`noSelfCall`)
+
+Every dispatcher in `contracts/lib/agora-governor/src/libraries/Hooks.sol` carries the same
+modifier (line 178):
+
+```solidity
+modifier noSelfCall(IHooks self) {
+    if (msg.sender != address(self)) {
+        _;
+    }
+}
+```
+
+When the governor's `msg.sender` is the hook itself, the hook call is skipped silently. The
+governor then falls back to its own logic and returns a normal-looking answer. There is no revert,
+no event, and no flag saying an answer was produced without the hook.
+
+This matters most for `beforeVoteSucceeded`. `AgoraGovernor._voteSucceeded`
+(`lib/agora-governor/src/AgoraGovernor.sol:481`) is:
+
+```solidity
+(bool hasUpdated, uint8 beforeVoteSucceeded) = hooks.beforeVoteSucceeded(proposalId);
+if (!hasUpdated) {
+    voteSucceeded = super._voteSucceeded(proposalId);
+} else {
+    voteSucceeded = beforeVoteSucceeded == 2;
+}
+```
+
+With the hook as caller, `hasUpdated` comes back false and the governor answers with
+OpenZeppelin's stock `GovernorCountingSimple` rule (For above Against) combined with Agora's own
+`_quorumReached` override (For plus Against plus Abstain against the quorum bar). That is exactly
+the counting rule `FleetHook` exists to replace. So `governor.state(proposalId)`, asked by the
+hook, can differ from `governor.state(proposalId)` asked by anybody else: a tally of 2 For plus 1
+Abstain on a five-member fleet reads **Succeeded** to the hook and **Defeated** to everyone else.
+
+`FleetHook.afterPropose` asks that question, to decide whether a member's previous proposal on the
+task has settled. Trusting the stock answer meant every fleet-Defeated proposal looked unsettled
+forever, and the member was locked out of proposing on that task for the rest of its life, with no
+way back (nothing can cancel a Defeated proposal, and it can never be queued or executed).
+
+The fix is in `FleetHook._isUnsettled` (`contracts/src/FleetHook.sol:286`): it reads
+`governor.state(previous)` itself, and when the answer is `Succeeded` it re-applies the fleet rule
+from `proposalVotes` and `quorum` rather than believing it. `Pending`, `Active`, and `Queued` are
+unaffected, because the fleet rule can only be stricter than the stock rule: a tally that passes
+the fleet rule always passes the stock rule too, so a proposal that reached `Queued` really did
+pass. `quorum(proposalId)` is safe to call from the hook for the same structural reason in reverse:
+`FleetHook` does not request the `beforeQuorumCalculation` bit, so the skipped call and the
+made-but-unpermissioned call both return 0 and both fall through to the stock quorum calculation.
+
+`AdmissionTest.test_FleetDefeatedProposalReleasesTheProposerSlot`
+(`contracts/test/integration/Admission.t.sol`) asserts both readings of the same proposal in the
+same test, `vm.prank(address(hook))` for the hook's view, and is the regression test for this.
+
+**General rule for this codebase: a hook must not use the governor as an oracle for anything the
+hook itself overrides.** Any future hook that calls back into `AgoraGovernor` has to re-apply its
+own rules to whatever comes back, or read the raw inputs (`proposalVotes`, `proposalSnapshot`,
+`proposalDeadline`) and decide for itself.
+
+## Final review: two smaller notes
+
+**A Queued but unexecutable proposal holds its proposer's slot until someone cancels it.** If a
+task is completed or stopped while one of its proposals sits queued in the timelock, the proposal
+stays `Queued` (the timelock operation is still pending) and execution reverts inside the ledger,
+so the proposer's one-proposal-per-task slot never frees on its own. Two parties can clear it, and
+the keeper is neither of them: the proposing member calls
+`governor.cancel(targets, values, calldatas, descriptionHash)`, or the guardian calls
+`timelock.cancel(operationId)`. Both drive `state()` to `Canceled` and release the slot.
+`AgoraGovernor.cancel` (`lib/agora-governor/src/AgoraGovernor.sol:244`) admits only the proposer,
+`admin`, `_executor()` (the timelock), and `manager`, and this deployment sets `admin` and
+`manager` to the zero address, so a keeper key calling `governor.cancel` reverts
+`GovernorUnauthorizedCancel` (asserted in
+`GuardianTest.test_GuardianCannotCancelAtGovernorOrPropose`). The keeper's role here is to detect
+the stuck proposal and prompt the member or the guardian, not to cancel it itself.
+
+**The hook's CREATE2 through the public factory is front-runnable, for denial of service only.**
+`DeployFleet.s.sol` sends `FleetHook`'s CREATE2 through the canonical public factory at
+`0x4e59b44847b379578588920cA78FbF26c0B4956C`, so anyone watching the mempool can submit the same
+salt and init code first; the resulting contract is byte-identical with identical constructor
+arguments, so the only consequence is that the deployer's own transaction reverts and the run has
+to be restarted (the deployment sequence checks `address(hook) != predictedHook` and reverts
+`FleetDeployer.HookAddressMismatch` rather than continuing against a stranger's contract).

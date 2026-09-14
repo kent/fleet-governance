@@ -173,7 +173,7 @@ contract FleetHook is IHooks {
         address proposer = governor.proposalProposer(proposalId);
 
         uint256 previous = lastProposalOf[action.taskId][proposer];
-        if (previous != 0 && _isUnsettled(governor.state(previous))) {
+        if (previous != 0 && _isUnsettled(previous)) {
             revert MemberHasUnsettledProposal(proposer, action.taskId, previous);
         }
 
@@ -272,9 +272,30 @@ contract FleetHook is IHooks {
         if (remaining < required) revert InsufficientTaskTime(remaining, required);
     }
 
-    function _isUnsettled(IGovernor.ProposalState state) internal pure returns (bool) {
-        return state == IGovernor.ProposalState.Pending || state == IGovernor.ProposalState.Active
-            || state == IGovernor.ProposalState.Succeeded || state == IGovernor.ProposalState.Queued;
+    /// @notice True while `previous` still occupies its proposer's one-proposal-per-task slot.
+    /// @dev Reads the governor itself rather than trusting a state value handed in, and re-applies the
+    ///      fleet success rule to a Succeeded answer. Agora's `Hooks.noSelfCall` skips
+    ///      `beforeVoteSucceeded` whenever the hook is the governor's `msg.sender`, which is exactly the
+    ///      case here: this call originates inside `afterPropose`. The governor therefore answers
+    ///      `state()` with OpenZeppelin's stock counting (participation quorum, For above Against), under
+    ///      which a fleet-Defeated tally such as 2 For plus 1 Abstain reads Succeeded. Trusting that
+    ///      answer would keep a member's slot occupied by a proposal that can never queue or execute, for
+    ///      the rest of the task's life. Re-applying the For-only rule here gives the same verdict the
+    ///      governor gives every other caller. See docs/compatibility-notes.md, "hooks calling back into
+    ///      the governor: noSelfCall".
+    function _isUnsettled(uint256 previous) internal view returns (bool) {
+        IGovernor.ProposalState state = governor.state(previous);
+        if (
+            state == IGovernor.ProposalState.Pending || state == IGovernor.ProposalState.Active
+                || state == IGovernor.ProposalState.Queued
+        ) {
+            return true;
+        }
+        if (state == IGovernor.ProposalState.Succeeded) {
+            (uint256 againstVotes, uint256 forVotes,) = governor.proposalVotes(previous);
+            return forVotes >= governor.quorum(previous) && forVotes > againstVotes;
+        }
+        return false;
     }
 
     /// @dev Copies `data[4:]` into a fresh bytes array using MCOPY (cancun).

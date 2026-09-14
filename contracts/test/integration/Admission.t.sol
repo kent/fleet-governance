@@ -160,6 +160,68 @@ contract AdmissionTest is FleetFixture {
         governor.propose(t, v, c, description);
     }
 
+    // ---------------------------------------------------------------------
+    // The one-proposal-per-member-per-task slot, and the noSelfCall trap underneath it
+    // ---------------------------------------------------------------------
+
+    /// @notice A proposal the fleet rule defeats must release its proposer's slot.
+    /// @dev Regression for the noSelfCall defect. `afterPropose` asks the governor for the previous
+    ///      proposal's state while the hook is the governor's msg.sender, and Agora's
+    ///      `Hooks.noSelfCall` skips `beforeVoteSucceeded` for exactly that caller, so the governor
+    ///      answers with stock OpenZeppelin counting. Under stock counting 2 For plus 1 Abstain
+    ///      reaches the participation quorum and beats 0 Against, so it reads Succeeded, while every
+    ///      other caller sees Defeated. The hook used to treat that as an unsettled proposal and lock
+    ///      the member out of the task for the rest of its life. See docs/compatibility-notes.md.
+    function test_FleetDefeatedProposalReleasesTheProposerSlot() public {
+        (uint256 pid,,,) = proposeDecision(0, data, description);
+        warpToActive(pid);
+        vote(0, pid, FOR, "for");
+        vote(1, pid, FOR, "for");
+        vote(2, pid, ABSTAIN, "abstain");
+        warpPastDeadline(pid);
+
+        // Everyone outside the hook sees the fleet rule: For (2e18) never reaches quorum (3e18).
+        assertEq(uint8(stateOf(pid)), uint8(IGovernor.ProposalState.Defeated));
+        // The hook, asking the same question as msg.sender, is answered with stock counting instead.
+        vm.prank(address(hook));
+        assertEq(uint8(governor.state(pid)), uint8(IGovernor.ProposalState.Succeeded));
+
+        // The slot is free: the same member proposes again on the same task.
+        (uint256 pid2,,,) = proposeDecision(0, data, string.concat("second try", DESC_SUFFIX));
+        assertTrue(pid2 != pid);
+        assertEq(hook.lastProposalOf(taskId, members[0]), pid2);
+    }
+
+    /// @notice The contrast: a genuinely succeeded proposal still holds the slot until it settles.
+    function test_SucceededUnqueuedProposalStillBlocksTheProposerSlot() public {
+        (uint256 pid, address[] memory t, uint256[] memory v, bytes[] memory c) =
+            proposeDecision(0, data, description);
+        warpToActive(pid);
+        vote(0, pid, FOR, "for");
+        vote(1, pid, FOR, "for");
+        vote(2, pid, FOR, "for");
+        warpPastDeadline(pid);
+        assertEq(uint8(stateOf(pid)), uint8(IGovernor.ProposalState.Succeeded));
+
+        vm.prank(members[0]);
+        vm.expectRevert(Hooks.HookCallFailed.selector);
+        governor.propose(t, v, c, string.concat("second try", DESC_SUFFIX));
+        assertEq(hook.lastProposalOf(taskId, members[0]), pid);
+
+        // Queued holds the slot too, and executing releases it.
+        queueAs(keeper, t, v, c, description);
+        assertEq(uint8(stateOf(pid)), uint8(IGovernor.ProposalState.Queued));
+        vm.prank(members[0]);
+        vm.expectRevert(Hooks.HookCallFailed.selector);
+        governor.propose(t, v, c, string.concat("third try", DESC_SUFFIX));
+
+        vm.warp(block.timestamp + TIMELOCK_DELAY + 1);
+        executeAs(keeper, t, v, c, description);
+        assertEq(uint8(stateOf(pid)), uint8(IGovernor.ProposalState.Executed));
+        (uint256 pid2,,,) = proposeDecision(0, data, string.concat("after execution", DESC_SUFFIX));
+        assertEq(hook.lastProposalOf(taskId, members[0]), pid2);
+    }
+
     function test_DirectLedgerWriteReverts() public {
         vm.prank(members[0]);
         vm.expectRevert(abi.encodeWithSelector(TaskLedger.NotTimelock.selector, members[0]));

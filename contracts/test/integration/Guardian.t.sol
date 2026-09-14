@@ -48,7 +48,7 @@ contract GuardianTest is FleetFixture {
         ledger.unpause();
     }
 
-    function test_GuardianCannotCancelAtGovernorOrProposeOrExecute() public {
+    function test_GuardianCannotCancelAtGovernorOrPropose() public {
         uint256 taskId = openTask();
         bytes memory data = actionCalldata(taskId, 0, 1, keccak256("p"), "", "s");
         string memory description = string.concat("x", DESC_SUFFIX);
