@@ -45,7 +45,15 @@ export type GatewayVerdict =
         | "class_not_allowed"
         | "target_not_allowlisted"
         | "forbidden_action"
-        | "budget_exhausted";
+        | "budget_exhausted"
+        /** A per-payload ledger read (`exceptionVersion`/`escalationVersion`) failed. The snapshot
+         *  itself already fails closed on a read failure (`LedgerWatcher.snapshot` returns
+         *  `paused: true`), but these two are per-payload closures evaluated here, and a rejection
+         *  used to escape `evaluateAction` as a thrown promise instead of a verdict. Every caller
+         *  treated a throw as a failure rather than an allow, so the behaviour was safe, but the
+         *  fail-closed guarantee lived in the callers rather than in the gateway (final review
+         *  M2). */
+        | "ledger_unreadable";
       payloadHash: Hex;
       draft: DraftProposal | null;
     };
@@ -115,7 +123,9 @@ function amendCharterDraft(payloadHash: Hex, charter: CharterV1, descriptor: Act
  *   1. paused                         - fails closed, overrides everything else
  *   2. task not Open                  - a closed task takes no more actions
  *   3. expired                        - independent of `state`, since `expireTask` is optional
- *   4. escalated (per payload)        - blocks only the exact disputed payload
+ *   4. escalated (per payload)        - blocks only the exact disputed payload; a failed read of
+ *                                       that per-payload state is `ledger_unreadable`, never an
+ *                                       allow (final review M2)
  *   5. shell                          - hard-blocked regardless of charter or exception
  *   6. budget exhausted               - a resource gate, independent of which action was asked for
  *   7. charter allow (class + target + not forbidden) -> ALLOW "charter"
@@ -140,7 +150,12 @@ export async function evaluateAction(
     return { verdict: "BLOCK", reason: "expired", payloadHash, draft: null };
   }
 
-  const escalationVersion = await snapshot.escalationVersion(payloadHash);
+  let escalationVersion: number;
+  try {
+    escalationVersion = await snapshot.escalationVersion(payloadHash);
+  } catch {
+    return { verdict: "BLOCK", reason: "ledger_unreadable", payloadHash, draft: null };
+  }
   if (escalationVersion !== 0) {
     return { verdict: "BLOCK", reason: "escalated", payloadHash, draft: null };
   }
@@ -162,7 +177,12 @@ export async function evaluateAction(
     return { verdict: "ALLOW", basis: "charter", payloadHash };
   }
 
-  const exceptionVersion = await snapshot.exceptionVersion(payloadHash);
+  let exceptionVersion: number;
+  try {
+    exceptionVersion = await snapshot.exceptionVersion(payloadHash);
+  } catch {
+    return { verdict: "BLOCK", reason: "ledger_unreadable", payloadHash, draft: null };
+  }
   if (exceptionVersion === snapshot.charterVersion) {
     return { verdict: "ALLOW", basis: "exception", payloadHash };
   }

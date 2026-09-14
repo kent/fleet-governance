@@ -25,6 +25,12 @@ export const STAGE_ORDER = [
 ] as const;
 export type StageName = (typeof STAGE_ORDER)[number];
 
+/** One stage's wall-clock span, as `runStages` measured it. `record.json` carries these under
+ *  `timings` (spec 12.4's "timings per stage"); final review M5: `buildRecord` was called with
+ *  `timings: {}` even though the data existed. */
+export type StageTiming = { startedAt: string; endedAt: string; durationMs: number };
+export type StageTimings = Record<string, StageTiming>;
+
 export type RunRecord = {
   runId: string;
   stage: StageName;
@@ -75,8 +81,13 @@ export async function runStages<Ctx>(opts: {
    *  once, before the first resumed stage runs, and only when there is a checkpoint to resume
    *  from. */
   rehydrate?: (ctx: Ctx, payload: Record<string, unknown>) => Ctx | Promise<Ctx>;
+  /** A record `runStages` fills in as it goes: one entry per stage it runs, plus whatever a
+   *  resumed run's checkpoint already carried under `timings`. The caller passes the same object
+   *  it keeps on its own context, so a stage that writes the run record (CAPTURED) sees every
+   *  earlier stage's span (final review M5). */
+  timings?: StageTimings;
 }): Promise<Ctx> {
-  const { runId, store, stages, toPayload, onStage, rehydrate } = opts;
+  const { runId, store, stages, toPayload, onStage, rehydrate, timings } = opts;
   let ctx = opts.ctx;
 
   const existing = await store.get(runId);
@@ -89,15 +100,43 @@ export async function runStages<Ctx>(opts: {
   if (existing && rehydrate) {
     ctx = await rehydrate(ctx, existing.payload);
   }
+  if (timings && existing) {
+    // A resumed run keeps the spans the earlier process already measured; a stage that runs again
+    // overwrites its own entry below.
+    Object.assign(timings, readPersistedTimings(existing.payload));
+  }
 
   for (let i = startIndex; i < stages.length; i++) {
     const stage = stages[i]!;
+    const startedAtMs = Date.now();
+    const startedAt = new Date(startedAtMs).toISOString();
     ctx = await stage.run(ctx);
+    if (timings) {
+      const endedAtMs = Date.now();
+      timings[stage.name] = { startedAt, endedAt: new Date(endedAtMs).toISOString(), durationMs: endedAtMs - startedAtMs };
+    }
     await store.save({ runId, stage: stage.name, updatedAt: new Date().toISOString(), payload: toPayload(ctx) });
     if (onStage) await onStage(stage.name, ctx);
   }
 
   return ctx;
+}
+
+/** Reads a checkpoint payload's `timings` back into `StageTimings`, keeping only entries that
+ *  actually have the three fields (a payload is arbitrary JSON that an older run may have
+ *  written). */
+function readPersistedTimings(payload: Record<string, unknown>): StageTimings {
+  const raw = payload["timings"];
+  if (!raw || typeof raw !== "object") return {};
+  const out: StageTimings = {};
+  for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const t = value as Partial<StageTiming>;
+    if (typeof t.startedAt === "string" && typeof t.endedAt === "string" && typeof t.durationMs === "number") {
+      out[name] = { startedAt: t.startedAt, endedAt: t.endedAt, durationMs: t.durationMs };
+    }
+  }
+  return out;
 }
 
 /** In-memory `RunStore`; used by unit tests only (never durable across processes). */

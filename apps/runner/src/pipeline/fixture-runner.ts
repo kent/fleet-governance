@@ -67,6 +67,10 @@ export type FixtureRunContext = {
    *  `evm_increaseTime` + `evm_mine`. When absent, every wait is a real wall-clock poll, matching
    *  "moves nothing by RPC in real runs" (task 8 controller notes). */
   advanceTime?: (seconds: number) => Promise<void>;
+  /** `FLEET_MAX_FEE_PER_GAS_WEI`/`FLEET_MAX_GAS` as parsed by `parseSignerFeeLimits`, handed to
+   *  every `FleetSigner` this fixture builds (spec 10.7, final review M1). Absent means
+   *  unbounded. */
+  feeLimits?: { maxFeePerGasWei?: bigint; maxGas?: bigint };
   /** How much of the voting window must remain for a worker to submit (mirrors
    *  `FLEET_SUBMISSION_MARGIN_SEC`); the `late-vote` fixture depends on this being small relative
    *  to the deploy config's `votingPeriod`. */
@@ -166,7 +170,15 @@ function toGatewayAction(action: { class: ActionClass; target: string; args?: un
 }
 
 function signerPolicy(ctx: FixtureRunContext): SignerPolicy {
-  return { chainId: ctx.chainId, governor: ctx.addresses.governor, ledger: ctx.addresses.ledger, token: ctx.addresses.token };
+  return {
+    chainId: ctx.chainId,
+    governor: ctx.addresses.governor,
+    ledger: ctx.addresses.ledger,
+    token: ctx.addresses.token,
+    // Spec 10.7's "configured fee limits" (final review M1): unset means unbounded.
+    ...(ctx.feeLimits?.maxFeePerGasWei !== undefined ? { maxFeePerGasWei: ctx.feeLimits.maxFeePerGasWei } : {}),
+    ...(ctx.feeLimits?.maxGas !== undefined ? { maxGas: ctx.feeLimits.maxGas } : {}),
+  };
 }
 
 function newSigner(ctx: FixtureRunContext, key: Hex): FleetSigner {

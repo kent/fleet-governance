@@ -211,3 +211,24 @@ describe("loadManifest", () => {
     expect(() => loadManifest(file)).toThrow(EnvError);
   });
 });
+
+describe("parseWorkerEnv: fee limits (final review M1)", () => {
+  it("leaves both limits undefined when neither variable is set", () => {
+    const env = parseWorkerEnv(BASE_ENV);
+    expect(env.maxFeePerGasWei).toBeUndefined();
+    expect(env.maxGas).toBeUndefined();
+  });
+
+  it("reads FLEET_MAX_FEE_PER_GAS_WEI and FLEET_MAX_GAS as bigints", () => {
+    const env = parseWorkerEnv({ ...BASE_ENV, FLEET_MAX_FEE_PER_GAS_WEI: "50000000000", FLEET_MAX_GAS: "750000" });
+    expect(env.maxFeePerGasWei).toBe(50_000_000_000n);
+    expect(env.maxGas).toBe(750_000n);
+  });
+
+  it("rejects a non-integer or negative limit rather than truncating it", () => {
+    expect(() => parseWorkerEnv({ ...BASE_ENV, FLEET_MAX_GAS: "1.5" })).toThrow(EnvError);
+    expect(() => parseWorkerEnv({ ...BASE_ENV, FLEET_MAX_GAS: "0x1234" })).toThrow(EnvError);
+    expect(() => parseWorkerEnv({ ...BASE_ENV, FLEET_MAX_FEE_PER_GAS_WEI: "-1" })).toThrow(EnvError);
+    expect(() => parseWorkerEnv({ ...BASE_ENV, FLEET_MAX_FEE_PER_GAS_WEI: "0" })).toThrow(EnvError);
+  });
+});

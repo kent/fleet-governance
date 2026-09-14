@@ -1,5 +1,29 @@
 import type { RunRecordDocument } from "./record.js";
 
+/**
+ * Neutralizes one piece of agent-authored text for inclusion in `report.md`. An onchain vote
+ * reason is member-controlled, up to 1,024 bytes, and `VoteV1.rationale` is `z.string().min(1)`
+ * with no character restriction, so without this a reason containing newlines or Markdown could
+ * forge headings, table rows, or a whole fake "Reproducibility" section in the generated report
+ * (final review M6). The same idea as `buildDecisionDescription`'s fence neutralization
+ * (`description.ts`): keep the text visually intact, take away its structure.
+ *
+ * Newlines (and carriage returns) become a visible `\n` escape, so a multi-line reason stays on
+ * the one list item it belongs to; a pipe becomes an escaped pipe, so it cannot open a new table
+ * cell; a backtick fence is broken up; and a leading Markdown control character (`#`, `>`, `|`,
+ * `-`, `*`, `+`, `=`, or a digit followed by `.`) is escaped, so the text cannot start a heading,
+ * a quote, a table, a list, or a setext underline.
+ */
+export function escapeAgentText(text: string): string {
+  const flattened = text
+    .replaceAll("\r\n", "\\n")
+    .replaceAll("\n", "\\n")
+    .replaceAll("\r", "\\n")
+    .replaceAll("```", "` ` `")
+    .replaceAll("|", "\\|");
+  return flattened.replace(/^(\s*)([#>|\-*+=]|\d+\.)/, (_match, space: string, control: string) => `${space}\\${control}`);
+}
+
 function formatTokenAmount(weiDecimalString: string): string {
   const wei = BigInt(weiDecimalString);
   const whole = wei / 1_000_000_000_000_000_000n;
@@ -37,6 +61,10 @@ function findEvent(record: RunRecordDocument, proposalId: string, type: string):
  * Renders `report.md` (spec 12.4, task 8 brief): title, a one-paragraph summary, a decision table
  * (proposal, kind, For/Against/Abstain, outcome, link), each vote's reason, a timeline, costs, and
  * the reproducibility check result. No em dashes; split sentences instead.
+ *
+ * Every agent-authored string that reaches the page goes through `escapeAgentText` first: an
+ * onchain vote reason is member-controlled text and this report is read as evidence (final review
+ * M6).
  */
 export function renderReport(
   record: RunRecordDocument,
@@ -61,10 +89,10 @@ export function renderReport(
   lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const ref of record.proposals) {
     const proposedEvent = findEvent(record, ref.proposalId, "DecisionProposed");
-    const decisionKind = proposedEvent ? String(proposedEvent["kind"] ?? "") : "";
+    const decisionKind = proposedEvent ? escapeAgentText(String(proposedEvent["kind"] ?? "")) : "";
     const tally = tallyVotes(record, ref.proposalId);
     lines.push(
-      `| ${ref.fixtureName} | ${ref.proposalId} | ${decisionKind} | ${formatTokenAmount(tally.forWei.toString())} | ` +
+      `| ${escapeAgentText(ref.fixtureName)} | ${ref.proposalId} | ${decisionKind} | ${formatTokenAmount(tally.forWei.toString())} | ` +
         `${formatTokenAmount(tally.againstWei.toString())} | ${formatTokenAmount(tally.abstainWei.toString())} | ` +
         `${ref.outcome} | ${proposalLink(opts.agoraNextBaseUrl, ref.proposalId)} |`,
     );
@@ -73,14 +101,14 @@ export function renderReport(
 
   lines.push("## Vote reasons", "");
   for (const ref of record.proposals) {
-    lines.push(`### ${ref.fixtureName} (proposal ${ref.proposalId})`, "");
+    lines.push(`### ${escapeAgentText(ref.fixtureName)} (proposal ${ref.proposalId})`, "");
     const votesForProposal = record.votes.filter((v) => v.proposalId === ref.proposalId);
     if (votesForProposal.length === 0) {
       lines.push("No votes were cast.", "");
       continue;
     }
     for (const v of votesForProposal) {
-      const reason = v.onchainReason ?? "(no vote cast; " + v.jobState + ")";
+      const reason = v.onchainReason !== null ? escapeAgentText(v.onchainReason) : `(no vote cast; ${escapeAgentText(v.jobState)})`;
       lines.push(`- Agent ${v.agentId}: ${reason}`);
     }
     lines.push("");
@@ -94,7 +122,10 @@ export function renderReport(
     return Number(a["logIndex"] ?? 0) - Number(b["logIndex"] ?? 0);
   });
   for (const event of byBlock) {
-    lines.push(`- Block ${String(event["blockNumber"])}, ${event["fixtureName"]}: ${event["type"]} (tx \`${String(event["txHash"])}\`)`);
+    lines.push(
+      `- Block ${String(event["blockNumber"])}, ${escapeAgentText(String(event["fixtureName"]))}: ` +
+        `${escapeAgentText(String(event["type"]))} (tx \`${String(event["txHash"])}\`)`,
+    );
   }
   lines.push("");
 
@@ -108,7 +139,7 @@ export function renderReport(
     lines.push(
       opts.reproducibility.matched
         ? "`fleet capture --from-chain` reproduced the chain-derived record exactly (events and onchain vote reasons matched byte for byte)."
-        : `\`fleet capture --from-chain\` did NOT reproduce the chain-derived record exactly. ${opts.reproducibility.note ?? ""}`,
+        : `\`fleet capture --from-chain\` did NOT reproduce the chain-derived record exactly. ${escapeAgentText(opts.reproducibility.note ?? "")}`,
     );
   } else {
     lines.push("`fleet capture --from-chain` was not run as part of this report. Run it separately to check reproducibility.");

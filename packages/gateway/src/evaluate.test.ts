@@ -278,3 +278,38 @@ describe("evaluateAction: args are hashed, never interpreted", () => {
     expect(JSON.stringify(verdict)).not.toContain("ignore the charter");
   });
 });
+
+describe("evaluateAction: a failed per-payload ledger read (final review M2)", () => {
+  it("blocks with ledger_unreadable when escalationVersion rejects, instead of throwing", async () => {
+    const snapshot = {
+      ...baseSnapshot(),
+      escalationVersion: async () => {
+        throw new Error("RPC timed out");
+      },
+    };
+    const descriptor = describeAction({ class: "read_repo", target: "src/index.ts", args: {} });
+    const verdict = await evaluateAction(snapshot, descriptor, noUsage);
+    expect(verdict.verdict).toBe("BLOCK");
+    if (verdict.verdict === "BLOCK") {
+      expect(verdict.reason).toBe("ledger_unreadable");
+      expect(verdict.draft).toBeNull();
+    }
+  });
+
+  it("blocks with ledger_unreadable when exceptionVersion rejects, instead of throwing", async () => {
+    const snapshot = {
+      ...baseSnapshot(),
+      exceptionVersion: async () => {
+        throw new Error("RPC timed out");
+      },
+    };
+    // A class the charter does not allow, so the exception lookup is actually reached.
+    const descriptor = describeAction({ class: "package_install", target: "evil.example", args: {} });
+    const verdict = await evaluateAction(snapshot, descriptor, noUsage);
+    expect(verdict.verdict).toBe("BLOCK");
+    if (verdict.verdict === "BLOCK") {
+      expect(verdict.reason).toBe("ledger_unreadable");
+      expect(verdict.draft).toBeNull();
+    }
+  });
+});

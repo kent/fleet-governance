@@ -64,6 +64,9 @@ export async function main(): Promise<void> {
     governor: addresses.governor,
     ledger: addresses.ledger,
     token: addresses.token,
+    // Spec 10.7's "configured fee limits" (final review M1): unset means unbounded.
+    ...(env.maxFeePerGasWei !== undefined ? { maxFeePerGasWei: env.maxFeePerGasWei } : {}),
+    ...(env.maxGas !== undefined ? { maxGas: env.maxGas } : {}),
   };
   const signer = new FleetSigner({ privateKey: env.agentKey, rpcUrl: env.rpcHttpUrl, policy: signerPolicy, nonces });
 

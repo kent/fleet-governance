@@ -3,9 +3,11 @@ import { ActionClass, CharterV1 } from "./charter.js";
 import { DecisionKind } from "./decision.js";
 import { Host } from "./primitives.js";
 
-/** Spec 15.3 / task 8's scripted agent vocabulary, shared with `@fleet/agent-runtime`'s
- *  `ScriptedDirective` (that package cannot depend on this one, so the string union is repeated
- *  here rather than imported; the two are kept in sync by hand). */
+/** Spec 15.3 / task 8's scripted agent vocabulary, and the single definition of it: this is the
+ *  `ScriptedDirective` `@fleet/agent-runtime`'s `scripted.ts` re-exports and `apps/worker`'s env
+ *  parser checks itself against. Final review M3: this comment used to claim that package "cannot
+ *  depend on this one", which was never true (it already does), and the union was declared twice
+ *  with only a hand-kept promise that the two agreed. */
 export const ScriptedDirective = z.enum(["FOR", "AGAINST", "ABSTAIN", "ABSENT", "MALFORMED", "LATE"]);
 export type ScriptedDirective = z.infer<typeof ScriptedDirective>;
 

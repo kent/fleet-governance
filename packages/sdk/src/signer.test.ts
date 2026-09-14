@@ -449,6 +449,7 @@ describe("FleetSigner end to end against a fake transport", () => {
         }
         throw new Error(`unexpected eth_call functionName in test: ${decoded.functionName}`);
       },
+      eth_estimateGas: () => numberToHex(120_000),
       eth_sendRawTransaction: () => SENT_TX_HASH,
     });
     close = fake.close;
@@ -478,6 +479,73 @@ describe("FleetSigner end to end against a fake transport", () => {
     // 0, so the first reservation is nonce 0.
     expect(result.nonce).toBe(0);
     expect(fake.calls).toContain("eth_sendRawTransaction");
+  });
+
+  it("refuses a call whose estimated gas exceeds the policy's maxGas, before reserving a nonce (final review M1)", async () => {
+    // maxGas used to be spread in as `gas`, which set every transaction's gas limit to the cap
+    // rather than refusing one that needs more than it.
+    const fake = await startFakeRpc({
+      eth_chainId: () => numberToHex(CHAIN_ID),
+      eth_getTransactionCount: () => numberToHex(0),
+      eth_maxPriorityFeePerGas: () => numberToHex(1_000_000_000),
+      eth_getBlockByNumber: () => ({
+        baseFeePerGas: numberToHex(1_000_000_000),
+        gasLimit: numberToHex(30_000_000),
+        number: numberToHex(1),
+        hash: `0x${"22".repeat(32)}`,
+        timestamp: numberToHex(1_700_000_000),
+      }),
+      eth_call: () => encodeFunctionResult({ abi: agoraGovernorAbi, functionName: "castVoteWithReason", result: 1_000_000_000_000_000_000n }),
+      eth_estimateGas: () => numberToHex(900_000),
+      eth_sendRawTransaction: () => {
+        throw new Error("must not send");
+      },
+    });
+    close = fake.close;
+
+    const signer = new FleetSigner({
+      privateKey: PRIVATE_KEY,
+      rpcUrl: fake.url,
+      policy: { ...POLICY, maxGas: 500_000n },
+      nonces: new NonceManager(new MemoryNonceStore(), fake.url),
+    });
+
+    await expect(signer.castVoteWithReason({ proposalId: 1n, support: 1, reason: "FOR. reasonable" })).rejects.toThrow(
+      /over the configured maxGas of 500000/,
+    );
+    expect(fake.calls).not.toContain("eth_sendRawTransaction");
+  });
+
+  it("lets estimation set the gas limit when the estimate is under maxGas, rather than sending the cap as the limit", async () => {
+    const fake = await startFakeRpc({
+      eth_chainId: () => numberToHex(CHAIN_ID),
+      eth_getTransactionCount: () => numberToHex(0),
+      eth_maxPriorityFeePerGas: () => numberToHex(1_000_000_000),
+      eth_getBlockByNumber: () => ({
+        baseFeePerGas: numberToHex(1_000_000_000),
+        gasLimit: numberToHex(30_000_000),
+        number: numberToHex(1),
+        hash: `0x${"22".repeat(32)}`,
+        timestamp: numberToHex(1_700_000_000),
+      }),
+      eth_call: () => encodeFunctionResult({ abi: agoraGovernorAbi, functionName: "castVoteWithReason", result: 1_000_000_000_000_000_000n }),
+      eth_estimateGas: () => numberToHex(120_000),
+      eth_sendRawTransaction: () => `0x${"77".repeat(32)}`,
+    });
+    close = fake.close;
+
+    const signer = new FleetSigner({
+      privateKey: PRIVATE_KEY,
+      rpcUrl: fake.url,
+      policy: { ...POLICY, maxGas: 500_000n },
+      nonces: new NonceManager(new MemoryNonceStore(), fake.url),
+    });
+
+    const result = await signer.castVoteWithReason({ proposalId: 1n, support: 1, reason: "FOR. reasonable" });
+    expect(result.txHash).toBe(`0x${"77".repeat(32)}`);
+    // The old behaviour spread `gas: maxGas` into the send, which makes viem skip estimation
+    // entirely. Estimation running at all is the observable proof the cap is no longer the limit.
+    expect(fake.calls).toContain("eth_estimateGas");
   });
 
   it("surfaces a hook rejection through explainRevert instead of an opaque revert", async () => {

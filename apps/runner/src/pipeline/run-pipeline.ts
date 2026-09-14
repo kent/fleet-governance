@@ -8,7 +8,7 @@ import type { ExperimentConfigV1 as ExperimentConfigV1Type, ManifestV1 as Manife
 import { FleetClient, addressesFromManifest } from "@fleet/sdk";
 import type { FleetAddresses } from "@fleet/sdk";
 import { deployFleet, verifyDeployment } from "../deploy.js";
-import { RunnerEnvError, requirePrivateKeyEnv } from "../env.js";
+import { RunnerEnvError, parseSignerFeeLimits, requirePrivateKeyEnv } from "../env.js";
 import { loadFixture } from "../fixtures.js";
 import { readEnvValue, readside } from "../readside.js";
 import type { FixtureRunContext, FixtureRunResult, FleetKeys } from "./fixture-runner.js";
@@ -18,7 +18,7 @@ import { buildReadSideSyncConfig } from "./readside-sync-config.js";
 import { buildRecord, writeJsonRecord } from "./record.js";
 import type { RunRecordDocument } from "./record.js";
 import { renderReport } from "./report.js";
-import type { RunStore, Stage, StageName } from "./state.js";
+import type { RunStore, Stage, StageName, StageTimings } from "./state.js";
 import { runStages } from "./state.js";
 import { openTask } from "./task.js";
 
@@ -56,6 +56,9 @@ export type RunPipelineCtx = {
   chainId: number | null;
   /** `<deploymentsDir>/<chainId>/latest.json`, derivable only once `chainId` is known. */
   manifestOutPath: string | null;
+  /** One entry per stage `runStages` has finished, filled in as the run goes (final review M5).
+   *  The same object `runStages` was handed, so `CAPTURED` sees every earlier stage's span. */
+  timings: StageTimings;
   manifest: ManifestV1Type | null;
   addresses: FleetAddresses | null;
   client: FleetClient | null;
@@ -134,6 +137,7 @@ export function rehydrateRunCtx(
   env: NodeJS.ProcessEnv,
 ): RunPipelineCtx {
   const chainId = typeof payload["chainId"] === "number" ? payload["chainId"] : null;
+  // `timings` is restored by `runStages` itself (it owns the object it fills in), not here.
   const manifestOutPath =
     typeof payload["manifestOutPath"] === "string"
       ? payload["manifestOutPath"]
@@ -366,6 +370,7 @@ export function buildRunStages(env: NodeJS.ProcessEnv): readonly Stage<RunPipeli
           chainId: ctx.manifest.chainId,
           addresses: ctx.addresses,
           keys: ctx.keys,
+          feeLimits: parseSignerFeeLimits(env),
           submissionMarginSec: 20,
           log: (m) => log(ctx, m),
           ...(readSideSyncHandle ? { readSideSync: readSideSyncHandle.config } : {}),
@@ -404,7 +409,9 @@ export function buildRunStages(env: NodeJS.ProcessEnv): readonly Stage<RunPipeli
         configHash: experimentConfigHash(ctx.experiment),
         manifest: ctx.manifest,
         results: [ctx.result],
-        timings: {},
+        // Spec 12.4's "timings per stage". CAPTURED is itself still running, so its own span and
+        // REPORTED's are not in the record it writes; every earlier stage's is.
+        timings: { ...ctx.timings },
         versions: { node: process.version },
       });
       const runDir = path.join(ctx.opts.reportDir, ctx.opts.runId);
@@ -437,6 +444,7 @@ export function toRunPayload(ctx: RunPipelineCtx): Record<string, unknown> {
     manifestOutPath: ctx.manifestOutPath,
     manifestChainId: ctx.manifest?.chainId ?? null,
     taskId: ctx.taskId?.toString() ?? null,
+    timings: ctx.timings,
     proposalId: ctx.result?.proposalId?.toString() ?? null,
     pass: ctx.result?.pass ?? null,
     recordPath: ctx.recordPath,
@@ -447,11 +455,13 @@ export function toRunPayload(ctx: RunPipelineCtx): Record<string, unknown> {
 export async function runExperiment(opts: RunPipelineOptions, env: NodeJS.ProcessEnv = process.env): Promise<RunPipelineCtx> {
   const experiment = loadExperiment(opts.experimentPath);
   const stages = buildRunStages(env);
+  const timings: StageTimings = {};
   const initialCtx: RunPipelineCtx = {
     opts,
     experiment,
     chainId: null,
     manifestOutPath: null,
+    timings,
     manifest: null,
     addresses: null,
     client: null,
@@ -469,5 +479,6 @@ export async function runExperiment(opts: RunPipelineOptions, env: NodeJS.Proces
     ctx: initialCtx,
     toPayload: toRunPayload,
     rehydrate: (ctx, payload) => rehydrateRunCtx(ctx, payload, env),
+    timings,
   });
 }

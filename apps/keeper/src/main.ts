@@ -53,7 +53,16 @@ export async function main(): Promise<void> {
     rpcUrls: { default: { http: [env.rpcHttpUrl] } },
   });
   const wallet = createWalletClient({ account, chain, transport: http(env.rpcHttpUrl) });
-  const keeper = new Keeper({ client, wallet, addresses });
+  const keeper = new Keeper({
+    client,
+    wallet,
+    addresses,
+    // Spec 10.7's "configured fee limits" (final review M1): unset means unbounded.
+    feeLimits: {
+      ...(env.maxFeePerGasWei !== undefined ? { maxFeePerGasWei: env.maxFeePerGasWei } : {}),
+      ...(env.maxGas !== undefined ? { maxGas: env.maxGas } : {}),
+    },
+  });
 
   logger.info(
     { keeperAddress: account.address, chainId: manifest.chainId, governor: addresses.governor, pollMs: env.pollMs },

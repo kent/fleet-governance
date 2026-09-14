@@ -1,9 +1,12 @@
-import type { VoteV1 } from "@fleet/schemas";
+import type { ScriptedDirective, VoteV1 } from "@fleet/schemas";
 import type { AnchoredProposal, DecisionPolicy, PolicyOutput } from "./policy.js";
 
 /** One scripted directive for one agent, spec 10.6's test vocabulary: a vote to cast, a
- *  deliberate no-vote, a deliberately broken policy output, or a slow one. */
-export type ScriptedDirective = "FOR" | "AGAINST" | "ABSTAIN" | "ABSENT" | "MALFORMED" | "LATE";
+ *  deliberate no-vote, a deliberately broken policy output, or a slow one. Re-exported from
+ *  `@fleet/schemas`, where the zod enum lives, rather than declared a second time here: this
+ *  package already depends on that one, so there was never a reason for two hand-synchronized
+ *  copies of the union (final review M3). */
+export type { ScriptedDirective };
 
 function isCastable(d: ScriptedDirective): d is "FOR" | "AGAINST" | "ABSTAIN" {
   return d === "FOR" || d === "AGAINST" || d === "ABSTAIN";

@@ -35,17 +35,36 @@ function terminalResult(state: ProposalState): KeeperResult | null {
  * state re-check simply observes the new state and stops rather than sending a redundant or
  * conflicting transaction.
  */
+export type KeeperFeeLimits = {
+  /** A cap on what one keeper transaction may pay per unit of gas, applied as `maxFeePerGas`. */
+  maxFeePerGasWei?: bigint;
+  /** A cap on how much gas one keeper transaction may use; a queue or execute estimated above it
+   *  is refused rather than sent. */
+  maxGas?: bigint;
+};
+
 export class Keeper {
   private readonly client: FleetClient;
   private readonly wallet: WalletClient;
   private readonly addresses: FleetAddresses;
   private readonly confirmations: number | undefined;
+  private readonly feeLimits: KeeperFeeLimits;
 
-  constructor(opts: { client: FleetClient; wallet: WalletClient; addresses: FleetAddresses; confirmations?: number }) {
+  constructor(opts: {
+    client: FleetClient;
+    wallet: WalletClient;
+    addresses: FleetAddresses;
+    confirmations?: number;
+    /** Spec 10.7's "configured fee limits" for the keeper's own sends (final review M1). The
+     *  keeper is not an agent and does not go through `FleetSigner`, so its bounds are configured
+     *  here instead of in a `SignerPolicy`. */
+    feeLimits?: KeeperFeeLimits;
+  }) {
     this.client = opts.client;
     this.wallet = opts.wallet;
     this.addresses = opts.addresses;
     this.confirmations = opts.confirmations;
+    this.feeLimits = opts.feeLimits ?? {};
   }
 
   async reconcileProposal(proposalId: bigint): Promise<KeeperResult> {
@@ -121,9 +140,35 @@ export class Keeper {
       return "waiting";
     }
 
+    if (this.feeLimits.maxGas !== undefined) {
+      try {
+        const estimated = await this.client.publicClient.estimateContractGas({
+          account: this.wallet.account,
+          address: this.addresses.governor,
+          abi: agoraGovernorAbi,
+          functionName,
+          args: [targets, values, calldatas, descriptionHash],
+        } as never);
+        if (estimated > this.feeLimits.maxGas) {
+          // eslint-disable-next-line no-console
+          console.error(
+            `Keeper: ${functionName}(${proposalId.toString()}) needs an estimated ${estimated.toString()} gas, over the configured maxGas of ${this.feeLimits.maxGas.toString()}; not sending`,
+          );
+          return "waiting";
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(`Keeper: ${functionName}(${proposalId.toString()}) gas estimation failed: ${explainRevert(err)}`);
+        return "waiting";
+      }
+    }
+
     let txHash: Hex;
     try {
-      txHash = await this.wallet.writeContract(request as never);
+      txHash = await this.wallet.writeContract({
+        ...request,
+        ...(this.feeLimits.maxFeePerGasWei !== undefined ? { maxFeePerGas: this.feeLimits.maxFeePerGasWei } : {}),
+      } as never);
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(`Keeper: ${functionName}(${proposalId.toString()}) send failed: ${explainRevert(err)}`);

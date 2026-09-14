@@ -28,6 +28,34 @@ export function requirePrivateKeyEnv(env: NodeJS.ProcessEnv, name: string): Hex 
   return value as Hex;
 }
 
+/** The signer fee limits a `fleet` run configures, spec 10.7's "configured fee limits" (final
+ *  review M1). Both are optional; `undefined` means unbounded, which is what every app did before
+ *  this wave. */
+export type SignerFeeLimits = { maxFeePerGasWei?: bigint; maxGas?: bigint };
+
+/** Reads `FLEET_MAX_FEE_PER_GAS_WEI` and `FLEET_MAX_GAS`, each an optional positive decimal
+ *  integer, into the shape `SignerPolicy` takes. */
+export function parseSignerFeeLimits(env: NodeJS.ProcessEnv): SignerFeeLimits {
+  const read = (name: string): bigint | undefined => {
+    const raw = env[name];
+    if (raw === undefined || raw === "") return undefined;
+    if (!/^[0-9]+$/.test(raw.trim())) {
+      throw new RunnerEnvError(`${name} must be a non-negative decimal integer, got ${JSON.stringify(raw)}`);
+    }
+    const parsed = BigInt(raw.trim());
+    if (parsed <= 0n) {
+      throw new RunnerEnvError(`${name} must be greater than zero, got ${JSON.stringify(raw)}`);
+    }
+    return parsed;
+  };
+  const maxFeePerGasWei = read("FLEET_MAX_FEE_PER_GAS_WEI");
+  const maxGas = read("FLEET_MAX_GAS");
+  return {
+    ...(maxFeePerGasWei !== undefined ? { maxFeePerGasWei } : {}),
+    ...(maxGas !== undefined ? { maxGas } : {}),
+  };
+}
+
 /** Reads and validates a `fleet.manifest.v1` file off disk. Throws `RunnerEnvError` with the
  *  offending path (never the manifest's raw contents) on any failure, and refuses a manifest for a
  *  chain v1 does not operate on (final review I2). */

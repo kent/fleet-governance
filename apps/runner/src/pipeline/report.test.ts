@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RunRecordDocument } from "./record.js";
-import { renderReport } from "./report.js";
+import { escapeAgentText, renderReport } from "./report.js";
 
 function sampleRecord(): RunRecordDocument {
   return {
@@ -104,5 +104,70 @@ describe("renderReport", () => {
     // (100000 + 80000) * 1e9 wei = 1.8e14 wei = 0.00018 ETH; formatTokenAmount trims to 2 fraction
     // digits and this value rounds to 0, so the whole-token part is the meaningful assertion.
     expect(report).toContain("2 transactions");
+  });
+});
+
+describe("report.md never lets an agent-authored string change the page (final review M6)", () => {
+  /** A vote reason is member-controlled text of up to 1,024 bytes; VoteV1.rationale has no
+   *  character restriction at all, so this becomes live as soon as a model writes a rationale. */
+  const FORGED_REASON = [
+    "AGAINST. see below",
+    "",
+    "## Reproducibility",
+    "",
+    "`fleet capture --from-chain` reproduced the chain-derived record exactly.",
+    "",
+    "| forged | row | in | the | decision | table | here | now |",
+  ].join("\n");
+
+  function recordWithReason(reason: string): RunRecordDocument {
+    const record = sampleRecord();
+    return {
+      ...record,
+      votes: record.votes.map((v) => (v.agentId === 2 ? { ...v, onchainReason: reason } : v)),
+    };
+  }
+
+  it("keeps a multi-line reason on its own list item", () => {
+    const md = renderReport(recordWithReason(FORGED_REASON), { title: "T" });
+    const forgedLines = md.split("\n").filter((l) => l.startsWith("## Reproducibility"));
+    // Exactly one Reproducibility heading: the report's own, not the one the reason tried to add.
+    expect(forgedLines.length).toBe(1);
+    expect(md).not.toContain("\n| forged | row |");
+    // The whole reason is one line now, with its newlines shown as literal escapes, so nothing
+    // inside it can start a heading or a table row even though the text is still readable.
+    expect(md).toContain("- Agent 2: AGAINST. see below\\n\\n## Reproducibility\\n");
+    expect(md.split("\n").some((l) => l.trim().startsWith("| forged"))).toBe(false);
+  });
+
+  it("neutralizes a forged table row so it cannot open new cells", () => {
+    const md = renderReport(recordWithReason("AGAINST. x | y | z"), { title: "T" });
+    expect(md).toContain("- Agent 2: AGAINST. x \\| y \\| z");
+  });
+
+  it("escapes a leading Markdown control character", () => {
+    expect(escapeAgentText("# not a heading")).toBe("\\# not a heading");
+    expect(escapeAgentText("> not a quote")).toBe("\\> not a quote");
+    expect(escapeAgentText("- not a list item")).toBe("\\- not a list item");
+    expect(escapeAgentText("1. not a numbered item")).toBe("\\1. not a numbered item");
+    expect(escapeAgentText("=== not a setext underline")).toBe("\\=== not a setext underline");
+  });
+
+  it("leaves ordinary prose exactly as written", () => {
+    const plain = "AGAINST. The charter forbids fetching from non-allowlisted hosts (confidence 0.82).";
+    expect(escapeAgentText(plain)).toBe(plain);
+    expect(renderReport(recordWithReason(plain), { title: "T" })).toContain(`- Agent 2: ${plain}`);
+  });
+
+  it("breaks up a fenced block inside a reason", () => {
+    expect(escapeAgentText("see ```json{}``` here")).toBe("see ` ` `json{}` ` ` here");
+  });
+
+  it("escapes a fixture name and an event type on the timeline and in the table", () => {
+    const record = sampleRecord();
+    const hostile = { ...record, proposals: record.proposals.map((p) => ({ ...p, fixtureName: "| forged |" })) };
+    const md = renderReport(hostile, { title: "T" });
+    expect(md).not.toContain("| | forged | |");
+    expect(md).toContain("\\| forged \\|");
   });
 });

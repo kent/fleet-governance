@@ -154,6 +154,7 @@ describe("rehydrateRunCtx (final review I1)", () => {
       experiment: EXPERIMENT,
       chainId: null,
       manifestOutPath: null,
+      timings: {},
       manifest: null,
       addresses: null,
       client: null,

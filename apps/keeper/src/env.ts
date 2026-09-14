@@ -20,6 +20,11 @@ export type KeeperEnv = {
   pollMs: number;
   logLevel: string;
   keeperKey: Hex;
+  /** Spec 10.7's "configured fee limits", fed into `Keeper`'s own sends (the keeper is not an
+   *  agent and does not go through `FleetSigner`). `undefined` means unbounded, which is what
+   *  every app did before (final review M1). */
+  maxFeePerGasWei: bigint | undefined;
+  maxGas: bigint | undefined;
 };
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
@@ -54,6 +59,21 @@ function parsePollMs(env: NodeJS.ProcessEnv): number {
   return parsed;
 }
 
+/** Reads an optional positive integer of wei or gas. Rejects anything that is not a plain
+ *  non-negative decimal integer rather than silently truncating a float or a hex string. */
+function parseOptionalBigint(env: NodeJS.ProcessEnv, name: string): bigint | undefined {
+  const raw = optional(env, name);
+  if (raw === undefined) return undefined;
+  if (!/^[0-9]+$/.test(raw.trim())) {
+    throw new EnvError(`${name} must be a non-negative decimal integer, got ${JSON.stringify(raw)}`);
+  }
+  const parsed = BigInt(raw.trim());
+  if (parsed <= 0n) {
+    throw new EnvError(`${name} must be greater than zero, got ${JSON.stringify(raw)}`);
+  }
+  return parsed;
+}
+
 /** Reads and validates the keeper's environment. Never touches the filesystem or the network;
  *  `loadManifest` below is the separate, explicit place that reads `FLEET_MANIFEST` off disk, so
  *  this function alone is cheaply unit-testable against a plain object. */
@@ -65,6 +85,8 @@ export function parseKeeperEnv(env: NodeJS.ProcessEnv = process.env): KeeperEnv 
     pollMs: parsePollMs(env),
     logLevel: optional(env, "LOG_LEVEL") ?? "info",
     keeperKey: parsePrivateKey("FLEET_KEEPER_KEY", required(env, "FLEET_KEEPER_KEY")),
+    maxFeePerGasWei: parseOptionalBigint(env, "FLEET_MAX_FEE_PER_GAS_WEI"),
+    maxGas: parseOptionalBigint(env, "FLEET_MAX_GAS"),
   };
 }
 

@@ -28,11 +28,17 @@ export type SignerPolicy = {
   governor: Address;
   ledger: Address;
   token: Address;
+  /** Spec 10.7's "configured fee limits". A cap on what one transaction may pay per unit of gas;
+   *  applied as the transaction's `maxFeePerGas`, so the signer never pays above it. */
   maxFeePerGasWei?: bigint;
+  /** A cap on how much gas one transaction may use. Final review M1: this used to be spread in as
+   *  `gas`, which set every transaction's gas limit to the cap instead of refusing one that needs
+   *  more than it. It is now compared against the estimate for the call, before anything is
+   *  signed, and the transaction's own gas limit is left to estimation. */
   maxGas?: bigint;
 };
 
-export type PolicyViolationCode = "CHAIN" | "TARGET" | "SELECTOR" | "VALUE" | "SIZE" | "RAW_CALLDATA";
+export type PolicyViolationCode = "CHAIN" | "TARGET" | "SELECTOR" | "VALUE" | "SIZE" | "RAW_CALLDATA" | "GAS";
 
 /** Thrown before any signing or sending when a call `FleetSigner` was asked to make would fall
  *  outside its policy. Every check that can throw this runs client-side, ahead of simulation. */
@@ -268,13 +274,29 @@ export class FleetSigner {
       throw new Error(explainRevert(err), { cause: err });
     }
 
+    if (this.policy.maxGas !== undefined) {
+      const estimated = (await this.publicClient.estimateContractGas({
+        account: this.wallet.account,
+        address: call.target,
+        abi: call.abi,
+        functionName: call.functionName,
+        args: call.args,
+        value: 0n,
+      } as never)) as bigint;
+      if (estimated > this.policy.maxGas) {
+        throw new PolicyViolation(
+          "GAS",
+          `call needs an estimated ${estimated.toString()} gas, over the configured maxGas of ${this.policy.maxGas.toString()}`,
+        );
+      }
+    }
+
     const reservation = await this.nonces.reserve(this.address);
     try {
       const txHash = await this.wallet.writeContract({
         ...request,
         nonce: reservation.nonce,
         ...(this.policy.maxFeePerGasWei !== undefined ? { maxFeePerGas: this.policy.maxFeePerGasWei } : {}),
-        ...(this.policy.maxGas !== undefined ? { gas: this.policy.maxGas } : {}),
       } as never);
       await reservation.commit(txHash);
       return { txHash, nonce: reservation.nonce };

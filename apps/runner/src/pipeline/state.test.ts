@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { JsonFileRunStore, MemoryRunStore, STAGE_ORDER, runStages } from "./state.js";
-import type { Stage } from "./state.js";
+import type { Stage, StageTimings } from "./state.js";
 
 type FakeCtx = { calls: string[]; count: number };
 
@@ -108,6 +108,53 @@ describe("runStages", () => {
     expect(calls).toEqual(["AGENTS_RUNNING", "TASK_ENDED", "CAPTURED", "REPORTED"]);
     expect(seen).toEqual(Array(4).fill("from the checkpoint"));
     expect(result.count).toBe(10);
+  });
+
+  it("records one timing per stage it runs, and carries a resumed run's earlier timings forward", async () => {
+    // Final review M5: record.json's `timings` was always `{}`, though runStages already knew when
+    // every stage started and finished.
+    const store = new MemoryRunStore();
+    const timings: StageTimings = {};
+    await runStages({
+      runId: "run-1",
+      store,
+      stages: buildStages([]),
+      ctx: { calls: [], count: 0 },
+      toPayload: (ctx) => ({ count: ctx.count, timings }),
+      timings,
+    });
+
+    expect(Object.keys(timings).sort()).toEqual([...STAGE_ORDER].sort());
+    for (const stage of STAGE_ORDER) {
+      const timing = timings[stage]!;
+      expect(typeof timing.startedAt).toBe("string");
+      expect(timing.durationMs).toBeGreaterThanOrEqual(0);
+      expect(Date.parse(timing.endedAt)).toBeGreaterThanOrEqual(Date.parse(timing.startedAt));
+    }
+
+    // A resume keeps what the earlier process measured and adds only the stages it runs itself.
+    await store.save({
+      runId: "run-2",
+      stage: "TASK_OPENED",
+      updatedAt: new Date().toISOString(),
+      payload: {
+        count: 6,
+        timings: { PREFLIGHT: { startedAt: "2026-01-01T00:00:00.000Z", endedAt: "2026-01-01T00:00:01.000Z", durationMs: 1000 } },
+      },
+    });
+    const resumedTimings: StageTimings = {};
+    await runStages({
+      runId: "run-2",
+      store,
+      stages: buildStages([]),
+      ctx: { calls: [], count: 6 },
+      toPayload: (ctx) => ({ count: ctx.count, timings: resumedTimings }),
+      timings: resumedTimings,
+    });
+    expect(resumedTimings["PREFLIGHT"]?.durationMs).toBe(1000);
+    expect(Object.keys(resumedTimings).sort()).toEqual(
+      ["PREFLIGHT", "AGENTS_RUNNING", "TASK_ENDED", "CAPTURED", "REPORTED"].sort(),
+    );
   });
 
   it("does not call rehydrate for a fresh run with no checkpoint", async () => {

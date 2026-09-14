@@ -6,6 +6,7 @@ import { canonicalize } from "@fleet/schemas";
 import { FleetClient, addressesFromManifest } from "@fleet/sdk";
 import { anvilDevKey, DEMO_ACCOUNT_INDEX } from "./anvil-keys.js";
 import { deployFleet, verifyDeployment } from "./deploy.js";
+import { parseSignerFeeLimits } from "./env.js";
 import { loadDemoFixtures } from "./fixtures.js";
 import type { FixtureRunContext, FixtureRunResult, FleetKeys } from "./pipeline/fixture-runner.js";
 import { runFixture } from "./pipeline/fixture-runner.js";
@@ -147,6 +148,7 @@ export async function runDemo(opts: DemoOptions): Promise<DemoOutcome> {
       chainId: manifest.chainId,
       addresses,
       keys,
+      feeLimits: parseSignerFeeLimits(process.env),
       ...(advanceTime ? { advanceTime } : {}),
       ...(readSideSyncHandle ? { readSideSync: readSideSyncHandle.config } : {}),
       submissionMarginSec: 6,

@@ -24,6 +24,10 @@ export type WorkerEnv = {
   agentKey: Hex;
   policyDirective: ScriptedDirective;
   submissionMarginSec: number;
+  /** Spec 10.7's "configured fee limits", fed straight into `SignerPolicy`. `undefined` means
+   *  unbounded, which is what every app did before (final review M1). */
+  maxFeePerGasWei: bigint | undefined;
+  maxGas: bigint | undefined;
 };
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
@@ -77,6 +81,21 @@ function parseSubmissionMarginSec(env: NodeJS.ProcessEnv): number {
   return parsed;
 }
 
+/** Reads an optional positive integer of wei or gas. Rejects anything that is not a plain
+ *  non-negative decimal integer rather than silently truncating a float or a hex string. */
+function parseOptionalBigint(env: NodeJS.ProcessEnv, name: string): bigint | undefined {
+  const raw = optional(env, name);
+  if (raw === undefined) return undefined;
+  if (!/^[0-9]+$/.test(raw.trim())) {
+    throw new EnvError(`${name} must be a non-negative decimal integer, got ${JSON.stringify(raw)}`);
+  }
+  const parsed = BigInt(raw.trim());
+  if (parsed <= 0n) {
+    throw new EnvError(`${name} must be greater than zero, got ${JSON.stringify(raw)}`);
+  }
+  return parsed;
+}
+
 const SCRIPTED_DIRECTIVES = ["FOR", "AGAINST", "ABSTAIN", "ABSENT", "MALFORMED", "LATE"] as const satisfies readonly ScriptedDirective[];
 
 const POLICY_PATTERN = /^scripted:(FOR|AGAINST|ABSTAIN|ABSENT|MALFORMED|LATE)$/;
@@ -106,6 +125,8 @@ export function parseWorkerEnv(env: NodeJS.ProcessEnv = process.env): WorkerEnv 
     agentKey: parsePrivateKey("FLEET_AGENT_KEY", required(env, "FLEET_AGENT_KEY")),
     policyDirective: parsePolicy(env),
     submissionMarginSec: parseSubmissionMarginSec(env),
+    maxFeePerGasWei: parseOptionalBigint(env, "FLEET_MAX_FEE_PER_GAS_WEI"),
+    maxGas: parseOptionalBigint(env, "FLEET_MAX_GAS"),
   };
 }
 
