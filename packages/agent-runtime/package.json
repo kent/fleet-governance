@@ -15,7 +15,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc && mkdir -p dist/migrations && cp src/migrations/*.sql dist/migrations/",
+    "build": "tsc && mkdir -p dist/migrations && cp src/migrations/*.sql dist/migrations/ && mkdir -p dist/providers/prompts && cp src/providers/prompts/*.md dist/providers/prompts/",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
@@ -23,8 +23,11 @@
     "@fleet/gateway": "workspace:*",
     "@fleet/schemas": "workspace:*",
     "@fleet/sdk": "workspace:*",
+    "dotenv": "17.4.2",
     "pg": "8.23.0",
-    "viem": "2.56.5"
+    "viem": "2.56.5",
+    "zod": "3.25.76",
+    "zod-to-json-schema": "3.25.2"
   },
   "devDependencies": {
     "@types/pg": "8.23.1"

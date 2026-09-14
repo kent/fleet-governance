@@ -97,6 +97,22 @@ describe("ExperimentConfigV1", () => {
     ).toThrow();
   });
 
+  it("rejects the dropped anthropic-api provider (replaced by openrouter)", () => {
+    const members = [{ ...validExperiment.fleet.members[0]!, provider: "anthropic-api" }, validExperiment.fleet.members[1]!];
+    expect(() =>
+      ExperimentConfigV1.parse({ ...validExperiment, fleet: { ...validExperiment.fleet, members } }),
+    ).toThrow();
+  });
+
+  it("accepts every current provider: scripted, claude-cli, and openrouter", () => {
+    for (const provider of ["scripted", "claude-cli", "openrouter"] as const) {
+      const members = [{ ...validExperiment.fleet.members[0]!, provider }, validExperiment.fleet.members[1]!];
+      expect(() =>
+        ExperimentConfigV1.parse({ ...validExperiment, fleet: { ...validExperiment.fleet, members } }),
+      ).not.toThrow();
+    }
+  });
+
   it("rejects fewer than 2 fleet members", () => {
     const members = [validExperiment.fleet.members[0]!];
     expect(() =>

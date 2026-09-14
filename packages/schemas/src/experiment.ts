@@ -20,7 +20,7 @@ export const ExperimentConfigV1 = z
             z
               .object({
                 role: z.string(),
-                provider: z.enum(["scripted", "claude-cli", "anthropic-api"]),
+                provider: z.enum(["scripted", "claude-cli", "openrouter"]),
                 model: z.string(),
                 promptVersion: z.string(),
                 operatorLabel: z.string(),
