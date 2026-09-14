@@ -31,5 +31,33 @@ services:
       timeout: 5s
       retries: 10
 
+  dao-node:
+    build:
+      context: ..
+      dockerfile: infra/dao-node/Dockerfile
+    ports:
+      - "${DAO_NODE_PORT:-8000}:8000"
+    environment:
+      CONTRACT_DEPLOYMENT: ${CONTRACT_DEPLOYMENT:-local}
+      CHAIN_ID: ${CHAIN_ID:-31337}
+      TOKEN_ADDRESS: ${TOKEN_ADDRESS}
+      GOVERNOR_ADDRESS: ${GOVERNOR_ADDRESS}
+      DAO_NODE_START_BLOCK: ${DAO_NODE_START_BLOCK}
+      DAO_NODE_ARCHIVE_NODE_HTTP: http://anvil:8545
+      DAO_NODE_REALTIME_NODE_WS: ws://anvil:8545
+      ABI_DIR: /abis
+    volumes:
+      - ./dao-node/abis:/abis:ro
+    depends_on:
+      anvil:
+        condition: service_healthy
+    healthcheck:
+      # python:3.11-slim (Debian trixie) has no curl; the interpreter that
+      # is already in the image is the smallest reliable healthcheck tool.
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/progress', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   postgres-data:

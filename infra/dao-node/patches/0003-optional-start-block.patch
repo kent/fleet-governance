@@ -1,0 +1,30 @@
+# 0003: Optional start block for JsonRpcHistHttpClient.get_fallback_block
+#
+# Honours DAO_NODE_START_BLOCK (an integer env var) before falling back to
+# the upstream ~7-day backward block search. The Runner (Task 6) sets this
+# env var from the Part 1 deployment manifest's `deploymentBlock`, so a
+# fresh local chain (anvil) starts indexing from the fleet's actual
+# deployment block instead of scanning for a block older than 7 days
+# (which a brand-new anvil chain never has).
+#
+diff --git a/app/clients_httpjson.py b/app/clients_httpjson.py
+index ae9f2cf..a734099 100644
+--- a/app/clients_httpjson.py
++++ b/app/clients_httpjson.py
+@@ -247,7 +247,15 @@ class JsonRpcHistHttpClient(SubscriptionPlannerMixin):
+ 
+         if self.fallback_block:
+             return self.fallback_block
+-        
++
++        # The Runner sets DAO_NODE_START_BLOCK from the Part 1 deployment
++        # manifest's deploymentBlock, so a fresh local chain (e.g. anvil)
++        # doesn't need a multi-day block search to find a starting point.
++        start_block = os.getenv('DAO_NODE_START_BLOCK', None)
++        if start_block is not None:
++            self.fallback_block = int(start_block)
++            return self.fallback_block
++
+         w3 = self.connect()
+             
+         if not w3.is_connected():

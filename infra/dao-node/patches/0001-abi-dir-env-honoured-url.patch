@@ -1,0 +1,76 @@
+diff --git a/app/clients_csv.py b/app/clients_csv.py
+index 78771dd..1fc3c8b 100644
+--- a/app/clients_csv.py
++++ b/app/clients_csv.py
+@@ -300,7 +300,7 @@ class CSVClient(SubscriptionPlannerMixin):
+ if __name__ == '__main__':
+ 
+     from abifsm import ABI, ABISet
+-    os.environ['ABI_URL'] = 'https://storage.googleapis.com/agora-abis/v2'
++    os.environ.setdefault('ABI_URL', 'https://storage.googleapis.com/agora-abis/v2')
+ 
+     abi_list = []
+ 
+diff --git a/app/server.py b/app/server.py
+index 9b48650..32fde8a 100644
+--- a/app/server.py
++++ b/app/server.py
+@@ -63,7 +63,25 @@ glogr.info(f"{BOOT_TIME=}")
+ ######################################################################
+ 
+ from abifsm import ABI, ABISet
+-os.environ['ABI_URL'] = 'https://storage.googleapis.com/agora-abis/v2'
++os.environ.setdefault('ABI_URL', 'https://storage.googleapis.com/agora-abis/v2')
++
++######################################################################
++#
++# When ABI_DIR is set and holds a file named <lowercase-address>.json for
++# a contract, load the ABI from disk instead of fetching it from the
++# internet. Falls back to ABI.from_internet(...) otherwise, preserving
++# upstream behaviour when ABI_DIR is unset or the file is missing.
++#
++######################################################################
++
++def load_abi(name, address, chain_id):
++    abi_dir = os.getenv('ABI_DIR', None)
++    if abi_dir:
++        abi_path = os.path.join(abi_dir, f"{address.lower()}.json")
++        if os.path.exists(abi_path):
++            logr.info(f"Loading ABI for {name} from {abi_path}")
++            return ABI.from_file(name, abi_path)
++    return ABI.from_internet(name, address, chain_id=chain_id, implementation=True)
+ 
+ ######################################################################
+ #
+@@ -1590,7 +1608,7 @@ async def bootstrap_data_feeds(app, loop):
+     if 'token' in deployment:
+         token_addr = deployment['token']['address'].lower()
+         logr.info(f"Using {token_addr=}")
+-        token_abi = ABI.from_internet('token', token_addr, chain_id=chain_id, implementation=True)
++        token_abi = load_abi('token', token_addr, chain_id)
+         abi_list.append(token_abi)
+ 
+     
+@@ -1603,19 +1621,19 @@ async def bootstrap_data_feeds(app, loop):
+             logr.info("Overriding Gov ABI")
+             gov_abi = ABI.from_url('gov', GOV_ABI_OVERRIDE_URL)
+         else:
+-            gov_abi = ABI.from_internet('gov', gov_addr, chain_id=chain_id, implementation=True)
++            gov_abi = load_abi('gov', gov_addr, chain_id)
+         abi_list.append(gov_abi)
+ 
+     if 'ptc' in deployment:
+         ptc_addr = deployment['ptc']['address'].lower()
+         logr.info(f"Using {ptc_addr=}")
+-        ptc_abi = ABI.from_internet('ptc', ptc_addr, chain_id=chain_id, implementation=True)
++        ptc_abi = load_abi('ptc', ptc_addr, chain_id)
+         abi_list.append(ptc_abi)
+ 
+     if 'voting_module' in deployment:
+         voting_module_addr = deployment['voting_module']['address'].lower()
+         logr.info(f"Using {voting_module_addr=}")
+-        voting_module_abi = ABI.from_internet('voting_module', voting_module_addr, chain_id=chain_id, implementation=True)
++        voting_module_abi = load_abi('voting_module', voting_module_addr, chain_id)
+         abi_list.append(voting_module_abi)
+ 
+     abis = ABISet('daonode', abi_list)

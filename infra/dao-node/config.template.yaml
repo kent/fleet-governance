@@ -1,0 +1,21 @@
+friendly_short_name: Fleet
+dao_slug: FLEET
+schema: fleet
+wrapped_tenant_prefix: fleet
+index_tenant_prefix: fleet
+token_spec:
+  name: erc20
+  version: '?'
+governor_spec:
+  name: agora
+  version: 2.0
+features:
+  staking: False
+deployments:
+  ${CONTRACT_DEPLOYMENT}:
+    chain_id: ${CHAIN_ID}
+    token:
+      address: '${TOKEN_ADDRESS}'
+      decimals: 18
+    gov:
+      address: '${GOVERNOR_ADDRESS}'

@@ -1,0 +1,15 @@
+diff --git a/app/data_products.py b/app/data_products.py
+index 6ce2736..7cc35c7 100644
+--- a/app/data_products.py
++++ b/app/data_products.py
+@@ -872,7 +872,9 @@ class Proposals(DataProduct):
+                     proposal_data = proposal.create_event.get('proposal_data', None)
+ 
+                     if self.gov_spec['name'] == 'agora' and self.gov_spec['version'] >= 2.0:
+-                        proposal_type = int(proposal.create_event.get('description', None).split('#proposalTypeId=')[1].split('#')[0])
++                        description = proposal.create_event.get('description') or ''
++                        marker = '#proposalTypeId='
++                        proposal_type = int(description.split(marker)[1].split('#')[0]) if marker in description else 0
+                         proposal.set_proposal_type(proposal_type)
+                     elif self.gov_spec['name'] == 'agora':
+                         # Older PTC Contracts didn't fully describe themselves, so we 
