@@ -346,3 +346,10 @@ the command verifies and what it retains as local bookkeeping.
 The cost guide and bullet-point blog now include Muse Spark Contributor estimates for 20, 100
 and 500 calls per member: $32, $160 and $800 respectively for 2,000 agents at the stated token
 averages. The dedicated capped key required for the measured live pilot is still pending.
+
+The separate Agora browser audit remains incomplete. Its local Next development container was
+repeatedly killed at its 6 GiB memory limit while compiling proposal pages. Enabling Next's
+Webpack memory option with a 4 GiB Node heap still produced a recorded Docker OOM event. A 3 GiB
+heap trial also reached the container limit without rendering the page. Those unproven settings
+were reverted. The existing Anvil, database and indexer were not restarted. A larger development
+VM or a verified reduction in the UI's compilation footprint is still needed for this audit.
