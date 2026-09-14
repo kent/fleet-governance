@@ -3,11 +3,21 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { CharterV1, ExperimentConfigV1, effectiveYesCount } from "@fleet/schemas";
-import type { ExperimentConfigV1 as ExperimentConfigV1Type } from "@fleet/schemas";
+import type { CharterV1 as CharterV1Type, ExperimentConfigV1 as ExperimentConfigV1Type } from "@fleet/schemas";
 import { CODING_TASK_CHARTER, EXPERIMENT_NAME_PATTERN, FORM_DEFAULTS, defaultMember } from "../lib/defaults.js";
 
 type FixtureKind = "scripted" | "model";
-type FixtureSummary = { name: string; kind: FixtureKind; description: string; charterPath?: string };
+type FixtureSummary = {
+  name: string;
+  kind: FixtureKind;
+  description: string;
+  charterPath?: string;
+  /** The model fixture's own parsed charter, read server-side by `GET /api/fixtures`
+   *  (fix round 1). Absent for scripted fixtures and for a model fixture whose charter file
+   *  failed to load, in which case `charterError` says why. */
+  charter?: CharterV1Type;
+  charterError?: string;
+};
 type EnvVarStatus = { name: string; present: boolean };
 type FleetMember = ExperimentConfigV1Type["fleet"]["members"][number];
 
@@ -127,14 +137,30 @@ export default function ConfigForm() {
 
   function handleFixtureChange(name: string): void {
     const fixture = fixtures.find((f) => f.name === name);
-    const agentsScripted = fixture ? fixture.kind !== "model" : draft.scenario.agentsScripted;
-    // Every fixture in this repo resolves to the same charter file today (see the comment on
-    // CODING_TASK_CHARTER in lib/defaults.ts), so this always pre-fills from that same literal
-    // regardless of the selected fixture's own charterPath; once a second charter fixture exists
-    // this needs to fetch that path's real content instead.
-    setDraft((prev) => ({ ...prev, scenario: { fixture: name, agentsScripted }, task: { ...prev.task, charter: CODING_TASK_CHARTER } }));
-    setCharterText(JSON.stringify(CODING_TASK_CHARTER, null, 2));
-    setCharterError(null);
+    const isModel = fixture?.kind === "model";
+    const agentsScripted = fixture ? !isModel : draft.scenario.agentsScripted;
+
+    // A scripted fixture names no charter of its own, so it always pre-fills from the embedded
+    // default. A model fixture pre-fills from its own charter (GET /api/fixtures reads and
+    // CharterV1-validates it server-side, per its charterPath), never from the default: falling
+    // back to CODING_TASK_CHARTER here would silently apply the wrong charter for a fixture like
+    // legit-amendment or escalate, whose charter differs from coding-task.v1.json (fix round 1).
+    // If that fixture's own charter failed to load server-side, keep whatever charter is already
+    // in the editor rather than guess, and surface why via the same inline error the textarea uses.
+    let charter = CODING_TASK_CHARTER;
+    let charterLoadError: string | null = null;
+    if (isModel && fixture) {
+      if (fixture.charter) {
+        charter = fixture.charter;
+      } else {
+        charter = draft.task.charter;
+        charterLoadError = fixture.charterError ?? `could not load the charter for fixture "${name}"`;
+      }
+    }
+
+    setDraft((prev) => ({ ...prev, scenario: { fixture: name, agentsScripted }, task: { ...prev.task, charter } }));
+    setCharterText(JSON.stringify(charter, null, 2));
+    setCharterError(charterLoadError);
   }
 
   function handleCharterTextChange(text: string): void {
