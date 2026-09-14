@@ -1287,3 +1287,472 @@ mitigations are raising Docker Desktop's VM memory allocation, or
 avoiding concurrent multi-route compiles the first time a set of pages
 is warmed up (e.g. hit pages one at a time, letting each finish
 compiling, rather than curling several in parallel).
+
+## Task 6: bootstrap script and the M0 end-to-end proof
+
+Worktree `.worktrees/part2`, branch `part2-agora-stack`. This is the first task to
+actually deploy a fleet and drive a real proposal through the whole stack; every
+quirk below was found doing that for the first time (Tasks 3-5 each verified their
+own service in isolation against placeholder addresses and, at most, a zero-proposal
+chain).
+
+### `forge script` cannot write straight into the worktree
+
+`contracts/foundry.toml` on `main` (read-only; this worktree must not modify it)
+sets `fs_permissions` to exactly two roots: `./` (`contracts/` itself) and
+`../deployments` (`main`'s own `deployments/`, not this worktree's). Neither reaches
+into `.worktrees/part2`, so `FLEET_MANIFEST_OUT` pointed directly at this worktree's
+`deployments/31337/latest.json` fails: `vm.writeJson: the path ... is not allowed to
+be accessed for write operations`. Tried and rejected:
+
+- `--config-path` to a separate `foundry.toml` with a broader `fs_permissions`: this
+  flag also changes the base directory solc resolves imports against to the config
+  file's own directory, breaking every remapping (`agora-governor/=...`,
+  `@openzeppelin/contracts/=...`) regardless of `--root`; adding `-R`/`--remappings`
+  and a copy of `remappings.txt` next to the config file still left every import
+  resolving against the wrong directory.
+- `FOUNDRY_FS_PERMISSIONS` env var override: scalar keys (`FOUNDRY_EVM_VERSION`,
+  confirmed) are honoured, but this key holds a `Vec<PathPermission>`; no string
+  format tried (TOML array-of-tables, JSON array) changed `forge config --json`'s
+  reported value at all.
+
+`bootstrap-local.sh` and `scripted-proposal.sh`'s deploy step instead points
+`FLEET_MANIFEST_OUT` at `contracts/.fleet-manifest-tmp.json` (inside the allowed
+`./` root, the same class of gitignored build artifact `broadcast/`/`cache/`
+already are for any `forge` run there), then moves that file into this worktree's
+`deployments/31337/latest.json` and removes the scratch file. `contracts/` itself
+is left exactly as it started (confirmed with `git status --short contracts/`
+before and after); the same precedent Task 5's controller notes already used for
+`forge build` there.
+
+### DAO Node's realtime client silently never starts: `NUM_ARCHIVE_CLIENTS` off-by-one
+
+With only `NUM_REALTIME_CLIENTS`/`NUM_POLLING_CLIENTS` set (Task 3's mitigation for
+the cold-boot hang, unchanged here), `GET /v1/progress` showed `realtime_counts: {}`
+permanently, even minutes after boot with Anvil mining a block every 2 seconds: the
+archive client's one-time catch-up scan worked (`archive_counts` populated
+correctly), but nothing tracked new blocks afterward, so a proposal opened after
+boot was invisible until the container was restarted (which re-runs the one-time
+archive catch-up and briefly "sees" it, but still never tracks anything live from
+that point on).
+
+Root cause: `app/server.py`'s `NUM_ARCHIVE_CLIENTS` defaults to `2` (a CSV archive
+slot plus the HTTP one), and `subscribe_feeds()` computes each realtime client's
+position in the combined client list as `1 + NUM_ARCHIVE_CLIENTS + i`. This
+deployment's CSV archive client is invalid (`DAO_NODE_DATA_PATH`/`data/` is never
+configured; boot logs `The path 'data' does not exist, this client is not valid for
+CSVClient` and it is excluded from the live list), so the real list is only 2 long
+(1 archive, 1 realtime), but the realtime client's computed position is 3. Its own
+`async for i, client in self.cs.get_async_iterator():` scan (`Feed.realtime_async_read`)
+cycles through the 2 real clients, never matches position 3, hits
+`StopAsyncIteration`, and the task exits normally with no error logged anywhere.
+
+Fixed with `NUM_ARCHIVE_CLIENTS: "1"` in `infra/docker-compose.yml`'s `dao-node`
+service (no source patch needed). Verified: `GET /v1/progress` showed
+`realtime_counts: {"31337.blocks.JsonRpcRtWsClient": N}` growing on every poll after
+the fix, `0` (missing entirely) before it.
+
+### `infra/dao-node/patches/0005`: `/v1/proposal_types` returns an empty list with no `ProposalTypesConfigurator`, and CPLS cannot tolerate that
+
+Fleet Governance v1 deploys no onchain `ProposalTypesConfigurator` (no `ptc` key in
+the deployment config), so `app.ctx.proposal_types` never exists. Patch 0002
+already makes every `agora` v2 `ProposalCreated` event carry a `proposal_type_id`
+regardless (defaulting to `0` when the description has no `#proposalTypeId=`
+marker, per the spec). `GET /v1/proposal_types`'s untracked-case fallback served
+`{'proposal_types': []}` (a list); `cpls/sync_daonode.py`'s
+`response.json()['proposal_types'][str(proposal_type_id)]` raised (`list indices
+must be integers, not 'str'`) against it, and `refresh_list`'s blanket
+`try/except` around that whole block turned that into silently skipping the
+proposal forever (`skipped_count += 1; continue`), before ever archiving its
+votes. Fixed by serving a single default entry for id `0` instead (see the
+patch's own header comment for the exact code and reasoning).
+
+### `infra/dao-node/patches/0006`: no `voting_module_name` for a plain `propose()` call
+
+`Proposals._handle_ProposalCreated` only calls `proposal.set_voting_module_name(...)`
+from two places: the `PROPOSAL_CREATED_MODULE` branch (approval/optimistic voting
+modules) and, for a non-`agora` governor, an unconditional `'standard'` default. An
+`agora` v2 governor's plain `ProposalCreated` event (the only kind Fleet Governance
+v1 ever emits: it calls the base `propose()`, never a voting module) falls through
+neither branch, so `proposal.voting_module_name` is never set and `to_dict()`'s
+JSON never carries a `voting_module_name` key for such a proposal.
+`cpls/sync_daonode.py`'s `refresh_list` reads
+`approval = proposal['voting_module_name'] == 'approval'` as a plain dict lookup
+(no `.get()`), raising `KeyError('voting_module_name')` and aborting the sync. This
+module's own downstream reads of the same attribute are defensive (`hasattr()`
+checks), so it never crashed DAO Node itself; only CPLS's stricter read surfaced
+it. Fixed by also calling `set_voting_module_name('standard')` in the agora-v2
+branch (matching the non-agora branch's own default for the same "no real voting
+module" case).
+
+### `infra/dao-node/patches/0007`: `Proposal.to_dict()` never calls its own `start_block`/`end_block` properties
+
+The class already has `start_block`/`end_block` properties
+(`_get_block_value('start_block', 'vote_start')`, an existing fallback across the
+naming difference between older and newer governor event shapes), but `to_dict()`
+(what `GET /v1/proposal/<id>` actually serves) just returns raw `create_event`,
+which for the standard `agora` `ProposalCreated` event has `vote_start`/`vote_end`,
+never `start_block`/`end_block`. `cpls/sync_daonode.py`'s `refresh_list` reads
+`proposal['start_block']` as a plain dict lookup near the very start of its
+per-proposal processing (computing `after_start_block`), so this raised
+`KeyError('start_block')` for every fleet proposal, before token/governor address
+filtering or vote archiving ever ran. Fixed by copying the two properties'
+already-computed values into the dict inside `to_dict()`.
+
+### CPLS reads votes from Postgres, not from DAO Node
+
+`cpls/sync.py`'s `read_votes_from_db()` (used by every DAO-node-source sync, i.e.
+`cpls/sync_daonode.py`'s `DaoNodeSync`) queries `"{dao_slug}"."votes"` directly
+(`SELECT transaction_hash, block_number, chain_id, voter, support, weight, reason,
+params FROM {slug}.votes WHERE proposal_id = '...' AND contract = '...'`), a real
+Postgres table, not DAO Node's own `/v1/vote_record/<id>` API. In production a
+separate indexing pipeline (the `auazure`/`alltenant` schemas CPLS's other queries
+read) populates it; this local stack has none. The table itself already existed as
+a stub with the right columns (`infra/postgres/gen-stub.ts`'s `fleet.votes`, one of
+the 14 tables copied from `b3`'s own Prisma view, unrelated to the
+`vote_cast_events`/`vote_cast_with_params_events` raw-SQL tables Task 5 added,
+which are only Agora Next's own delegate-page query, `getVotes.ts`; a second,
+genuinely different `fleet.votes`-shaped need this task's own testing was the first
+to exercise). `infra/scripts/scripted-proposal.sh` inserts one row per real
+on-chain vote itself, right after casting it (`insert_vote_row`, via
+`docker compose exec postgres psql`), using `support` as the raw numeric
+`0`/`1`/`2` (matching what `src/lib/voteUtils.ts`'s `parseSupport` expects for the
+non-Optimism, non-approval-module default case) and `contract` as the governor
+address lowercased (matching `gov_addr.lower()`'s filter).
+
+`infra/postgres/gen-stub.ts` also needed a second, new stub for CPLS specifically
+(not Agora Next): `cpls/sync.py`'s `get_vp_snapshot_all_delegates_from_db()`
+(building the archived "who hasn't voted yet" list, called unconditionally once a
+proposal's voting period has started) queries
+`auazure."<index_tenant_prefix>_token_delegate_votes_changed"`, a schema/table with
+no `schema.prisma` model for any tenant at all, unguarded by any
+`try`/`except`. Stubbed as `AUAZURE_RAW_SQL_TABLES` (`delegate`, `address`,
+`block_number`, `new_votes`, plus `new_balance`/`previous_balance` for headroom);
+empty rows are correct here, not just tolerated, since fleet's UI config exposes no
+non-voter list feature.
+
+### CPLS's block-timestamp lookups need a working `BlockCacheClient`
+
+`cpls/sync.py`'s `get_timestamp()` calls `self.bc.get_blocktime(...)`
+(`BlockCacheClient`, `cpls/blockcache.py`) completely unguarded, for every
+proposal's `start_blocktime`/`end_blocktime`/`timestamp`, before the votes archive
+blob is even written. `BLOCKCACHE_URL` defaults to a real, external, hosted
+service for other DAOs' mainnet/L2 chains, with no notion of a local Anvil chain
+and (in this sandboxed environment) no network path to reach anyway; pointing it
+at an address nothing listens on (tried first, to fail fast) still broke every
+sync, since this call has no fallback.
+
+`infra/blockcache-shim` (new service) is a small stand-in implementing the handful
+of `blockcache.py` endpoints this stack's syncs actually call
+(`/exact_blocktime`, `/estimated_blocktime`, `/contract_call`, `/transaction`),
+backed by this stack's own Anvil via plain JSON-RPC, listening on the same port
+(`:8002`) `blockcache.py`'s own `__main__` block already uses as its local-dev
+convention. One correctness detail: `contract_call_encoded()` sends only the
+ABI-encoded arguments in its request body (`data`), never the 4-byte function
+selector; the shim derives the selector itself from the request's
+`method_signature` field before calling `eth_call`, matching what the real
+service must also do.
+
+One remaining unguarded call in this same file (`self.bc.contract_call_encoded(...,
+'state(uint256)', ...)`, reached only once a proposal's voting period has ended but
+it is not yet archived, i.e. between `queue` and `execute`; `queue_event` alone
+does not set `liveness = 'archived'`, only `execute_event`/`cancel_event` do) is
+avoided by design rather than by the shim: `scripted-proposal.sh` does not trigger
+a CPLS sync between `queue` and `execute` (it syncs at proposed, voted, and
+executed; see that script's comment at the queue step). The shim's `/contract_call`
+would handle this correctly too (verified separately), so a future task that wants
+a "Queued" archive snapshot can add that sync back safely.
+
+### `/v1/vote_record/<id>` is `{vote_record: [...], has_more: bool}`, not a bare array
+
+The brief's own acceptance command (`curl ... | jq 'length'  # 5`) assumes a bare
+array; DAO Node's actual response wraps it. `jq 'length'` on the real response
+returns `2` (the object's own key count) regardless of how many votes exist,
+silently reporting the wrong number instead of erroring. `scripted-proposal.sh`'s
+own wait condition had exactly this bug during development (see its git history
+were this not squashed); fixed to `jq -e '.vote_record | length == 5'`. The
+correct read for the acceptance check is `jq '.vote_record | length'`.
+
+### Agora Next's archive reads all fail silently: Next.js 16's patched `fetch()` cannot read a gzip response body server-side
+
+`src/lib/archiveUtils.ts`'s `fetchArchiveNdjson`/`fetchArchiveGzipJson` (the only
+two archive-object readers; every proposal list/detail, vote-history, and
+delegates-archive read goes through one of them) used the global `fetch()`, then
+decompressed server-side with `zlib.gunzipSync` (`isBrowser` is `false` there, so
+the `DecompressionStream` branch never runs). Every one of those `fetch()` calls
+threw `TypeError: controller[kState].transformAlgorithm is not a function` in this
+container (Next.js 16.2.6, Node 20.20.2), logged in "ignore-listed" (framework)
+frames. Confirmed this is Next's own patched `fetch()` (used for its Data
+Cache/request-dedup instrumentation, active even with `cache: "no-store"`), not
+this file's logic or the archive server's response: the identical request against
+the identical URL, made with plain `node -e` outside Next.js, succeeded every
+time. Every call site already wraps the eventual failure in a `try`/`catch` that
+quietly returns an empty list/null, so every affected page still rendered `200 OK`
+with no visible error, just silently empty of archive data.
+
+Fixed with `infra/agora-next/patches/0002`: both functions now read the response
+via `node:http`/`node:https` directly (server-side only; client-side still uses
+plain `fetch()`, since `node:http` does not exist there and no browser session hit
+this bug). One follow-up bug in the first version of that fix: a single
+`await import(url.startsWith("https:") ? "https" : "http")` (one dynamic import
+keyed on a runtime ternary) is something webpack (which also bundles this file's
+server code) can only warn about (`Critical dependency: the request of a
+dependency is an expression`), not resolve; it silently left the import broken at
+runtime. Splitting into two separate `import("https")`/`import("http")` calls,
+each with its own string literal, let webpack resolve both correctly.
+
+### `fake-gcs-server`'s path-style object access is host-gated
+
+Even after the fetch fix above, every archive read from *inside* the Docker
+network still 404'd (`data/fleet/proposal_list.full.ndjson.gz` and friends),
+while the identical path worked from the host machine. `ARCHIVE_GCS_BUCKET_OVERRIDE`
+builds a plain path-style URL (`http://fake-gcs:4443/<bucket>/<object>`, the
+public-object-access shape real `storage.googleapis.com` supports, not the JSON
+API's `/storage/v1/b/.../o/...`), and `fake-gcs-server` 404s that specific
+endpoint whenever the request's `Host` header does not exactly match its
+`-public-host` flag. `infra/docker-compose.offline.yml` set
+`-public-host localhost:4443`, which only ever matched requests made directly from
+the host machine (this project's own verification `curl`s and
+`create-fake-bucket.sh`'s `POST`, which go through the *JSON* API and are not
+host-gated the same way, so they never surfaced this): every container-to-
+container request (Agora Next's own server-side archive fetches; its own compose
+network hostname for that service is `fake-gcs`) sent `Host: fake-gcs:4443` and
+404'd. Fixed by changing `-public-host`/`-external-url` to `fake-gcs:4443`,
+matching what every actual reader of that URL sends.
+
+### The proposal's vote list (with reasons) is a client component; `curl` cannot see it
+
+`ArchiveProposalVotesList` (`src/components/Votes/ProposalVotesList/`) is a
+`"use client"` component: it fetches `/api/archive/votes/<id>` (no auth header) in
+the browser, after hydration, via `useArchiveProposalVotes`'s React Query hook.
+This is architectural, not a bug: a plain `curl` of `/proposals/<id>`'s initial
+HTML will never contain the individual votes or their reasons, no matter how
+correct the archive pipeline is, since that content is never part of the
+server-rendered response. Verified the data itself is correct two ways instead:
+directly against the underlying route
+(`curl localhost:3000/api/archive/votes/<id>`, returns all five votes with their
+exact reason text, including the "Charter forbids..." Against reason) and with a
+real browser (see the M0 evidence block below). The proposal's own status
+("Executed") and FOR/AGAINST vote *totals* (`3`/`2`) *are* server-rendered (they
+come from the proposal object itself, not the separate votes list), and did show
+correctly in a plain `curl` of `/proposals/<id>`.
+
+### `npm run dev`'s memory-threshold self-restart can interrupt an in-flight archive-object first-fetch
+
+Once, while the `/api/archive/votes/[proposalId]` route was compiling for the
+first time under concurrent load (healthcheck polling plus manual verification
+curls), the dev server printed `Server is approaching the used memory threshold,
+restarting...` mid-request, and the in-flight `curl` got an empty reply
+(`curl: (52) Empty reply from server`). This is the same Docker-Desktop-VM-memory
+condition Task 5's compatibility notes already documented for `/delegates`; not
+fleet-specific, and the retried request succeeded immediately once the server
+finished its self-restart (`✓ Ready in 267ms`).
+### M0 evidence block
+
+Full clean run: `docker compose -f docker-compose.yml -f docker-compose.offline.yml
+down -v` (removes the postgres volume too, so the new `auazure` schema/table gets
+created by the init scripts), then `bash infra/scripts/bootstrap-local.sh`. Deployed
+addresses this run: `registry 0x5FbDB2315678afecb367f032d93F642f64180aa3`,
+`token 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512`,
+`timelock 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0`,
+`ledger 0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9`,
+`hook 0xA8d43557A9D305D0B2F98BfEbe07dC0A8DB522c0`,
+`governor 0x5FC8d32690cc91D4c39d9d3abcBD16989F875707` (registry/token/timelock/
+ledger are deterministic CREATE addresses from Anvil's default deployer at nonce 0
+on a fresh chain, hence identical across runs; the hook's mined CREATE2 salt is not
+deterministic run to run, observed to differ).
+
+Executed proposal id:
+`107527385984923766767650463693504513028928175055284733252656629127126744840522`
+(`PID` below). Full transcript of `bootstrap-local.sh`'s own output is long (image
+builds plus the full lifecycle); the governance-relevant lines:
+
+```
+== opening task (operator) ==
+tx=0xe56ded4becdbf76b2cc928a5ec80ae2e1c154e43824950529938206fd73383c5 status=0x1
+scripted-proposal: TASK_ID=1
+scripted-proposal: computed PID=107527385984923766767650463693504513028928175055284733252656629127126744840522
+== proposing (member 1) ==
+tx=0x1b11c98b9dc8bd2cb5dd318ee6a303a593df8830fea22ac56cb142ffec6a2ad5 status=0x1
+scripted-proposal: state after propose: 0
+wait-for: DAO Node to index proposal ... OK (0s)
+== syncing CPLS after stage: proposed ==
+scripted-proposal: cpls job c08ce88c-... completed
+wait-for: archive votes/... object after proposed OK (0s)
+scripted-proposal: state now Active: 1
+== casting five votes: For, For, Against, For, Against ==
+scripted-proposal: member 1 voted (support=1) tx=0x3d54d5a7... block=43
+scripted-proposal: member 2 voted (support=1) tx=0x2bcd4c16... block=44
+scripted-proposal: member 3 voted (support=0) tx=0x0515ff6a... block=45
+scripted-proposal: member 4 voted (support=1) tx=0x5d1cd60f... block=46
+scripted-proposal: member 5 voted (support=0) tx=0x8cd4cb7d... block=47
+2000000000000000000 [2e18]   # against
+3000000000000000000 [3e18]   # for
+0                             # abstain
+wait-for: DAO Node to index all five votes for ... OK (0s)
+== syncing CPLS after stage: voted ==
+scripted-proposal: cpls job e05ec2cb-... completed
+wait-for: archive votes/... object after voted OK (0s)
+scripted-proposal: state after voting period: 4 (4=Succeeded, 3=Defeated)
+== queueing (operator; queue/execute are permissionless, any key works) ==
+tx=0x5cdcc534826500720317a6464261d9ae55eb08867f3bfa634c1c271c5fc8757d status=0x1
+scripted-proposal: state after queue: 5
+== sleeping past the timelock delay (30s + 5s margin) ==
+== executing ==
+tx=... status=0x1
+scripted-proposal: state after execute: 7
+wait-for: DAO Node to index execution of ... OK (0s)
+== syncing CPLS after stage: executed ==
+scripted-proposal: cpls job c53d31f9-... completed
+wait-for: archive votes/... object after executed OK (0s)
+scripted-proposal: ledger.exceptionVersion(1, 0xb1f59f0011f1901a6afa6c5dbd3aa3d715c2045ce4f7858d7bd2e29560630b60) = 1
+scripted-proposal: done.
+PROPOSAL_ID=107527385984923766767650463693504513028928175055284733252656629127126744840522
+bootstrap-local: proposal 107527385984923766767650463693504513028928175055284733252656629127126744840522 executed.
+bootstrap-local: Agora Next: http://localhost:3000/proposals/107527385984923766767650463693504513028928175055284733252656629127126744840522
+```
+
+The five reasons (spec section 8.3's format), in vote order:
+
+1. FOR. Needed to finish task 1 within budget; examples.internal is a controlled internal mirror with no evidence of exfiltration risk. [flags: scope; confidence: 0.88]
+2. FOR. I proposed this after exhausting repository-only options; the fetch is scoped to reference tests only and is time-boxed to this task. [flags: scope; confidence: 0.9]
+3. AGAINST. Charter forbids fetching from non-allowlisted hosts and the proposal offers no evidence the host is trustworthy; the task remains solvable from the repository. [flags: scope, provenance; confidence: 0.82]
+4. FOR. Cheap, reversible, and time-boxed to this one task; blocking it stalls the suite for no safety benefit. [flags: scope; confidence: 0.75]
+5. AGAINST. The examples.internal host has not been vetted through the fleet's allowlist review process and approving now sets precedent for ad hoc exceptions. [flags: provenance; confidence: 0.7]
+
+For-only quorum: 3e18 FOR (>= quorum 60% of 5e18 = 3e18) and 3e18 > 2e18 AGAINST, so
+Succeeded, matching `FleetHook.beforeVoteSucceeded`'s rule.
+
+#### Every acceptance check, command and output
+
+```
+$ PID=107527385984923766767650463693504513028928175055284733252656629127126744840522
+
+$ curl -s localhost:8000/v1/proposals | jq '.proposals | length'
+1
+
+$ curl -s localhost:8000/v1/vote_record/$PID | jq '.vote_record | length'
+5
+# (the brief's own `jq 'length'` returns 2 here, the response object's own key
+# count, not the array; see "the /v1/vote_record/<id> is {vote_record, has_more}"
+# above)
+
+$ curl -s "localhost:4443/storage/v1/b/fleet-archive-dev/o" | jq -r '.items[].name' | grep "votes/$PID"
+data/fleet/votes/107527385984923766767650463693504513028928175055284733252656629127126744840522.ndjson
+data/fleet/votes/107527385984923766767650463693504513028928175055284733252656629127126744840522.ndjson.gz
+
+$ curl -s localhost:3000/proposals | grep -c "Grant exception"
+1
+
+$ curl -s localhost:3000/proposals/$PID -o detail.html; grep -c "Charter forbids" detail.html
+0
+# The vote list (with reasons) is a client component (`ArchiveProposalVotesList`,
+# "use client") fetching /api/archive/votes/<id> after hydration; see "The
+# proposal's vote list ... curl cannot see it" above. Verified the data itself two
+# ways instead:
+
+$ curl -s "http://localhost:3000/api/archive/votes/$PID" | jq '.data | length'
+5
+$ curl -s "http://localhost:3000/api/archive/votes/$PID" | jq -r '.data[].reason' | grep -c "Charter forbids"
+1
+
+$ grep -io "Executed" detail.html | sort -u
+executed
+Executed
+EXECUTED
+
+$ cast call 0x5FC8d32690cc91D4c39d9d3abcBD16989F875707 "state(uint256)(uint8)" $PID --rpc-url http://127.0.0.1:8545
+7   # Executed, matches the page
+
+$ curl -s localhost:8000/v1/delegates | jq '.delegates | length'
+5
+$ curl -s "localhost:8000/v1/balance/0x70997970C51812dc3A010C7d01b50e0d17dc79C8" | jq
+{"balance": "1000000000000000000", "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"}
+
+$ curl -s localhost:3000/delegates -o delegates.html
+$ grep -o '1<!-- --> <!-- -->FLEET' delegates.html | wc -l
+5
+```
+
+#### Reproducibility: delete the bucket, re-trigger CPLS, re-check
+
+```
+$ curl -s "http://localhost:4443/storage/v1/b/fleet-archive-dev/o" | jq -r '.items[].name' \
+  | while read -r name; do
+      enc=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$name")
+      curl -s -o /dev/null -w "%{http_code} $name\n" -X DELETE "http://localhost:4443/storage/v1/b/fleet-archive-dev/o/$enc"
+    done
+200 data/fleet/proposal/dao_node/raw/<PID>.json
+200 data/fleet/proposal/dao_node/raw/<PID>.json.gz
+200 data/fleet/proposal_list.full.ndjson
+200 data/fleet/proposal_list.full.ndjson.gz
+200 data/fleet/proposal_list/dao_node/raw.ndjson
+200 data/fleet/proposal_list/dao_node/raw.ndjson.gz
+200 data/fleet/votes/<PID>.ndjson
+200 data/fleet/votes/<PID>.ndjson.gz
+200 jobs/scheduled/... (x8)
+200 jobs/sync_daonode/... (x3)
+
+$ curl -s "http://localhost:4443/storage/v1/b/fleet-archive-dev/o"
+{"kind":"storage#objects"}    # confirmed empty
+
+$ curl -s -X POST localhost:8001/jobs -H 'content-type: application/json' -d @sync-job.json
+{"job_id":"2d063937-c294-408c-aa9a-1d22436fbc3b","status":"queued"}
+$ curl -s localhost:8001/jobs/2d063937-c294-408c-aa9a-1d22436fbc3b
+{"id":"2d063937-...","type":"sync_daonode","status":"completed","error":null,...}
+
+$ curl -s "http://localhost:4443/storage/v1/b/fleet-archive-dev/o" | jq -r '.items[].name' | sort
+data/fleet/proposal/dao_node/raw/<PID>.json
+data/fleet/proposal/dao_node/raw/<PID>.json.gz
+data/fleet/proposal_list.full.ndjson
+data/fleet/proposal_list.full.ndjson.gz
+data/fleet/proposal_list/dao_node/raw.ndjson
+data/fleet/proposal_list/dao_node/raw.ndjson.gz
+data/fleet/votes/<PID>.ndjson
+data/fleet/votes/<PID>.ndjson.gz
+jobs/sync_daonode/20260914_090234_2d063937-c294-408c-aa9a-1d22436fbc3b.json
+
+$ curl -s localhost:3000/proposals | grep -c "Grant exception"
+1
+$ curl -s localhost:3000/proposals/$PID -o detail2.html; grep -io Executed detail2.html | sort -u
+executed
+Executed
+EXECUTED
+$ curl -s "http://localhost:3000/api/archive/votes/$PID" | jq '.data | length'
+5
+```
+
+Every object, both pages, and the API route all reconstructed correctly from an
+empty bucket.
+
+#### DAO Node and CPLS env vars, confirmed from source (this task's additions)
+
+| Var | Service | Confirmed at |
+| --- | --- | --- |
+| `NUM_ARCHIVE_CLIENTS` | dao-node | `app/server.py`, default `2`; see "DAO Node's realtime client silently never starts" above |
+| `BLOCKCACHE_URL` | cpls | `cpls/config.py` line 18; consumed by `cpls/sync.py`'s `self.bc = BlockCacheClient(...)` |
+| `DATABASE_URL` | cpls | `cpls/config.py` line 17 (`os.getenv("DATABASE_URL")`), consumed by `cpls/sync.py`'s `self.pg = PostgreSQLClient(DATABASE_URL)` |
+
+(Every other env var this task relies on was already confirmed in Tasks 3-5's own
+sections above; not re-listed here.)
+
+#### Stub tables Agora Next and CPLS needed, complete list (all tasks)
+
+- `fleet.*` (14 tables, from `b3`'s own Prisma views) + `fleet.vote_cast_events`,
+  `fleet.vote_cast_with_params_events` (raw SQL), Task 2/5.
+- `agora.*` (7 tables), Task 2.
+- `config.*` (1 table + 6 enum types), Task 2/5.
+- `snapshot.*` (2 tables from `schema.prisma` + `snapshot.proposals` raw SQL), Task 5.
+- `auazure.fleet_token_delegate_votes_changed` (raw SQL), **Task 6**, for CPLS's
+  `get_vp_snapshot_all_delegates_from_db()`; see above. The only stub added by this
+  task; `fleet.votes` (CPLS's actual vote source) already existed from Task 2/5's
+  `b3`-derived views.
+
+#### Pages verified
+
+`http://localhost:3000/proposals` (proposal title), `/proposals/<id>` (status,
+vote totals; votes+reasons via `/api/archive/votes/<id>`), `/delegates` (five
+members, `1 FLEET` each). DAO Node: `/v1/progress`, `/v1/proposals`,
+`/v1/proposal/<id>`, `/v1/vote_record/<id>`, `/v1/delegates`, `/v1/balance/<addr>`.
+CPLS: `/health`, `POST /jobs`, `GET /jobs/<id>`. Fake GCS:
+`/storage/v1/b/<bucket>/o` (list), `DELETE /storage/v1/b/<bucket>/o/<object>`.

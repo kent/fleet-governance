@@ -1,0 +1,147 @@
+# 0002: archive fetches use node:http/https, not Next.js's patched fetch
+#
+# src/lib/archiveUtils.ts's fetchArchiveNdjson/fetchArchiveGzipJson (the
+# only two archive-object readers; every /proposals, /proposals/<id>,
+# vote-history and delegates-archive read goes through one of them) used
+# the global fetch() to read each gzipped object from the GCS bucket (or
+# fake-gcs, offline), then decompressed with Node's zlib.gunzipSync
+# server-side (isBrowser is false there). Server-side, every single one of
+# these requests threw "TypeError: controller[kState].transformAlgorithm
+# is not a function" on this Next.js version (confirmed: the exact same
+# request, same URL, same response body, succeeds when made with plain
+# node -e fetch(...) outside Next.js, so the bug is in Next's patched
+# global fetch() used for its Data Cache/request-dedup instrumentation,
+# not in this file's own logic or in the archive server's response). Every
+# call site already wraps the eventual failure in a try/catch that quietly
+# returns an empty list, so this never surfaced as a visible error: pages
+# rendered 200 OK and simply showed no proposals, no votes, no delegates
+# from the archive, with the real exception only visible in the server log.
+#
+# Fetching with node:http/node:https directly (server-side only; the
+# browser has no such module and no browser session has hit this bug, so
+# isBrowser still uses plain fetch()) has no such wrapper and works
+# correctly. See docs/compatibility-notes.md, Task 6, "Agora Next's
+# archive reads all fail silently: Next.js's patched fetch() cannot read
+# a gzip response body server-side".
+#
+--- a/src/lib/archiveUtils.ts
++++ b/src/lib/archiveUtils.ts
+@@ -15,6 +15,64 @@
+ };
+ 
+ const isBrowser = typeof window !== "undefined";
++
++/**
++ * Server-side fetch of a URL's raw bytes and status code, bypassing
++ * Next.js's patched global `fetch` (which wraps every fetch() call for its
++ * Data Cache/request-dedup instrumentation, even with `cache: "no-store"`).
++ * That wrapper's stream handling reliably threw `TypeError:
++ * controller[kState].transformAlgorithm is not a function` for every
++ * archive object fetched here specifically (reproduced directly against
++ * fake-gcs; the identical request succeeds outside Next.js, e.g. plain
++ * `node -e "fetch(...)"`, so the bug is in the wrapper, not in the
++ * archive server's response or in this function's own logic below,
++ * confirmed by this working). node:http/https have no such wrapper.
++ * Browser-side (isBrowser) still uses plain fetch(), since node:http is
++ * not available there and no browser session has hit this bug.
++ */
++async function fetchStatusAndBuffer(
++  url: string
++): Promise<{ status: number; statusText: string; buffer: ArrayBuffer }> {
++  if (isBrowser) {
++    const response = await fetch(url, { cache: "no-store" });
++    const buffer = await response.arrayBuffer();
++    return { status: response.status, statusText: response.statusText, buffer };
++  }
++
++  // Two separate dynamic imports, each with its own string literal
++  // specifier, not one import(expr) keyed on a runtime ternary: webpack
++  // (which also bundles this file's server code) can statically resolve
++  // each of these, but not a single call whose specifier is an
++  // expression, which it only warns about ("Critical dependency: the
++  // request of a dependency is an expression") rather than erroring on,
++  // silently leaving the dynamic-expression import broken in the
++  // Next.js server bundle at runtime (this file's archive fetches
++  // failed exactly this way when it originally reached this file as a
++  // single import(url.startsWith(...) ? "https" : "http")).
++  const nodeHttpModule = url.startsWith("https:")
++    ? await import("https")
++    : await import("http");
++  const { get } = nodeHttpModule;
++
++  return await new Promise((resolve, reject) => {
++    get(url, (res) => {
++      const chunks: Buffer[] = [];
++      res.on("data", (chunk) => chunks.push(chunk));
++      res.on("end", () => {
++        const body = Buffer.concat(chunks);
++        resolve({
++          status: res.statusCode ?? 0,
++          statusText: res.statusMessage ?? "",
++          buffer: body.buffer.slice(
++            body.byteOffset,
++            body.byteOffset + body.byteLength
++          ),
++        });
++      });
++      res.on("error", reject);
++    }).on("error", reject);
++  });
++}
+ 
+ async function gunzipToString(buffer: ArrayBuffer): Promise<string> {
+   if (!isBrowser) {
+@@ -62,21 +120,18 @@
+  * Fetch and decompress a gzipped NDJSON file from the archive
+  */
+ async function fetchArchiveNdjson<T>(url: string): Promise<T[]> {
+-  const response = await fetch(withCacheBust(url), {
+-    cache: "no-store",
+-  });
++  const { status, statusText, buffer: arrayBuffer } = await fetchStatusAndBuffer(
++    withCacheBust(url)
++  );
+ 
+-  if (response.status === 404) {
++  if (status === 404) {
+     return [];
+   }
+ 
+-  if (!response.ok) {
+-    throw new Error(
+-      `Failed to fetch archive data: ${response.status} ${response.statusText}`
+-    );
++  if (status < 200 || status >= 300) {
++    throw new Error(`Failed to fetch archive data: ${status} ${statusText}`);
+   }
+ 
+-  const arrayBuffer = await response.arrayBuffer();
+   let ndjsonText: string;
+   try {
+     ndjsonText = await gunzipToString(arrayBuffer);
+@@ -95,19 +150,18 @@
+  * Fetch and decompress a gzipped JSON file from the archive
+  */
+ async function fetchArchiveGzipJson<T>(url: string): Promise<T | null> {
+-  const response = await fetch(withCacheBust(url), { cache: "no-store" });
++  const { status, statusText, buffer: arrayBuffer } = await fetchStatusAndBuffer(
++    withCacheBust(url)
++  );
+ 
+-  if (response.status === 404) {
++  if (status === 404) {
+     return null;
+   }
+ 
+-  if (!response.ok) {
+-    throw new Error(
+-      `Failed to fetch archive data: ${response.status} ${response.statusText}`
+-    );
++  if (status < 200 || status >= 300) {
++    throw new Error(`Failed to fetch archive data: ${status} ${statusText}`);
+   }
+ 
+-  const arrayBuffer = await response.arrayBuffer();
+   let jsonText: string;
+ 
+   try {

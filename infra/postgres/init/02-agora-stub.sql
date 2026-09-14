@@ -7,6 +7,7 @@ CREATE SCHEMA IF NOT EXISTS "fleet";
 CREATE SCHEMA IF NOT EXISTS "agora";
 CREATE SCHEMA IF NOT EXISTS "config";
 CREATE SCHEMA IF NOT EXISTS "snapshot";
+CREATE SCHEMA IF NOT EXISTS "auazure";
 
 DO $$
 BEGIN
@@ -369,4 +370,13 @@ CREATE TABLE IF NOT EXISTS "snapshot"."votes" (
 CREATE TABLE IF NOT EXISTS "snapshot"."proposals" (
   "id" text,
   "title" text
+);
+
+CREATE TABLE IF NOT EXISTS "auazure"."fleet_token_delegate_votes_changed" (
+  "delegate" text,
+  "address" text,
+  "block_number" bigint,
+  "new_votes" numeric,
+  "new_balance" numeric,
+  "previous_balance" numeric
 );

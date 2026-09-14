@@ -11,6 +11,26 @@ services:
       timeout: 5s
       retries: 10
 
+  # See infra/blockcache-shim/server.py's header comment: a minimal local
+  # stand-in for the real, hosted "blockcache" service CPLS's DAO-node sync
+  # needs for block timestamps (and, secondarily, quorum/votable-supply/
+  # transaction-hash lookups), backed by this stack's own Anvil.
+  blockcache-shim:
+    build:
+      context: ..
+      dockerfile: infra/blockcache-shim/Dockerfile
+    environment:
+      ANVIL_RPC_URL: http://anvil:8545
+      BLOCK_TIME_SECONDS: "2"
+    depends_on:
+      anvil:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/exact_blocktime/31337/0', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   postgres:
     image: postgres:16
     environment:
@@ -57,6 +77,23 @@ services:
       # it's safe to disable for this local stack.
       NUM_REALTIME_CLIENTS: "1"
       NUM_POLLING_CLIENTS: "0"
+      # app/server.py's NUM_ARCHIVE_CLIENTS defaults to 2 (a CSV archive
+      # slot plus the HTTP one), assuming a deployment that configures
+      # DAO_NODE_DATA_PATH for a CSV archive. This stack never does (the
+      # CSV client logs "the path 'data' does not exist, this client is
+      # not valid" at boot and is excluded from the live client list), so
+      # exactly one archive client (HTTP) actually exists. Left at the
+      # default of 2, subscribe_feeds() computes the realtime client's
+      # position in that list as 1 + NUM_ARCHIVE_CLIENTS + i = 3, but the
+      # real list is only 2 long (1 archive + 1 realtime): the position
+      # never matches any client, so realtime_async_read()'s scan finds
+      # nothing, ends immediately, and the realtime task exits silently,
+      # with no error, ever tracking a single new block. Setting this to
+      # 1 fixes the count so the realtime client's computed position (2)
+      # is correct. See docs/compatibility-notes.md, Task 6, "DAO Node's
+      # realtime client silently never starts reading: NUM_ARCHIVE_CLIENTS
+      # off-by-one".
+      NUM_ARCHIVE_CLIENTS: "1"
     volumes:
       - ./dao-node/abis:/abis:ro
     depends_on:
@@ -98,6 +135,34 @@ services:
       CHAIN_ID: ${CHAIN_ID:-31337}
       TOKEN_ADDRESS: ${TOKEN_ADDRESS}
       GOVERNOR_ADDRESS: ${GOVERNOR_ADDRESS}
+      # cpls/sync.py's read_votes_from_db() (DaoNodeSync's vote source)
+      # queries "{dao_slug}"."votes" directly, not DAO Node's API; in
+      # production a separate indexing pipeline populates that table. This
+      # local stack has no such pipeline, so infra/scripts/scripted-proposal.sh
+      # inserts one row per real on-chain vote into fleet.votes (already
+      # stubbed by infra/postgres/gen-stub.ts from b3's own Prisma view)
+      # itself, right after casting it. Same Postgres/database Agora Next
+      # reads (agora_web3), reached at the compose network's own hostname
+      # and port (5432), not the host-side 55432 mapping. See
+      # docs/compatibility-notes.md, Task 6, "CPLS reads votes from
+      # Postgres, not from DAO Node".
+      DATABASE_URL: postgres://agora:agora@postgres:5432/agora_web3
+      # cpls/blockcache.py's BlockCacheClient calls this service (a real,
+      # external, hosted RPC-proxy for other DAOs' mainnet/L2 chains) for
+      # block timestamps (unconditionally, for every proposal), quorum,
+      # votable-supply, and transaction-hash lookups; it has no notion of
+      # a local Anvil chain (31337). The block-timestamp lookup is not
+      # guarded by any try/except in cpls/sync_daonode.py's refresh_list
+      # (unlike the quorum/votable-supply ones, which fall back to '0'),
+      # so this cannot simply be pointed at an address nothing listens on:
+      # the whole sync would fail before ever writing a proposal's votes
+      # to the archive. infra/blockcache-shim implements the handful of
+      # blockcache.py endpoints DAO-node-sourced syncs actually use,
+      # backed by this stack's own Anvil, on the same port
+      # (:8002) blockcache.py's own __main__ block already uses as its
+      # local-dev convention. See docs/compatibility-notes.md, Task 6,
+      # "CPLS's block-timestamp lookups need a working BlockCacheClient".
+      BLOCKCACHE_URL: http://blockcache-shim:8002
       # This base compose file describes the real-GCS configuration: no
       # STORAGE_EMULATOR_HOST here, so google-cloud-storage's Client()
       # resolves credentials the normal way, via GOOGLE_APPLICATION_CREDENTIALS
@@ -117,6 +182,10 @@ services:
       - ${GCS_CREDENTIALS_FILE:-/dev/null}:/secrets/gcs.json:ro
     depends_on:
       dao-node:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      blockcache-shim:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=3)"]

@@ -30,6 +30,23 @@ services:
   # once this is up.
   fake-gcs:
     image: fsouza/fake-gcs-server
-    command: ["-scheme", "http", "-port", "4443", "-public-host", "localhost:4443", "-external-url", "http://localhost:4443"]
+    # -public-host must match the Host header the REQUESTER actually sends,
+    # not where fake-gcs itself listens: fake-gcs-server 404s a path-style
+    # object read (GET /<bucket>/<object>, the URL shape
+    # ARCHIVE_GCS_BUCKET_OVERRIDE above builds and src/lib/archiveUtils.ts's
+    # plain http.get()/fetch() calls use directly, never the JSON API's
+    # /storage/v1/b/.../o/... path) whenever the request's Host header
+    # doesn't match -public-host exactly. Every reader of that URL (Agora
+    # Next's own server-side archive fetches; this container's compose
+    # network hostname is "fake-gcs") is itself another container on this
+    # compose network, so "fake-gcs:4443" is what that Host header actually
+    # is; "localhost:4443" only matched requests made directly from the
+    # host machine (e.g. this file's own create-fake-bucket.sh, or a
+    # developer's curl), which never hit this path-style endpoint anyway
+    # (create-fake-bucket.sh's POST and this project's own verification
+    # curls all use the JSON API, which is not host-gated the same way).
+    # See docs/compatibility-notes.md, Task 6, "Agora Next's archive reads
+    # 404 silently: fake-gcs-server's path-style access is host-gated".
+    command: ["-scheme", "http", "-port", "4443", "-public-host", "fake-gcs:4443", "-external-url", "http://fake-gcs:4443"]
     ports:
       - "${FAKE_GCS_PORT:-4443}:4443"

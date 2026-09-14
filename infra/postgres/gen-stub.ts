@@ -291,6 +291,39 @@ const SNAPSHOT_RAW_SQL_TABLES: StubModel[] = [
   },
 ];
 
+/**
+ * A table under a schema CPLS reads (not Agora Next; every other raw-SQL
+ * table above is one of Agora Next's own queries), and, unlike the plain
+ * "fleet"."votes" table (which already exists as a b3-derived Prisma
+ * view), one with no schema.prisma model for any tenant at all. In
+ * production a separate indexing pipeline populates
+ * "auazure"."<prefix>_token_delegate_votes_changed" (one per DAO) with
+ * DelegateVotesChanged events; cpls/sync.py's
+ * get_vp_snapshot_all_delegates_from_db() queries it, unguarded, whenever
+ * a proposal's voting period has started (cpls/sync_daonode.py's
+ * refresh_list, "if curtime > start_blocktime"), to build the archived
+ * "who hasn't voted yet" list. This local stack has no such pipeline, so
+ * an empty stub (rather than a missing table, which raised and aborted
+ * the whole sync) is enough: fleet has no non-voter list feature exposed
+ * in its UI config, so an always-empty result is correct, not just
+ * tolerated. See docs/compatibility-notes.md, Task 6, "CPLS also needs an
+ * auazure stub table for the same reason".
+ */
+const AUAZURE_RAW_SQL_TABLES: StubModel[] = [
+  {
+    name: "auazureFleetTokenDelegateVotesChanged",
+    table: "fleet_token_delegate_votes_changed",
+    fields: [
+      { column: "delegate", pgType: "text", nullable: true },
+      { column: "address", pgType: "text", nullable: true },
+      { column: "block_number", pgType: "bigint", nullable: true },
+      { column: "new_votes", pgType: "numeric", nullable: true },
+      { column: "new_balance", pgType: "numeric", nullable: true },
+      { column: "previous_balance", pgType: "numeric", nullable: true },
+    ],
+  },
+];
+
 function main(): void {
   const schemaPath = path.join(__dirname, "..", "..", "vendor", "agora-next", "prisma", "schema.prisma");
   const text = fs.readFileSync(schemaPath, "utf8");
@@ -326,7 +359,7 @@ function main(): void {
   const web3Sql = [
     GENERATED_HEADER,
     "\\connect agora_web3",
-    renderSchemaCreates(["fleet", "agora", "config", "snapshot"]),
+    renderSchemaCreates(["fleet", "agora", "config", "snapshot", "auazure"]),
     ...web3EnumCreates,
     ...b3Models.map((model) => renderCreateTable(model, "fleet")),
     ...FLEET_RAW_SQL_TABLES.map((model) => renderCreateTable(model, "fleet")),
@@ -334,6 +367,7 @@ function main(): void {
     ...configModels.map((model) => renderCreateTable(model, "config")),
     ...snapshotModels.map((model) => renderCreateTable(model, "snapshot")),
     ...SNAPSHOT_RAW_SQL_TABLES.map((model) => renderCreateTable(model, "snapshot")),
+    ...AUAZURE_RAW_SQL_TABLES.map((model) => renderCreateTable(model, "auazure")),
   ].join("\n\n") + "\n";
 
   // prismaWeb2Client and prismaWeb3Client in src/app/lib/prisma.ts are the
@@ -360,7 +394,7 @@ function main(): void {
   fs.writeFileSync(path.join(outDir, "03-agora-web2-stub.sql"), web2Sql);
 
   console.log(
-    `Wrote ${b3Models.length + FLEET_RAW_SQL_TABLES.length} fleet table(s) (${b3Models.length} from b3's schema.prisma views, ${FLEET_RAW_SQL_TABLES.length} raw-SQL-only), ${agoraModels.length} agora table(s), ${configModels.length} config table(s), ${configEnums.length} config enum(s), ${snapshotModels.length + SNAPSHOT_RAW_SQL_TABLES.length} snapshot table(s) (${snapshotModels.length} from schema.prisma, ${SNAPSHOT_RAW_SQL_TABLES.length} raw-SQL-only) to infra/postgres/init/02-agora-stub.sql and infra/postgres/init/03-agora-web2-stub.sql.`
+    `Wrote ${b3Models.length + FLEET_RAW_SQL_TABLES.length} fleet table(s) (${b3Models.length} from b3's schema.prisma views, ${FLEET_RAW_SQL_TABLES.length} raw-SQL-only), ${agoraModels.length} agora table(s), ${configModels.length} config table(s), ${configEnums.length} config enum(s), ${snapshotModels.length + SNAPSHOT_RAW_SQL_TABLES.length} snapshot table(s) (${snapshotModels.length} from schema.prisma, ${SNAPSHOT_RAW_SQL_TABLES.length} raw-SQL-only), ${AUAZURE_RAW_SQL_TABLES.length} auazure table(s) (raw-SQL-only, for CPLS) to infra/postgres/init/02-agora-stub.sql and infra/postgres/init/03-agora-web2-stub.sql.`
   );
 }
 

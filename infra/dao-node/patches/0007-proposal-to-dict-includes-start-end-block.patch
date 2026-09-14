@@ -1,0 +1,46 @@
+# 0007: Proposal.to_dict() includes start_block/end_block
+#
+# app/server.py's proposal_handler serves Proposal.to_dict() (== raw
+# create_event, the decoded ProposalCreated event fields) as the JSON body
+# of GET /v1/proposal/<id>. For the standard agora ProposalCreated event
+# this repository's governor emits, the decoded fields are named
+# vote_start/vote_end, never start_block/end_block: those only exist as
+# this class's own start_block/end_block PROPERTIES
+# (_get_block_value('start_block', 'vote_start'), an existing fallback
+# across the naming difference between older and newer governor event
+# shapes), which to_dict() never actually calls.
+#
+# cpls/sync_daonode.py's refresh_list reads proposal['start_block'] and
+# proposal['end_block'] as plain dict lookups (no .get()/hasattr
+# fallback), so it raised KeyError('start_block') for every fleet
+# proposal and aborted the whole sync. Copying the two properties' already
+# -computed values into the dict (not renaming vote_start/vote_end, which
+# other readers may still expect) fixes this without touching what those
+# other readers see.
+#
+# This patch's hunk is written against the file as it stands after patches
+# 0001-0006 are applied (not the pristine vendor file), so it applies
+# without a fuzzy-context offset.
+#
+--- a/app/data_products.py	2026-09-14 04:15:21
++++ b/app/data_products.py
+@@ -687,6 +687,19 @@
+ 
+         out = self.create_event
+ 
++        # create_event carries the raw decoded event field names
++        # (vote_start/vote_end for the standard agora ProposalCreated
++        # event), never start_block/end_block; those only exist as this
++        # class's own properties (_get_block_value's fallback across
++        # naming differences between governor versions), which this
++        # method never actually calls. cpls/sync_daonode.py's refresh_list
++        # reads proposal['start_block']/['end_block'] directly (plain dict
++        # access, no .get() or hasattr), so this dict needs the same
++        # keys the properties compute, not just the properties
++        # themselves.
++        out['start_block'] = self.start_block
++        out['end_block'] = self.end_block
++
+         if self.canceled:
+             out['cancel_event'] = self.cancel_event
+ 

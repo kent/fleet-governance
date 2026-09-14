@@ -1,0 +1,52 @@
+# 0005: Default proposal type when no ProposalTypesConfigurator is tracked
+#
+# Fleet Governance v1 deploys no onchain ProposalTypesConfigurator (its
+# governor_spec is agora v2, but there is no "ptc" entry in the deployment,
+# see infra/dao-node/config.template.yaml), so app.ctx.proposal_types is
+# never created. Patch 0002 already made every agora v2 proposal carry a
+# proposal_type_id regardless (defaulting to 0 when the description has no
+# #proposalTypeId= marker), so GET /v1/proposal_types serving an empty list
+# in the untracked case left every fleet proposal with a type id CPLS could
+# never look up: cpls/sync_daonode.py does
+# `response.json()['proposal_types'][str(proposal_type_id)]`, which raised
+# (list indices must be integers, not 'str') against the empty list, and
+# its refresh_list loop's blanket try/except turned that into silently
+# skipping the whole proposal, forever, not just the type enrichment. A
+# single default entry for id 0 keeps that lookup working for a deployment
+# with no type registry at all. See docs/compatibility-notes.md, Task 6,
+# "DAO Node /v1/proposal_types returns an empty list with no
+# ProposalTypesConfigurator, and CPLS cannot tolerate that".
+#
+# This patch's hunk is written against the file as it stands after patches
+# 0001-0004 are applied (not the pristine vendor file), so it applies
+# without a fuzzy-context offset.
+#
+--- a/app/server.py	2026-09-14 03:59:22
++++ b/app/server.py	2026-09-14 03:59:22
+@@ -766,8 +766,24 @@
+     proposal_types_with_scopes = {}
+ 
+     if not hasattr(app.ctx, 'proposal_types'):
+-        return json({'proposal_types' : []})
+-    
++        # No onchain ProposalTypesConfigurator is tracked for this
++        # deployment (Fleet Governance v1 has none: its "agora" v2
++        # governor_spec makes Proposals._handle_ProposalCreated always set
++        # proposal_type_id on every proposal, defaulting to 0 when the
++        # description carries no #proposalTypeId= marker, see patch 0002),
++        # so every proposal this deployment ever serves carries
++        # proposal_type_id 0 whether or not a real type registry exists.
++        # Serving an empty list here (upstream's behaviour) made
++        # cpls/sync_daonode.py's `response.json()['proposal_types'][str(id)]`
++        # raise (list indices must be integers, not 'str'), which its
++        # refresh_list loop's blanket try/except turns into skipping the
++        # whole proposal, permanently, rather than just the type
++        # enrichment. A single default entry for id 0 keeps that lookup
++        # working for a deployment with no type registry at all.
++        return json({'proposal_types' : {
++            '0': {'id': 0, 'name': 'Default', 'quorum': 0, 'approval_threshold': 0, 'scopes': []},
++        }})
++
+     for proposal_type_id in app.ctx.proposal_types.proposal_types:
+         proposal_types_with_scopes[proposal_type_id] = app.ctx.proposal_types.get_proposal_type_with_scopes(proposal_type_id)
+     
