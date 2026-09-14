@@ -1,0 +1,12 @@
+[submodule "contracts/lib/agora-governor"]
+	path = contracts/lib/agora-governor
+	url = https://github.com/voteagora/agora-governor.git
+[submodule "vendor/dao-node"]
+	path = vendor/dao-node
+	url = https://github.com/voteagora/dao-node.git
+[submodule "vendor/cpls"]
+	path = vendor/cpls
+	url = https://github.com/voteagora/cpls.git
+[submodule "vendor/agora-next"]
+	path = vendor/agora-next
+	url = https://github.com/voteagora/agora-next.git
