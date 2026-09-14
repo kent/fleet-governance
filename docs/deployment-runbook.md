@@ -65,8 +65,9 @@ the bucket name, and the credentials file path. See section 5 for every key.
 ## 4. Deploy and verify
 
 Create `deployments/configs/sepolia-5.json`, a `fleet.deploy.v1` config, either by hand or from
-the Runner UI's config panel (Task 5; not built as of this runbook, documented in section 6). Its
-shape matches `deployments/configs/local-5.json`:
+the Runner UI's config panel. The Runner UI runs on port 3100 once built (Agora Next owns port
+3000); it is not built as of this runbook (Task 5). Its shape matches
+`deployments/configs/local-5.json`:
 
 ```json
 {
@@ -108,6 +109,12 @@ option names `fleet deploy --help` prints. This shells out to `forge script
 script/DeployFleet.s.sol` and is idempotent: re-running it with an unchanged config and an
 existing manifest at `--out` does nothing.
 
+`--out` writes the manifest directly to that path; you do not need to set `FLEET_MANIFEST_OUT`
+yourself. `fleet deploy` writes forge's output to a scratch file inside `contracts/` first
+(forge's own `fs_permissions` only allow writes under `contracts/` and `../deployments`) and
+copies it to `--out` afterward with plain Node `fs`, so `--out` can point anywhere
+(`apps/runner/src/deploy.ts`).
+
 **Verify:**
 
 ```
@@ -136,7 +143,7 @@ Set these keys in `infra/.env` (see `infra/.env.sepolia.example` for the full fi
 | `ANVIL_RPC_URL` | the RPC HTTP URL (blockcache-shim proxies to whatever this points at) |
 | `NEXT_PUBLIC_FORK_NODE_URL` | the RPC HTTP URL |
 | `NUM_REALTIME_CLIENTS` | `1` (unchanged from local) |
-| `NUM_POLLING_CLIENTS` | `1` (it is `0` only for local Anvil; a real chain needs the polling backstop for websocket events a provider drops) |
+| `NUM_POLLING_CLIENTS` | `1` (it is `0` only for local Anvil, where the polling client can hang DAO Node's event loop on cold boot; a real chain needs it as the backstop for websocket events a provider drops) |
 | `DAO_NODE_ARCHIVE_NODE_HTTP_BLOCK_COUNT_SPAN` | `2000` (pins the value against a provider that caps `eth_getLogs` lower) |
 | `GOVERNOR_CLOCK_MODE` | `timestamp` (leave as is; AgoraGovernor V2 is timestamp-clocked on every chain) |
 | `JWT_SECRET` | a fresh secret, `openssl rand -hex 32`. The literal in `.env.example` is published in this repository |
@@ -188,17 +195,17 @@ REPORTED`. Every stage checks chain or file state first, so it is resumable with
 
 **A path note.** `fleet run`'s own `DEPLOYED` stage deploys from
 `deployments/configs/<experiment name>.deploy.json` (the experiment config's own `name` field,
-not the path passed to `--experiment`) and always writes its manifest to the fixed path
-`deployments/experiment-latest.json`, not `deployments/84532/latest.json`. To have `fleet run`
-reuse the exact fleet deployed and verified in section 4 rather than deploying a second, separate
-one: name the experiment `sepolia-5` and save the deploy config at
-`deployments/configs/sepolia-5.deploy.json` with the same content as
-`deployments/configs/sepolia-5.json`, then copy `deployments/84532/latest.json` to
-`deployments/experiment-latest.json` before the first `fleet run` (its deploy stage skips
-redeploying when the manifest already at that path has a matching config hash). Simpler for a
-first pilot: skip the standalone deploy in section 4 and let `fleet run`'s own `DEPLOYED` stage do
-the only deploy, then copy `deployments/experiment-latest.json` to `deployments/84532/<a
-timestamp>.json` afterward for section 7's publishing step.
+not the path passed to `--experiment`), and writes its manifest to
+`deployments/<chainId>/latest.json` plus a per-run archive copy
+`deployments/<chainId>/run-<runId>.json` (`apps/runner/src/pipeline/run-pipeline.ts`'s
+`manifestPathsForRun`), so for Base Sepolia that is `deployments/84532/latest.json`, the same
+path section 4's standalone `fleet deploy --out` writes. To have `fleet run` reuse the exact
+fleet deployed and verified in section 4 rather than deploying a second one, name the experiment
+`sepolia-5` and save the deploy config at `deployments/configs/sepolia-5.deploy.json` with the
+same content as `deployments/configs/sepolia-5.json`: `DEPLOYED` then finds the manifest section 4
+already wrote at `deployments/84532/latest.json`, matches its config hash and chain id, and skips
+redeploying. Simpler for a first pilot: skip the standalone deploy in section 4 entirely and let
+`fleet run`'s own `DEPLOYED` stage perform the only deploy.
 
 Create `experiments/configs/sepolia-hf-replay.json`, a `fleet.experiment.v1` config:
 
@@ -254,13 +261,12 @@ use `OPENROUTER_API_KEY` from the repo-root `.env` with the default model
 
 ## 7. Publishing the manifest and the Agora Next URL
 
-Copy the manifest that `fleet run` actually deployed against (`deployments/experiment-latest.json`,
-or `deployments/84532/latest.json` if you deployed by hand in section 4 and skipped the reuse
-step) to a timestamped archive copy under `deployments/84532/`, matching the local convention
-(`deployments/<chainId>/latest.json` plus a timestamped copy). Publish, alongside it: the chain
-id (84532), the six contract addresses from the manifest, and the Agora Next URL you set in the
-experiment config's `display.agoraNextBaseUrl` (used by `fleet report`'s rendered links). Anyone
-with that URL and a public bucket can read the same archive Agora Next reads.
+`fleet run` already writes `deployments/84532/latest.json` (the pointer) plus a per-run archive
+copy `deployments/84532/run-<runId>.json`, matching the local convention. Publish `latest.json`
+alongside: the chain id (84532), the six contract addresses from the manifest, and the Agora Next
+URL you set in the experiment config's `display.agoraNextBaseUrl` (used by `fleet report`'s
+rendered links). Anyone with that URL and a public bucket can read the same archive Agora Next
+reads.
 
 ## 8. Pilot checklist (M4)
 
@@ -298,12 +304,19 @@ voters stop approvals. A paused ledger stops decisions. These are meant to fail 
 
 ## 10. Mainnet is out of scope
 
-This runbook authorizes local and Base Sepolia work only (spec 16.4). No script in this
-repository accepts `FLEET_ALLOW_MAINNET`: it appears only in `docs/spec.md`'s prose, never in any
-source file, and `fleet.experiment.v1`'s `target.kind` accepts only `"local-anvil"` and
-`"base-sepolia"`, no mainnet option. The Runner UI (Task 5) is expected to refuse chain id `8453`
-outright once built. Moving to Base mainnet needs spec milestone M5 (a written mainnet readiness
-review) first; nothing in M0 through M4 grants mainnet authority.
+This runbook authorizes local and Base Sepolia work only (spec 16.4). Base mainnet (chain id
+8453) is refused by code today, not just by policy. `assertAllowedChain`
+(`packages/schemas/src/chain.ts`) throws for chain id 8453, and every tool in this repository
+calls it before it deploys, signs, or reads: the `fleet` CLI checks every `--rpc` URL's reported
+chain id before any subcommand acts (`apps/runner/src/cli.ts`'s `assertRpcChainAllowed`),
+`FleetClient` refuses it in its constructor and on every chain-id check
+(`packages/sdk/src/client.ts`), the Runner's `run` pipeline checks it in `CHAIN_READY` and in
+PREFLIGHT, and the keeper's and the worker's manifest loaders both refuse a manifest whose
+`chainId` is 8453 (`apps/keeper/src/env.ts`, `apps/worker/src/env.ts`). No script in this
+repository accepts `FLEET_ALLOW_MAINNET`: that name appears only in `docs/spec.md`'s prose, never
+in any source file, and `fleet.experiment.v1`'s `target.kind` accepts only `"local-anvil"` and
+`"base-sepolia"`, no mainnet option. Moving to Base mainnet needs spec milestone M5 (a written
+mainnet readiness review) first; nothing in M0 through M4 grants mainnet authority.
 
 ## 11. Known limitations
 
