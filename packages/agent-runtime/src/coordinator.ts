@@ -35,6 +35,14 @@ export type PendingAlternative = {
 type Waiter = { afterSeq: number; resolve: (step: Step | null) => void };
 
 /**
+ * How many steps the board keeps. A long task would otherwise hold every step it ever published
+ * for the life of the process, and the Runner writes `history()` into `record.json`. Followers
+ * track their position by sequence number, not by index, so trimming the front changes nothing
+ * for them: the only steps dropped are ones every follower has long passed.
+ */
+const MAX_STEPS_KEPT = 500;
+
+/**
  * The fleet's shared step board: offchain, in process (every agent loop for one task runs inside
  * one Runner process in v1), and logged into the experiment record as `history()`.
  *
@@ -48,6 +56,9 @@ export class StepBoard {
   private readonly waiters: Waiter[] = [];
   private readonly alternatives: PendingAlternative[] = [];
   private closed = false;
+  /** Tracked separately from `steps`, which is trimmed: a sequence number never goes backwards,
+   *  even once the step that used it has aged out of the history. */
+  private highestSeq = 0;
 
   /**
    * Adds a step to the board and wakes every follower waiting for it. Returns the stamped step so
@@ -56,10 +67,10 @@ export class StepBoard {
    * or decreasing one would silently make a step invisible to whoever had already passed it.
    */
   publish(step: { agentId: number; tool: ToolCall; why: string; seq: number; source?: Step["source"] }): Step {
-    const last = this.steps[this.steps.length - 1];
-    if (last && step.seq <= last.seq) {
-      throw new Error(`StepBoard.publish: seq ${step.seq} does not advance past the last published seq ${last.seq}`);
+    if (step.seq <= this.highestSeq) {
+      throw new Error(`StepBoard.publish: seq ${step.seq} does not advance past the last published seq ${this.highestSeq}`);
     }
+    this.highestSeq = step.seq;
     const published: Step = {
       agentId: step.agentId,
       tool: step.tool,
@@ -69,6 +80,7 @@ export class StepBoard {
       source: step.source ?? "model",
     };
     this.steps.push(published);
+    if (this.steps.length > MAX_STEPS_KEPT) this.steps.splice(0, this.steps.length - MAX_STEPS_KEPT);
 
     const woken = this.waiters.filter((w) => published.seq > w.afterSeq);
     for (const waiter of woken) {
@@ -134,6 +146,20 @@ export class StepBoard {
   /** The alternatives still waiting on a decision, oldest first. */
   pendingAlternatives(): PendingAlternative[] {
     return [...this.alternatives];
+  }
+
+  /**
+   * Drops every pending alternative proposed under a charter version older than `charterVersion`.
+   * A `CHOOSE_PATH` carries `expectedVersion`, so once the charter is amended the ledger will
+   * refuse the proposal behind that alternative; keeping it pending would leave the coordinator
+   * waiting on a decision that can never be recorded, and the board holding it forever.
+   */
+  dropSupersededAlternatives(charterVersion: number): void {
+    for (let i = this.alternatives.length - 1; i >= 0; i--) {
+      if ((this.alternatives[i]?.charterVersion ?? charterVersion) < charterVersion) {
+        this.alternatives.splice(i, 1);
+      }
+    }
   }
 
   /** Removes every pending alternative with this payload hash, once one has been adopted, so a

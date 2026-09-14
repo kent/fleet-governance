@@ -32,30 +32,125 @@ export type DivergenceContext = {
   riskFlags?: string[];
 };
 
-/** `DecisionV1.summary`'s upper bound. A draft summary is short in practice; this clamp exists so
- *  a long one can never make an otherwise valid decision fail its own schema. */
-const MAX_SUMMARY_LENGTH = 1024;
-
 /**
- * `DecisionV1` puts no bound on `rationale`, but the proposal description built from it does: spec
- * 8.2 caps a description at 4,096 bytes, and the rationale lands in it twice (once as prose, once
- * inside the canonical JSON block). A model that answers at length would otherwise produce a
- * decision that can never be proposed. Clamped to the same bound as the summary, which leaves room
- * for both copies plus the summary and the scaffolding.
+ * The bound `FleetSigner.propose` enforces on a proposal description (spec 8.2), and the real
+ * reason every free-text field here is clamped.
+ *
+ * `buildDecisionDescription` renders the summary three times (the title, the prose summary, and
+ * the canonical JSON block), the rationale twice (prose and JSON), the assumptions and risk flags
+ * twice each, and the action descriptor's full `target` once inside the JSON. A decision that
+ * bursts this bound throws inside the Runner's `propose` path, which means a gateway block that
+ * never reaches the chain and a dissent that is silently lost: exactly the failure this clamping
+ * exists to prevent.
  */
-const MAX_RATIONALE_LENGTH = 1024;
+const DESCRIPTION_BYTE_LIMIT = 4096;
+
+/** Headroom kept free of the limit, for the fixed skeleton growing in a later spec revision. */
+const DESCRIPTION_SAFETY_MARGIN = 64;
+
+/** `toDecision` does not know the `roleLabel` the Runner will render with, so it measures against
+ *  a placeholder of the longest label it will accept. A real label (`"safety_reviewer"`) is far
+ *  shorter, so measuring with this can only over-reserve. */
+const MAX_ROLE_LABEL_BYTES = 64;
+const ROLE_LABEL_PLACEHOLDER = "x".repeat(MAX_ROLE_LABEL_BYTES);
+
+/** Starting clamps. `3 * 240 + 2 * 1200 = 3120` bytes of free text, which fits alongside a
+ *  typical descriptor and the fixed skeleton; `fitDescription` shrinks them further whenever the
+ *  parts that cannot be truncated (a long `action.target`, an amendment's canonical charter text)
+ *  need the room. */
+const MAX_SUMMARY_BYTES = 240;
+const MAX_RATIONALE_BYTES = 1200;
+
+/** Floors: below these a decision stops being readable, so `fitDescription` gives up rather than
+ *  shrinking to nothing. A decision that still does not fit is one whose untruncatable parts alone
+ *  exceed the bound, and the Runner reports the failed propose. */
+const MIN_SUMMARY_BYTES = 60;
+const MIN_RATIONALE_BYTES = 80;
+
+/** The target is echoed inside the summary text this module builds; the descriptor keeps the full
+ *  one, because its hash is what the gateway and the ledger key on. */
+const MAX_TARGET_BYTES_IN_SUMMARY = 120;
+
+/** Assumptions and risk flags are caller-supplied and unbounded, and land in the description
+ *  twice each. */
+const MAX_LIST_ITEMS = 5;
+const MAX_LIST_ITEM_BYTES = 120;
 
 /** Used only if a caller supplies an empty rationale, which the `fleet.objection.v1` and
  *  `fleet.blockresponse.v1` schemas already rule out (both require a non-empty string). Keeps
  *  `toDecision` total rather than letting it throw mid-loop. */
 const MISSING_RATIONALE = "(no rationale recorded)";
 
-function clampSummary(summary: string): string {
-  return summary.length > MAX_SUMMARY_LENGTH ? summary.slice(0, MAX_SUMMARY_LENGTH) : summary;
+const ELLIPSIS = "...";
+
+function byteLength(text: string): number {
+  return Buffer.byteLength(text, "utf8");
+}
+
+/**
+ * Truncates `text` to at most `maxBytes` UTF-8 bytes, appending `"..."` when anything was cut.
+ * Iterates by code point, so a multi-byte sequence is never cut in half (a byte-slice would leave
+ * a replacement character in the middle of a proposal description that voters have to read).
+ */
+export function truncateBytes(text: string, maxBytes: number): string {
+  if (byteLength(text) <= maxBytes) return text;
+  const budget = Math.max(0, maxBytes - ELLIPSIS.length);
+  let used = 0;
+  let out = "";
+  for (const char of text) {
+    const size = byteLength(char);
+    if (used + size > budget) break;
+    used += size;
+    out += char;
+  }
+  return `${out}${ELLIPSIS}`;
+}
+
+function clampList(items: readonly string[] | undefined): string[] {
+  return (items ?? []).slice(0, MAX_LIST_ITEMS).map((item) => truncateBytes(item, MAX_LIST_ITEM_BYTES));
 }
 
 function descriptorFor(tool: ToolCall): ActionDescriptor {
   return describeAction({ class: tool.class, target: tool.target, args: tool.args });
+}
+
+/** The rendered description's byte length, or `null` when `buildDecisionDescription` refused to
+ *  render it at all (it throws over the same bound this is measuring against). */
+function renderedBytes(decision: DecisionV1): number | null {
+  try {
+    return byteLength(buildDecisionDescription(decision, ROLE_LABEL_PLACEHOLDER));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Builds the decision at progressively tighter clamps until its rendered description fits inside
+ * `DESCRIPTION_BYTE_LIMIT`. The rationale gives way first (it is the longest free-text field and
+ * the least load-bearing for a voter scanning a list), then the summary. Deterministic: the same
+ * inputs always produce the same clamps, and the loop is bounded by the halving schedule.
+ */
+function fitDescription(build: (summaryBytes: number, rationaleBytes: number) => DecisionV1): DecisionV1 {
+  let summaryBytes = MAX_SUMMARY_BYTES;
+  let rationaleBytes = MAX_RATIONALE_BYTES;
+
+  for (;;) {
+    const candidate = build(summaryBytes, rationaleBytes);
+    const bytes = renderedBytes(candidate);
+    if (bytes !== null && bytes <= DESCRIPTION_BYTE_LIMIT - DESCRIPTION_SAFETY_MARGIN) return candidate;
+
+    if (rationaleBytes > MIN_RATIONALE_BYTES) {
+      rationaleBytes = Math.max(MIN_RATIONALE_BYTES, Math.floor(rationaleBytes / 2));
+      continue;
+    }
+    if (summaryBytes > MIN_SUMMARY_BYTES) {
+      summaryBytes = Math.max(MIN_SUMMARY_BYTES, Math.floor(summaryBytes / 2));
+      continue;
+    }
+    // Nothing left to give: the untruncatable parts alone (an enormous `action.target`, or an
+    // amendment's canonical charter text) exceed the bound.
+    return candidate;
+  }
 }
 
 /**
@@ -94,48 +189,65 @@ export function escalationDraft(blockedTool: ToolCall, draft: DraftProposal): Dr
  *   `payloadHashForPath`, so the payload hash covers exactly the path being chosen.
  */
 export function toDecision(d: Divergence, ctx: DivergenceContext): DecisionV1 {
-  const supplied = ctx.rationale.trim().length > 0 ? ctx.rationale : MISSING_RATIONALE;
-  const rationale = supplied.length > MAX_RATIONALE_LENGTH ? supplied.slice(0, MAX_RATIONALE_LENGTH) : supplied;
-  const base = {
-    schema: "fleet.decision.v1",
-    taskId: ctx.taskId.toString(),
-    expectedVersion: ctx.charterVersion,
-    proposerAgentId: ctx.agentId,
-    rationale,
-    assumptions: ctx.assumptions ?? [],
-    riskFlags: ctx.riskFlags ?? [],
-  } as const;
-
-  if (d.source === "objection") {
-    const descriptor = descriptorFor(d.alternative);
-    return {
-      ...base,
-      kind: "CHOOSE_PATH" satisfies DecisionKind,
-      payloadHash: payloadHashForPath(descriptor),
-      action: descriptor,
-      summary: clampSummary(
-        `Choose path: ${d.alternative.class} ${d.alternative.target} instead of the coordinator's step ${d.step.seq}`,
-      ),
-    };
+  if (d.source === "gateway_block" && d.draft.kind === "AMEND_CHARTER" && !d.draft.newCharter) {
+    // The draft's payload hash is `keccak256(canonicalize(newCharter))`; substituting the current
+    // charter would produce an amendment whose text and hash disagree, which the ledger would
+    // reject and which would read to a voter as a proposal to change nothing.
+    throw new Error("toDecision: an AMEND_CHARTER draft must carry the newCharter its payload hash covers");
   }
 
-  if (d.draft.kind === "AMEND_CHARTER") {
+  const suppliedRationale = ctx.rationale.trim().length > 0 ? ctx.rationale : MISSING_RATIONALE;
+  const assumptions = clampList(ctx.assumptions);
+  const riskFlags = clampList(ctx.riskFlags);
+
+  return fitDescription((summaryBytes, rationaleBytes): DecisionV1 => {
+    const base = {
+      schema: "fleet.decision.v1",
+      taskId: ctx.taskId.toString(),
+      expectedVersion: ctx.charterVersion,
+      proposerAgentId: ctx.agentId,
+      rationale: truncateBytes(suppliedRationale, rationaleBytes),
+      assumptions,
+      riskFlags,
+    } as const;
+
+    if (d.source === "objection") {
+      const descriptor = descriptorFor(d.alternative);
+      const target = truncateBytes(d.alternative.target, MAX_TARGET_BYTES_IN_SUMMARY);
+      return {
+        ...base,
+        kind: "CHOOSE_PATH" satisfies DecisionKind,
+        payloadHash: payloadHashForPath(descriptor),
+        action: descriptor,
+        summary: truncateBytes(
+          `Choose path: ${d.alternative.class} ${target} instead of the coordinator's step ${d.step.seq}`,
+          summaryBytes,
+        ),
+      };
+    }
+
+    if (d.draft.kind === "AMEND_CHARTER") {
+      return {
+        ...base,
+        kind: "AMEND_CHARTER",
+        payloadHash: d.draft.payloadHash,
+        // Never truncated: `newCharterText` must canonicalize to exactly the bytes the payload
+        // hash covers.
+        newCharter: d.draft.newCharter,
+        summary: truncateBytes(d.draft.summary, summaryBytes),
+      };
+    }
+
     return {
       ...base,
-      kind: "AMEND_CHARTER",
+      kind: d.draft.kind,
       payloadHash: d.draft.payloadHash,
-      newCharter: d.draft.newCharter ?? ctx.charter,
-      summary: clampSummary(d.draft.summary),
+      // Never truncated either: `payloadHashForAction(action)` has to keep matching the hash the
+      // gateway blocked on and the ledger will key an exception by.
+      action: descriptorFor(d.blockedTool),
+      summary: truncateBytes(d.draft.summary, summaryBytes),
     };
-  }
-
-  return {
-    ...base,
-    kind: d.draft.kind,
-    payloadHash: d.draft.payloadHash,
-    action: descriptorFor(d.blockedTool),
-    summary: clampSummary(d.draft.summary),
-  };
+  });
 }
 
 /** Exactly `FleetSigner.propose`'s input. Kept as its own type so the Runner (Task 7) can hand a

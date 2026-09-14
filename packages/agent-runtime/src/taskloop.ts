@@ -8,7 +8,7 @@ import type { TaskView } from "@fleet/sdk";
 import { withOneRepair } from "./providers/types.js";
 import type { CompleteRequest, CompleteResult, Provider } from "./providers/types.js";
 import { DEFAULT_VOTE_OR_STEP_MAX_TOKENS } from "./providers/openrouter.js";
-import { buildBlockResponsePrompt, buildNextStepPrompt, buildObjectionPrompt } from "./providers/prompts.js";
+import { buildBlockResponsePrompt, buildNextStepPrompt, buildObjectionPrompt, untrusted } from "./providers/prompts.js";
 import type { RunTestsOutput, ToolCall, ToolResult } from "./sandbox/tools.js";
 import type { Step, StepBoard } from "./coordinator.js";
 import { escalationDraft, toDecision } from "./divergence.js";
@@ -20,17 +20,41 @@ export const TASK_LOOP_TIMEOUT_MS = 60_000;
 /** How many of the agent's own tool results go into the next-step prompt (controller notes). */
 const RECENT_TOOL_RESULTS = 10;
 
+/** How many of those keep a full output excerpt; older ones stay as one-line outcomes. */
+const RECENT_TOOL_OUTPUTS = 3;
+
+/** Characters of a tool's output carried into the prompt, before `... [truncated]`. */
+const MAX_OUTPUT_EXCERPT_CHARS = 2000;
+
 /** How many board steps go into the next-step prompt (controller notes). */
 const RECENT_BOARD_STEPS = 3;
+
+/** How many workspace paths the file listing carries. */
+const MAX_LISTED_FILES = 200;
+
+/** Default pause after a blocked, refused, or failed iteration, so a paused task or a standing
+ *  refusal does not spend the whole step budget spinning. Tests pass 0. */
+export const DEFAULT_BLOCKED_BACKOFF_MS = 2000;
+
+/** Only these classes return content worth quoting back to the model; a `write_repo` result is
+ *  `wrote <path>` and a `package_install` result is an installer transcript. */
+const OUTPUT_EXCERPT_CLASSES: ReadonlySet<string> = new Set(["read_repo", "run_tests"]);
 
 /**
  * The slice of `ToolRouter` a loop uses. Named separately so a test can pass a plain object (the
  * same reason `@fleet/gateway` declares `LedgerClient` rather than requiring a whole
  * `FleetClient`); every real `ToolRouter` satisfies it structurally.
+ *
+ * `signal` is optional and a real `ToolRouter` currently ignores it (the Runner can add
+ * cancellation later); the loop still refuses to start a call once the signal is aborted, so an
+ * aborted run never begins new work either way. `listFiles` is optional because only the Runner
+ * can supply it: `ToolRouter` keeps its `Workspace` private, so the Runner passes
+ * `() => workspace.listFiles()` alongside the router.
  */
 export type ToolExecutor = {
-  call(tc: ToolCall): Promise<ToolResult>;
+  call(tc: ToolCall, signal?: AbortSignal): Promise<ToolResult>;
   usage(): { toolCalls: number };
+  listFiles?: () => Promise<string[]>;
 };
 
 /** One objection prompt's outcome, recorded whether or not the member objected, so the report can
@@ -105,9 +129,12 @@ export type TaskLoopOpts = {
   log?: (event: TaskLoopEvent) => void;
   timeoutMs?: number;
   maxTokens?: number;
+  /** Pause after an iteration that was blocked without a draft, refused locally, or lost its
+   *  inference. Defaults to `DEFAULT_BLOCKED_BACKOFF_MS`; tests pass 0. */
+  blockedBackoffMs?: number;
 };
 
-type ToolLine = { tool: ToolCall; ok: boolean; detail: string };
+type ToolLine = { tool: ToolCall; ok: boolean; detail: string; output?: string };
 
 /** One descriptor's block history at one charter version, for the retry rule. */
 type Attempt = { attempts: number; decisionCountAtLastBlock: number };
@@ -118,6 +145,20 @@ function errorMessage(err: unknown): string {
 
 function toolLabel(tool: ToolCall): string {
   return `${tool.class} ${tool.target}`;
+}
+
+/** `untrusted()` renders the label into an XML-ish attribute, so a target carrying a quote or an
+ *  angle bracket would otherwise let a file name reshape the prompt's own structure. */
+function untrustedLabel(tool: ToolCall): string {
+  return toolLabel(tool).replace(/["'<>\r\n]/g, " ");
+}
+
+/** The first `MAX_OUTPUT_EXCERPT_CHARS` characters of a tool's output, marked when cut. Measured
+ *  in characters, not bytes: this bounds a prompt, not a chain field. */
+function excerpt(output: string): string {
+  return output.length <= MAX_OUTPUT_EXCERPT_CHARS
+    ? output
+    : `${output.slice(0, MAX_OUTPUT_EXCERPT_CHARS)}... [truncated]`;
 }
 
 function decodeRunTests(output: string): RunTestsOutput | null {
@@ -158,6 +199,7 @@ export class TaskLoop {
   private readonly log: (event: TaskLoopEvent) => void;
   private readonly timeoutMs: number;
   private readonly maxTokens: number;
+  private readonly backoffMs: number;
 
   private steps = 0;
   private blockedCount = 0;
@@ -175,16 +217,24 @@ export class TaskLoop {
   private recentDecisions: RecordedDecision[] = [];
   /** The last board sequence number this loop has processed (followers only). */
   private lastSeq = 0;
+  /** Set by an iteration that was blocked without a draft, refused locally, or lost its inference;
+   *  `run` pauses for `blockedBackoffMs` before the next one. */
+  private pendingBackoff = false;
 
   constructor(opts: TaskLoopOpts) {
     this.opts = opts;
     this.log = opts.log ?? ((): void => {});
     this.timeoutMs = opts.timeoutMs ?? TASK_LOOP_TIMEOUT_MS;
     this.maxTokens = opts.maxTokens ?? DEFAULT_VOTE_OR_STEP_MAX_TOKENS;
+    this.backoffMs = opts.blockedBackoffMs ?? DEFAULT_BLOCKED_BACKOFF_MS;
   }
 
   async run(signal: AbortSignal): Promise<TaskLoopResult> {
     let stopReason: StopReason | null = null;
+    // Set before the first await: a follower joins the run where the board already is (it did not
+    // exist for the steps before it started), and a step published between this line and the first
+    // `waitForNext` is still delivered, because that call works from this sequence number.
+    if (!this.opts.isCoordinator) this.lastSeq = this.opts.board.latest()?.seq ?? 0;
 
     while (stopReason === null) {
       if (signal.aborted) {
@@ -194,6 +244,14 @@ export class TaskLoop {
       if (this.steps >= this.opts.maxSteps) {
         stopReason = "max_steps";
         break;
+      }
+      if (this.pendingBackoff) {
+        this.pendingBackoff = false;
+        await this.backoff(signal);
+        if (signal.aborted) {
+          stopReason = "aborted";
+          break;
+        }
       }
 
       const task = await this.opts.task();
@@ -224,8 +282,12 @@ export class TaskLoop {
 
   private async coordinatorIteration(task: TaskView, charter: CharterV1, signal: AbortSignal): Promise<StopReason | null> {
     this.recentDecisions = await this.readDecisions();
+    if (signal.aborted) return "aborted";
+    // An alternative proposed under an older charter version can no longer be recorded: its
+    // proposal carries that version as `expectedVersion` and the ledger will refuse it.
+    this.opts.board.dropSupersededAlternatives(task.charterVersion);
 
-    const adopted = this.findAdoptedPath();
+    const adopted = this.findAdoptedPath(task.charterVersion);
     if (adopted) {
       const step = this.publish(adopted.alternative, `Adopted the fleet's recorded CHOOSE_PATH decision.`, "adopted_path");
       this.opts.board.markAdopted(adopted.payloadHash);
@@ -244,7 +306,7 @@ export class TaskLoop {
       memberRole: this.opts.role,
       task,
       charter,
-      recentActivity: this.recentActivity(),
+      recentActivity: await this.recentActivity(),
     });
     const result = await completeOnce(this.opts.provider, {
       system: prompt.system,
@@ -254,10 +316,12 @@ export class TaskLoop {
       timeoutMs: this.timeoutMs,
     });
     this.steps += 1;
+    if (signal.aborted) return "aborted";
     if (!result.ok) {
       // Spec 10.6: malformed output is a worker failure, never a fabricated step. The iteration
       // is spent, the loop continues.
       this.log({ type: "inference_failed", agentId: this.opts.agentId, prompt: "next_step", error: result.error });
+      this.pendingBackoff = true;
       return null;
     }
 
@@ -268,11 +332,15 @@ export class TaskLoop {
     return this.executeStep(step.tool, task, charter, signal);
   }
 
-  /** The first pending alternative whose payload hash a recorded `CHOOSE_PATH` now covers. */
-  private findAdoptedPath(): { alternative: ToolCall; payloadHash: Hex } | null {
+  /** The first pending alternative whose payload hash a `CHOOSE_PATH` recorded under the current
+   *  charter version covers. A decision recorded under an older version is not adopted: the path it
+   *  chose was judged against a charter the fleet has since replaced. */
+  private findAdoptedPath(charterVersion: number): { alternative: ToolCall; payloadHash: Hex } | null {
     if (this.recentDecisions.length === 0) return null;
     const chosen = new Set(
-      this.recentDecisions.filter((d) => d.kind === "CHOOSE_PATH").map((d) => d.payloadHash.toLowerCase()),
+      this.recentDecisions
+        .filter((d) => d.kind === "CHOOSE_PATH" && d.charterVersion === charterVersion)
+        .map((d) => d.payloadHash.toLowerCase()),
     );
     if (chosen.size === 0) return null;
     for (const pending of this.opts.board.pendingAlternatives()) {
@@ -324,11 +392,13 @@ export class TaskLoop {
       maxTokens: this.maxTokens,
       timeoutMs: this.timeoutMs,
     });
+    if (signal.aborted) return "aborted";
     if (!result.ok) {
       // Nothing is recorded to the objection sink: an inference failure is not a member deciding
       // not to object, and the report must not count it as one. The step still runs, in this
       // agent's own workspace and through its own gateway.
       this.log({ type: "inference_failed", agentId: this.opts.agentId, prompt: "objection", error: result.error });
+      this.pendingBackoff = true;
       return this.executeStep(step.tool, task, charter, signal);
     }
 
@@ -356,24 +426,38 @@ export class TaskLoop {
     }
 
     this.objectionCount += 1;
+
+    // The charter may have been amended while the objection prompt was in flight. A decision built
+    // from the version read at the top of the iteration would carry a stale `expectedVersion`, the
+    // ledger would refuse it, and this follower has already advanced past the step, so the dissent
+    // would be lost silently. Everything below is built from a view read right now.
+    const fresh = await this.opts.task();
+    if (signal.aborted) return "aborted";
+    if (fresh.state !== TaskState.Open || fresh.charter === null) return "task_not_open";
+
     const divergence: Divergence = { source: "objection", agentId: this.opts.agentId, step, alternative };
     const decision = toDecision(divergence, {
-      taskId: task.id,
-      charterVersion: task.charterVersion,
+      taskId: fresh.id,
+      charterVersion: fresh.charterVersion,
       agentId: this.opts.agentId,
-      charter,
+      charter: fresh.charter,
       rationale: result.value.why,
     });
-    const proposalId = await this.maybePropose(decision, task.charterVersion);
+    const proposalId = await this.maybePropose(decision, fresh.charterVersion);
 
-    this.opts.board.recordAlternative({
-      agentId: this.opts.agentId,
-      step,
-      alternative,
-      payloadHash: decision.payloadHash as Hex,
-      charterVersion: task.charterVersion,
-      proposalId,
-    });
+    if (proposalId !== null) {
+      // Only a live proposal can become a recorded decision, so only a live proposal leaves an
+      // alternative for the coordinator to adopt. A duplicate-suppressed or failed one would sit
+      // on the board forever waiting for a vote that was never opened.
+      this.opts.board.recordAlternative({
+        agentId: this.opts.agentId,
+        step,
+        alternative,
+        payloadHash: decision.payloadHash as Hex,
+        charterVersion: fresh.charterVersion,
+        proposalId,
+      });
+    }
     this.opts.objections.record({
       agentId: this.opts.agentId,
       step,
@@ -391,11 +475,14 @@ export class TaskLoop {
 
   private async executeStep(tool: ToolCall, task: TaskView, charter: CharterV1, signal: AbortSignal): Promise<StopReason | null> {
     if (!this.mayAttempt(tool, task)) return null;
+    // An aborted run starts no new work, whatever the executor does with the signal itself.
+    if (signal.aborted) return "aborted";
 
-    const result = await this.opts.tools.call(tool);
+    const result = await this.opts.tools.call(tool, signal);
+    if (signal.aborted) return "aborted";
 
     if (result.ok) {
-      this.recordToolLine(tool, true, "ok");
+      this.recordToolLine(tool, true, "ok", result.output);
       if (tool.class === "run_tests") {
         const decoded = decodeRunTests(result.output);
         if (decoded?.passed) {
@@ -422,7 +509,11 @@ export class TaskLoop {
     signal: AbortSignal,
   ): Promise<StopReason | null> {
     this.blockedCount += 1;
-    this.recordToolLine(tool, false, `blocked (${verdict.reason})`);
+    this.recordToolLine(
+      tool,
+      false,
+      `blocked (${verdict.reason}, ${verdict.draft === null ? "no draft proposal" : "draft proposal available"})`,
+    );
     this.recordBlockedAttempt(tool, task);
     this.log({
       type: "blocked",
@@ -439,8 +530,11 @@ export class TaskLoop {
     }
     if (verdict.draft === null) {
       // Escalated, paused, expired, or a task that is no longer open: no decision this fleet can
-      // record would unblock it, so the model is never asked about it.
+      // record would unblock it, so the model is never asked about it. A pause is only ever
+      // visible here, since `TaskView` carries no pause flag, and it is worth waiting out rather
+      // than spending an inference per iteration on a gateway that is refusing everything.
       this.log({ type: "block_no_draft", agentId: this.opts.agentId, tool, reason: verdict.reason });
+      this.pendingBackoff = true;
       return null;
     }
     if (signal.aborted) return "aborted";
@@ -460,8 +554,10 @@ export class TaskLoop {
       maxTokens: this.maxTokens,
       timeoutMs: this.timeoutMs,
     });
+    if (signal.aborted) return "aborted";
     if (!result.ok) {
       this.log({ type: "inference_failed", agentId: this.opts.agentId, prompt: "block_response", error: result.error });
+      this.pendingBackoff = true;
       return null;
     }
 
@@ -472,17 +568,38 @@ export class TaskLoop {
 
     const draft: DraftProposal =
       result.value.choice === "escalate" ? escalationDraft(tool, verdict.draft) : verdict.draft;
-    const decision = toDecision(
-      { source: "gateway_block", agentId: this.opts.agentId, draft, blockedTool: tool },
-      {
-        taskId: task.id,
-        charterVersion: task.charterVersion,
+
+    // Same reason as the objection path: an amendment landing during the block-response inference
+    // would otherwise make this proposal stale on arrival.
+    const fresh = await this.opts.task();
+    if (signal.aborted) return "aborted";
+    if (fresh.state !== TaskState.Open || fresh.charter === null) return "task_not_open";
+
+    let decision: DecisionV1;
+    try {
+      decision = toDecision(
+        { source: "gateway_block", agentId: this.opts.agentId, draft, blockedTool: tool },
+        {
+          taskId: fresh.id,
+          charterVersion: fresh.charterVersion,
+          agentId: this.opts.agentId,
+          charter: fresh.charter,
+          rationale: result.value.rationale,
+        },
+      );
+    } catch (err) {
+      // A draft this module refuses to turn into a decision (an `AMEND_CHARTER` with no charter
+      // text behind its hash) is a gateway bug, not a reason to end the task.
+      this.log({
+        type: "propose_failed",
         agentId: this.opts.agentId,
-        charter,
-        rationale: result.value.rationale,
-      },
-    );
-    await this.maybePropose(decision, task.charterVersion);
+        kind: draft.kind,
+        payloadHash: draft.payloadHash,
+        error: errorMessage(err),
+      });
+      return null;
+    }
+    await this.maybePropose(decision, fresh.charterVersion);
     return null;
   }
 
@@ -516,6 +633,15 @@ export class TaskLoop {
         payloadHash: this.payloadHashFor(tool),
         charterVersion: task.charterVersion,
       });
+      // Recorded as activity, not only as a log line: without it the prompt keeps showing the two
+      // old blocks and nothing else, and the model asks for the same tool call every iteration
+      // until the step budget runs out.
+      this.recordToolLine(
+        tool,
+        false,
+        `refused locally: retry limit reached for this action under charter version ${task.charterVersion}`,
+      );
+      this.pendingBackoff = true;
       return false;
     }
     if (task.decisionCount <= attempt.decisionCountAtLastBlock) {
@@ -526,6 +652,8 @@ export class TaskLoop {
         payloadHash: this.payloadHashFor(tool),
         charterVersion: task.charterVersion,
       });
+      this.recordToolLine(tool, false, "refused locally: waiting for the fleet's decision on this action");
+      this.pendingBackoff = true;
       return false;
     }
     return true;
@@ -588,10 +716,30 @@ export class TaskLoop {
 
   // --- prompt context --------------------------------------------------------------------------
 
-  private recordToolLine(tool: ToolCall, ok: boolean, detail: string): void {
-    this.toolLines.push({ tool, ok, detail });
+  private recordToolLine(tool: ToolCall, ok: boolean, detail: string, output?: string): void {
+    const line: ToolLine =
+      ok && output !== undefined && OUTPUT_EXCERPT_CLASSES.has(tool.class)
+        ? { tool, ok, detail, output }
+        : { tool, ok, detail };
+    this.toolLines.push(line);
     if (this.toolLines.length > RECENT_TOOL_RESULTS) this.toolLines.shift();
     this.log({ type: "tool_result", agentId: this.opts.agentId, tool, ok, detail });
+  }
+
+  /** Waits `blockedBackoffMs`, or until the run is aborted, whichever comes first. */
+  private async backoff(signal: AbortSignal): Promise<void> {
+    if (this.backoffMs <= 0 || signal.aborted) return;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, this.backoffMs);
+      const onAbort = (): void => {
+        clearTimeout(timer);
+        resolve();
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
   }
 
   private async readDecisions(): Promise<RecordedDecision[]> {
@@ -606,18 +754,33 @@ export class TaskLoop {
   }
 
   /**
-   * The next-step prompt's context: this agent's own recent tool results, the board's last few
+   * The next-step prompt's context: the workspace's file list, this agent's own recent tool
+   * results (the last few with a bounded excerpt of what they returned), the board's last few
    * steps, and the decisions recorded on the task. Never vote tallies and never another member's
-   * reasons (spec 10.5), and never a tool's output either, only whether it was allowed.
+   * reasons (spec 10.5).
+   *
+   * Every excerpt goes through `untrusted()`: a file's contents, a test runner's output, and a
+   * fetched page are all data, and a README that says "ignore the charter" is a README, not an
+   * instruction. The whole `recentActivity` block is wrapped again by `buildNextStepPrompt`.
    */
-  private recentActivity(): string[] {
+  private async recentActivity(): Promise<string[]> {
     const lines: string[] = [];
+
+    const files = await this.readFileList();
+    if (files) {
+      lines.push(`Files in your workspace (${files.length} shown, sorted):`);
+      for (const file of files) lines.push(`- ${file}`);
+    }
 
     if (this.toolLines.length > 0) {
       lines.push("Your recent tool calls (oldest first):");
-      for (const line of this.toolLines) {
+      const firstExcerpt = Math.max(0, this.toolLines.length - RECENT_TOOL_OUTPUTS);
+      this.toolLines.forEach((line, index) => {
         lines.push(`- ${toolLabel(line.tool)}: ${line.detail}`);
-      }
+        if (line.output !== undefined && index >= firstExcerpt) {
+          lines.push(untrusted(untrustedLabel(line.tool), excerpt(line.output)));
+        }
+      });
     }
 
     const steps = this.opts.board.history().slice(-RECENT_BOARD_STEPS);
@@ -636,5 +799,23 @@ export class TaskLoop {
     }
 
     return lines;
+  }
+
+  /** The workspace's paths, capped and sorted, or null when the executor offers no listing. Path
+   *  names are metadata rather than file content, so the listing is not wrapped as untrusted; each
+   *  entry is still flattened to a single line so a crafted name cannot fake extra structure. */
+  private async readFileList(): Promise<string[] | null> {
+    const reader = this.opts.tools.listFiles;
+    if (!reader) return null;
+    try {
+      const files = await reader();
+      return [...files]
+        .sort()
+        .slice(0, MAX_LISTED_FILES)
+        .map((file) => file.replace(/[\r\n]+/g, " "));
+    } catch {
+      // A listing that cannot be read is simply absent from the prompt.
+      return null;
+    }
   }
 }

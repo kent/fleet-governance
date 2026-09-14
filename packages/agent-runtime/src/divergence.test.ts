@@ -131,11 +131,11 @@ describe("toDecision, gateway block divergence", () => {
       { source: "gateway_block", agentId: 2, draft: GRANT_DRAFT, blockedTool: BLOCKED_TOOL },
       { ...CTX, rationale: "word ".repeat(2000) },
     );
-    expect(decision.rationale.length).toBe(1024);
+    expect(decision.rationale.endsWith("...")).toBe(true);
     expect(() => decisionToProposeInput(decision, "engineer")).not.toThrow();
   });
 
-  it("truncates a draft summary longer than the decision schema's 1024 character bound", () => {
+  it("truncates a draft summary longer than the decision schema's bound", () => {
     const decision = toDecision(
       {
         source: "gateway_block",
@@ -145,8 +145,105 @@ describe("toDecision, gateway block divergence", () => {
       },
       CTX,
     );
-    expect(decision.summary.length).toBe(1024);
+    expect(decision.summary.endsWith("...")).toBe(true);
     expect(DecisionV1.parse(decision)).toEqual(decision);
+  });
+
+  it("refuses an AMEND_CHARTER draft with no newCharter rather than inventing one whose hash disagrees", () => {
+    const draft: DraftProposal = { ...AMEND_DRAFT };
+    delete draft.newCharter;
+    expect(() =>
+      toDecision({ source: "gateway_block", agentId: 2, draft, blockedTool: BLOCKED_TOOL }, CTX),
+    ).toThrow(/newCharter/);
+  });
+});
+
+describe("toDecision keeps every description inside the signer's 4096 byte bound", () => {
+  const LONG_TARGET = "t".repeat(2000);
+  const LONG_RATIONALE = "r".repeat(5000);
+  const LONG_SUMMARY = "s".repeat(3000);
+
+  function descriptionBytes(decision: DecisionV1, roleLabel = "safety_reviewer"): number {
+    return Buffer.byteLength(decisionToProposeInput(decision, roleLabel).description, "utf8");
+  }
+
+  it("fits a gateway block with a 2000 character target, a 5000 character rationale, and a 3000 character summary", () => {
+    const tool: ToolCall = { class: "network_fetch", target: LONG_TARGET, args: { path: "/x" } };
+    const decision = toDecision(
+      {
+        source: "gateway_block",
+        agentId: 2,
+        draft: { kind: "GRANT_EXCEPTION", payloadHash: payloadHashForAction(describeAction(tool)), summary: LONG_SUMMARY },
+        blockedTool: tool,
+      },
+      { ...CTX, rationale: LONG_RATIONALE },
+    );
+    expect(DecisionV1.parse(decision)).toEqual(decision);
+    expect(descriptionBytes(decision)).toBeLessThanOrEqual(4096);
+  });
+
+  it("fits an objection over a 2000 character target with a 5000 character rationale", () => {
+    const alternative: ToolCall = { class: "write_repo", target: LONG_TARGET, args: {} };
+    const decision = toDecision(
+      { source: "objection", agentId: 2, step: STEP, alternative },
+      { ...CTX, rationale: LONG_RATIONALE },
+    );
+    expect(DecisionV1.parse(decision)).toEqual(decision);
+    expect(descriptionBytes(decision)).toBeLessThanOrEqual(4096);
+  });
+
+  it("fits an amendment, whose canonical charter text cannot be truncated at all", () => {
+    const wordy: CharterV1 = { ...AMENDED_CHARTER, goal: "g".repeat(1200), stopConditions: ["s".repeat(300)] };
+    const decision = toDecision(
+      {
+        source: "gateway_block",
+        agentId: 2,
+        draft: {
+          kind: "AMEND_CHARTER",
+          payloadHash: payloadHashForCharter(canonicalize(wordy)),
+          summary: LONG_SUMMARY,
+          newCharter: wordy,
+        },
+        blockedTool: BLOCKED_TOOL,
+      },
+      { ...CTX, rationale: LONG_RATIONALE },
+    );
+    expect(decision.newCharter).toEqual(wordy);
+    expect(descriptionBytes(decision)).toBeLessThanOrEqual(4096);
+  });
+
+  it("fits a long role label, since the loop never sees the label the Runner will use", () => {
+    const decision = toDecision(
+      { source: "gateway_block", agentId: 2, draft: { ...GRANT_DRAFT, summary: LONG_SUMMARY }, blockedTool: BLOCKED_TOOL },
+      { ...CTX, rationale: LONG_RATIONALE },
+    );
+    expect(descriptionBytes(decision, "x".repeat(64))).toBeLessThanOrEqual(4096);
+  });
+
+  it("bounds unbounded assumptions and risk flags too", () => {
+    const decision = toDecision(
+      { source: "gateway_block", agentId: 2, draft: GRANT_DRAFT, blockedTool: BLOCKED_TOOL },
+      {
+        ...CTX,
+        rationale: LONG_RATIONALE,
+        assumptions: Array.from({ length: 40 }, (_, i) => `assumption ${i} ${"a".repeat(400)}`),
+        riskFlags: Array.from({ length: 40 }, (_, i) => `risk ${i} ${"f".repeat(400)}`),
+      },
+    );
+    expect(decision.assumptions.length).toBeLessThanOrEqual(5);
+    expect(decision.riskFlags.length).toBeLessThanOrEqual(5);
+    expect(descriptionBytes(decision)).toBeLessThanOrEqual(4096);
+  });
+
+  it("never cuts inside a UTF-8 sequence when it truncates", () => {
+    const decision = toDecision(
+      { source: "gateway_block", agentId: 2, draft: GRANT_DRAFT, blockedTool: BLOCKED_TOOL },
+      { ...CTX, rationale: "日本語".repeat(3000) },
+    );
+    // A cut inside a multi-byte sequence shows up as U+FFFD after an encode/decode round trip.
+    expect(decision.rationale).not.toContain("�");
+    expect(Buffer.from(decision.rationale, "utf8").toString("utf8")).toBe(decision.rationale);
+    expect(descriptionBytes(decision)).toBeLessThanOrEqual(4096);
   });
 });
 
@@ -167,6 +264,62 @@ describe("escalationDraft", () => {
     expect(decision.kind).toBe("ESCALATE_TO_HUMAN");
     expect(decision.payloadHash).toBe(payloadHashForAction(describeAction(BLOCKED_TOOL)));
     expect(decision.action).toEqual(describeAction(BLOCKED_TOOL));
+  });
+});
+
+describe("every decision that carries an action hashes to the payload hash it proposes", () => {
+  // `verifyDescriptionAgainstCalldata` refuses to vote For when a description's `action` does not
+  // hash to the calldata's payload hash, so truncating `action.target` to fit a description would
+  // produce proposals no member could support. This is why only the summary and the rationale are
+  // ever shortened.
+  const cases: Array<[string, DecisionV1]> = [
+    [
+      "CHOOSE_PATH",
+      toDecision({ source: "objection", agentId: 2, step: STEP, alternative: ALTERNATIVE }, CTX),
+    ],
+    [
+      "GRANT_EXCEPTION",
+      toDecision({ source: "gateway_block", agentId: 2, draft: GRANT_DRAFT, blockedTool: BLOCKED_TOOL }, CTX),
+    ],
+    [
+      "ESCALATE_TO_HUMAN",
+      toDecision(
+        {
+          source: "gateway_block",
+          agentId: 2,
+          draft: escalationDraft(BLOCKED_TOOL, GRANT_DRAFT),
+          blockedTool: BLOCKED_TOOL,
+        },
+        CTX,
+      ),
+    ],
+    [
+      "CHOOSE_PATH over a 2000 character target",
+      toDecision(
+        {
+          source: "objection",
+          agentId: 2,
+          step: STEP,
+          alternative: { class: "write_repo", target: "t".repeat(2000), args: {} },
+        },
+        { ...CTX, rationale: "r".repeat(5000) },
+      ),
+    ],
+  ];
+
+  for (const [name, decision] of cases) {
+    it(`holds for ${name}`, () => {
+      expect(decision.action).toBeDefined();
+      expect(payloadHashForAction(decision.action as never)).toBe(decision.payloadHash);
+    });
+  }
+
+  it("carries the exact charter text its payload hash covers for an amendment", () => {
+    const decision = toDecision(
+      { source: "gateway_block", agentId: 2, draft: AMEND_DRAFT, blockedTool: BLOCKED_TOOL },
+      CTX,
+    );
+    expect(payloadHashForCharter(canonicalize(decision.newCharter as never))).toBe(decision.payloadHash);
   });
 });
 

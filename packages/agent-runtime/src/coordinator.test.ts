@@ -124,4 +124,35 @@ describe("StepBoard alternatives", () => {
     b.markAdopted(("0x" + "cc".repeat(32)) as Hex);
     expect(b.pendingAlternatives()).toHaveLength(1);
   });
+
+  it("drops an alternative whose charter version has been superseded", () => {
+    const b = withAlternative();
+    b.dropSupersededAlternatives(1);
+    expect(b.pendingAlternatives()).toHaveLength(1);
+    b.dropSupersededAlternatives(2);
+    expect(b.pendingAlternatives()).toHaveLength(0);
+  });
+});
+
+describe("StepBoard memory bounds", () => {
+  it("keeps only the most recent 500 steps, and still refuses a stale seq", () => {
+    const b = board();
+    for (let seq = 1; seq <= 600; seq++) {
+      b.publish({ agentId: 1, tool: READ, why: `step ${seq}`, seq });
+    }
+    const history = b.history();
+    expect(history).toHaveLength(500);
+    expect(history[0]?.seq).toBe(101);
+    expect(b.latest()?.seq).toBe(600);
+    expect(() => b.publish({ agentId: 1, tool: READ, why: "stale", seq: 600 })).toThrow(/seq/);
+  });
+
+  it("still resolves a waiter after trimming, using the sequence number it was given", async () => {
+    const b = board();
+    for (let seq = 1; seq <= 600; seq++) {
+      b.publish({ agentId: 1, tool: READ, why: `step ${seq}`, seq });
+    }
+    const step = await b.waitForNext(599, new AbortController().signal);
+    expect(step?.seq).toBe(600);
+  });
 });
