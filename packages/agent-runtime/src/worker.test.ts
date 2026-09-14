@@ -326,6 +326,34 @@ describe("Worker: casting branches", () => {
   });
 });
 
+describe("Worker: configured agent id against the registry (final review I4)", () => {
+  it("fails the job when the registry registers this signer's address under a different agent id", async () => {
+    // Two workers' env files with their ids swapped: both addresses are registered, so nothing
+    // used to fail. ScriptedPolicy is keyed by member.agentId, so each worker applied the other's
+    // directive and every vote, job record and report line named the wrong agent.
+    const swapped: MemberRow[] = [
+      { agentId: PROPOSER_AGENT_ID, account: AGENT_ACCOUNT, manifest: agentManifest("planner") },
+      { agentId: AGENT_ID, account: PROPOSER_ACCOUNT, manifest: agentManifest("engineer") },
+    ];
+    const { worker, signer } = makeWorker({
+      script: { [AGENT_ID]: "FOR" },
+      client: makeFakeClient({ members: swapped }),
+    });
+    const job = await worker.handleProposal(PROPOSAL_ID);
+
+    expect(job.state).toBe("worker_failed");
+    expect(job.lastError).toContain(`registered as agent ${PROPOSER_AGENT_ID}`);
+    expect(job.txHash).toBeNull();
+    expect(signer.castVoteWithReason).not.toHaveBeenCalled();
+  });
+
+  it("proceeds when the configured agent id is the one the registry holds for this address", async () => {
+    const { worker } = makeWorker({ script: { [AGENT_ID]: "FOR" } });
+    const job = await worker.handleProposal(PROPOSAL_ID);
+    expect(job.state).toBe("voted");
+  });
+});
+
 describe("Worker: verification mismatch (spec 8.2 / 10.4 to 10.8)", () => {
   it("refuses to cast FOR when verification fails, recording refused_for_on_mismatch", async () => {
     // Proposer is not among the registered members the fake client returns, so

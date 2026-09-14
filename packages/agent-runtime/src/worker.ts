@@ -184,6 +184,17 @@ export class Worker {
     if (!selfMember) {
       throw new Error(`agent ${this.cfg.agentId} (${this.cfg.signer.address}) is not a registered fleet member`);
     }
+    // Final review I4: the registry is the authority for which agent id an address is (spec 8,
+    // "Fleet and agent manifests: Registry storage and events"). `FLEET_AGENT_ID` and
+    // `FLEET_AGENT_KEY` are parsed independently and never cross-checked, so two workers whose
+    // env files had their ids swapped would both find a valid registry entry, each apply the
+    // other's policy, and attribute every vote, job record and report line to the wrong agent,
+    // silently, while the chain data (keyed by address) said otherwise.
+    if (selfMember.agentId !== this.cfg.agentId) {
+      throw new Error(
+        `configured agent id ${this.cfg.agentId} does not match the registry: ${this.cfg.signer.address} is registered as agent ${selfMember.agentId}`,
+      );
+    }
 
     let decision: DecisionV1 | null = null;
     try {
