@@ -231,6 +231,98 @@ contract AdmissionTest is FleetFixture {
         ledger.recordDecision(taskId, 0, 1, keccak256("p"), "", "s");
     }
 
+    // ---------------------------------------------------------------------
+    // Signed votes: the same rules apply to a relayed EIP-712 ballot as to a direct call
+    // ---------------------------------------------------------------------
+
+    function test_MemberSignedBallotWithReasonIsCountedAndCannotBeReplayed() public {
+        (uint256 pid,,,) = proposeDecision(0, data, description);
+        warpToActive(pid);
+        string memory reason = "FOR. Signed by the agent key and relayed by the keeper.";
+        bytes memory sig = _signExtendedBallot(memberKeys[1], members[1], pid, FOR, reason);
+
+        // Anyone may relay it; the vote is the signer's.
+        vm.prank(keeper);
+        governor.castVoteWithReasonAndParamsBySig(pid, FOR, members[1], reason, "", sig);
+        (, uint256 forVotes,) = governor.proposalVotes(pid);
+        assertEq(forVotes, 1e18);
+        assertTrue(governor.hasVoted(pid, members[1]));
+
+        // Replay: castVoteWithReasonAndParamsBySig consumed the voter's nonce, so the digest the
+        // same signature covers no longer matches and the signature fails to validate. The fork
+        // raises GovernorInvalidSignature here rather than reaching GovernorAlreadyCastVote.
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(IGovernor.GovernorInvalidSignature.selector, members[1]));
+        governor.castVoteWithReasonAndParamsBySig(pid, FOR, members[1], reason, "", sig);
+    }
+
+    function test_OutsiderSignedBallotRejectedByTheHook() public {
+        (uint256 pid,,,) = proposeDecision(0, data, description);
+        warpToActive(pid);
+        (address impostor, uint256 key) = makeAddrAndKey("signing impostor");
+        string memory reason = "FOR. I hold a key but not a seat.";
+        bytes memory sig = _signExtendedBallot(key, impostor, pid, FOR, reason);
+
+        // The signature is valid; membership is what fails, inside FleetHook.beforeVote.
+        vm.prank(keeper);
+        vm.expectRevert(Hooks.HookCallFailed.selector);
+        governor.castVoteWithReasonAndParamsBySig(pid, FOR, impostor, reason, "", sig);
+        (, uint256 forVotes,) = governor.proposalVotes(pid);
+        assertEq(forVotes, 0);
+    }
+
+    function test_MemberSignedBallotWithoutReasonRejectedByTheHook() public {
+        (uint256 pid,,,) = proposeDecision(0, data, description);
+        warpToActive(pid);
+        bytes32 structHash = keccak256(
+            abi.encode(governor.BALLOT_TYPEHASH(), pid, FOR, members[1], governor.nonces(members[1]))
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(memberKeys[1], _governorDigest(structHash));
+
+        // castVoteBySig carries no reason, and the hook requires one on every ballot.
+        vm.prank(keeper);
+        vm.expectRevert(Hooks.HookCallFailed.selector);
+        governor.castVoteBySig(pid, FOR, members[1], abi.encodePacked(r, s, v));
+        assertFalse(governor.hasVoted(pid, members[1]));
+    }
+
+    /// @dev Mirrors the pinned Governor's EXTENDED_BALLOT_TYPEHASH struct, with empty `params`
+    ///      because FleetHook.beforeVote rejects any non-empty params.
+    function _signExtendedBallot(uint256 key, address voter, uint256 pid, uint8 support, string memory reason)
+        internal
+        view
+        returns (bytes memory)
+    {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                governor.EXTENDED_BALLOT_TYPEHASH(),
+                pid,
+                support,
+                voter,
+                governor.nonces(voter),
+                keccak256(bytes(reason)),
+                keccak256("")
+            )
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, _governorDigest(structHash));
+        return abi.encodePacked(r, s, v);
+    }
+
+    /// @dev Same ERC-5267 domain helper shape as FleetVotes.t.sol, read from the governor.
+    function _governorDigest(bytes32 structHash) internal view returns (bytes32) {
+        (, string memory name, string memory version, uint256 chainId, address verifying,,) = governor.eip712Domain();
+        bytes32 domain = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes(name)),
+                keccak256(bytes(version)),
+                chainId,
+                verifying
+            )
+        );
+        return keccak256(abi.encodePacked("\x19\x01", domain, structHash));
+    }
+
     function test_GuardianCannotScheduleOnTimelock() public {
         address[] memory t = new address[](1);
         uint256[] memory v = new uint256[](1);

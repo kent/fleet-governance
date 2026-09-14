@@ -22,7 +22,7 @@ contract GuardianTest is FleetFixture {
         ledger.pause();
 
         // guardian cancels the timelock operation directly (CANCELLER_ROLE)
-        bytes32 opId = timelock.hashOperationBatch(t, v, c, bytes32(0), _timelockSalt(description));
+        bytes32 opId = timelock.hashOperationBatch(t, v, c, bytes32(0), timelockSalt(description));
         assertTrue(timelock.isOperationPending(opId));
         vm.prank(guardian);
         timelock.cancel(opId);
@@ -62,10 +62,5 @@ contract GuardianTest is FleetFixture {
         vm.prank(guardian);
         vm.expectRevert(Hooks.HookCallFailed.selector);
         governor.propose(t, v, c, string.concat("guardian", DESC_SUFFIX));
-    }
-
-    /// @dev Mirrors AgoraGovernor._timelockSalt: bytes20(address(governor)) ^ descriptionHash.
-    function _timelockSalt(string memory description) internal view returns (bytes32) {
-        return bytes20(address(governor)) ^ descHash(description);
     }
 }

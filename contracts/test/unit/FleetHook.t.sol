@@ -151,6 +151,49 @@ contract FleetHookTest is Test {
         hook.decodeAction(abi.encodePacked(TaskLedger.recordDecision.selector, bytes32(0), bytes32(0), bytes32(0)));
     }
 
+    /// @notice The re-encoding guard's real job: calldata that `abi.decode` accepts, that decodes to
+    ///         exactly the intended arguments, and that is still not what `abi.encodeCall` would have
+    ///         produced. The trailing-byte case above is caught by length alone; this one is not.
+    /// @dev The ABI lets a dynamic type's offset point anywhere in the tail, so a junk word can be
+    ///      parked in front of each string and the offsets bumped past it. The decoder follows the
+    ///      offsets and yields the same six fields; only re-encoding and comparing the bytes notices
+    ///      that 356 bytes arrived where the canonical encoding is 292. Without the guard, two
+    ///      different calldata blobs would map to one `actionId`, so what a member voted on and what
+    ///      the timelock later executed could differ while the hook saw them as the same action.
+    function test_DecodeActionRejectsDecodableNonCanonicalOffsets() public {
+        bytes memory args = abi.encodePacked(
+            uint256(7), // taskId
+            uint256(1), // kind
+            uint256(1), // expectedVersion
+            keccak256("p"), // payloadHash
+            uint256(0xE0), // offset of newCharterText; canonical is 0xC0
+            uint256(0x120), // offset of summary; canonical is 0xE0
+            bytes32(uint256(0xdead)), // junk word the first offset steps over
+            uint256(0), // newCharterText: empty
+            bytes32(uint256(0xbeef)), // junk word the second offset steps over
+            uint256(7), // summary length
+            bytes32("summary") // summary data, right-padded
+        );
+        bytes memory payload = bytes.concat(TaskLedger.recordDecision.selector, args);
+        bytes memory canonical =
+            abi.encodeCall(TaskLedger.recordDecision, (7, 1, 1, keccak256("p"), "", "summary"));
+        assertEq(payload.length, 356);
+        assertEq(canonical.length, 292);
+
+        // It really does decode, to exactly the fields the canonical encoding carries.
+        (uint256 taskId, uint8 kind, uint32 version, bytes32 payloadHash, string memory text, string memory summary) =
+            abi.decode(args, (uint256, uint8, uint32, bytes32, string, string));
+        assertEq(taskId, 7);
+        assertEq(kind, 1);
+        assertEq(version, 1);
+        assertEq(payloadHash, keccak256("p"));
+        assertEq(bytes(text).length, 0);
+        assertEq(summary, "summary");
+
+        vm.expectRevert(FleetHook.MalformedCalldata.selector);
+        hook.decodeAction(payload);
+    }
+
     function test_BeforeVoteSucceededUsesForOnlyRule() public {
         // Drive through the governor so proposalVotes exist: open task, propose, vote, check state.
         vm.prank(operator);

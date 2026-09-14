@@ -148,6 +148,7 @@ Trust boundary rules:
 - A model output is a recommendation. Deterministic code turns it into a transaction. The signer checks the decoded transaction before signing.
 - The tool gateway is offchain policy. It fails closed when it cannot read the chain. It is the v0.1 enforcement point and the spec labels it as such everywhere it appears.
 - The guardian can pause the ledger and cancel queued operations. It cannot propose, vote, execute, or write a decision.
+- The operator opens and completes tasks. Completing a task retires every proposal on it, including queued ones; that is a lifecycle power, not a decision power, and it is visible onchain. The operator cannot propose, vote, or write a decision either.
 - Agora Next, DAO Node, and CPLS are read-only consumers. Their failure delays visibility, not authority.
 
 Six production-shaped contracts: `FleetRegistry`, `FleetVotes`, `FleetHook`, the unmodified `AgoraGovernor`, `TimelockController`, `TaskLedger`. Four of them are ours; the governor and timelock are the pinned upstream bytecode. No payment token is needed in v0.1.

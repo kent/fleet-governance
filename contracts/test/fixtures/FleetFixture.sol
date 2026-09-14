@@ -144,4 +144,9 @@ abstract contract FleetFixture is Test {
     function stateOf(uint256 pid) internal view returns (IGovernor.ProposalState) {
         return governor.state(pid);
     }
+
+    /// @dev Mirrors AgoraGovernor._timelockSalt: bytes20(address(governor)) ^ descriptionHash.
+    function timelockSalt(string memory description) internal view returns (bytes32) {
+        return bytes20(address(governor)) ^ descHash(description);
+    }
 }
