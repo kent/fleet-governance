@@ -289,3 +289,63 @@ with empty return data instead of `FleetHook.MalformedCalldata()`; deeper struct
 that still passes this length check, such as internally inconsistent dynamic-type offsets in an
 otherwise long-enough tail, still reverts through the ABI decoder without a custom error, but
 either path rejects the proposal (`beforePropose` never returns successfully either way).
+
+## Task 9: `HookMiner.find`'s unfreed memory accumulates across sequential internal calls
+
+`contracts/test/integration/BallotProfiles.t.sol`'s `test_EffectiveYesCountForOtherFleetSizes`
+calls `_checkFleet` three times, once per fleet size (3, 7, 10), and each call deploys a fresh
+fleet through `FleetDeployer.deploy`, which calls `HookMiner.find` to mine a CREATE2 salt for
+`FleetHook`. `HookMiner.find` loops up to `MAX_ITERATIONS` (500,000) calling
+`computeAddress`, which does `abi.encodePacked(bytes1(0xff), deployer, salt, initCodeHash)` on
+every iteration. Solidity's memory allocator is a simple bump allocator: it never frees the
+scratch space a loop iteration's `abi.encodePacked` used, so memory grows by roughly one word
+per iteration for as long as the loop runs, and EVM memory-expansion cost grows quadratically
+in the number of words touched.
+
+Written exactly as the brief's Step 1 gives it, with `_checkFleet` `internal` and all three
+calls inside one `function ... public` test body, this is one EVM call frame for the whole
+test, so the memory each mining round leaves behind is never reclaimed before the next round
+starts. `_checkFleet(3, 2)` and `_checkFleet(7, 5)` passed, but the third round,
+`_checkFleet(10, 6)`, failed deterministically (same result on a rerun with no code changes):
+
+```
+[FAIL: EvmError: MemoryOOG] test_EffectiveYesCountForOtherFleetSizes() (gas: 1073720760)
+```
+
+with `-vvvv` showing the trace stop right after the fleet's `TaskLedger` deploys, inside
+`FleetDeployer.deploy`'s call to `HookMiner.find` (a `view` library call, inlined into the same
+frame, so it has no separate trace entry of its own):
+
+```
+├─ [1325490] → new TaskLedger@0xe8dc788818033232EF9772CB2e6622F1Ec8bc840
+│   └─ ← [Return] 6616 bytes of code
+└─ ← [MemoryOOG] EvmError: MemoryOOG
+```
+
+Isolating `_checkFleet(10, 6)` alone in the test body (no prior `_checkFleet` calls in the same
+frame) passed cleanly at 63,107,152 gas, confirming the failure is the accumulation across
+calls sharing one frame, not anything about `n = 10` itself.
+
+**Fix:** changed `_checkFleet` from `internal` to `external` and call it as
+`this._checkFleet(...)` from the test body. A `this.` call is a real `CALL`, which starts a new
+EVM call frame with fresh, empty memory, so each fleet size's mining round no longer inherits
+memory left behind by the previous one. No production contract changed;
+`contracts/src/deploy/HookMiner.sol` and `contracts/src/deploy/FleetDeployer.sol` are unmodified.
+After the fix, both `BallotProfilesTest` tests pass, still as exactly two `test_`-prefixed
+functions:
+
+```
+Ran 2 tests for test/integration/BallotProfiles.t.sol:BallotProfilesTest
+[PASS] test_AllBallotProfilesMatchForOnlyRule() (gas: 631451888)
+[PASS] test_EffectiveYesCountForOtherFleetSizes() (gas: 601208324)
+Suite result: ok. 2 passed; 0 failed; 0 skipped; finished in 354.29ms (431.46ms CPU time)
+```
+
+**Handoff:** any future test (or script) that calls `FleetDeployer.deploy` more than once or
+twice inside a single call frame (a loop, or several sequential calls in one function body, as
+here) risks the same cumulative `MemoryOOG`, purely from how many mining rounds have already run
+in that frame; the fix is the same, put each `FleetDeployer.deploy` call (by way of `HookMiner.
+find`) behind a real external call boundary so its mining memory does not survive past that call.
+A structural fix at the source would be to change `HookMiner.computeAddress` to write into a
+fixed, reused scratch buffer instead of a fresh `abi.encodePacked` each iteration, which is out
+of this task's scope (`contracts/src/deploy/HookMiner.sol` was not touched).
