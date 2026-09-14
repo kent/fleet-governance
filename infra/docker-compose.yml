@@ -42,10 +42,21 @@ services:
       CHAIN_ID: ${CHAIN_ID:-31337}
       TOKEN_ADDRESS: ${TOKEN_ADDRESS}
       GOVERNOR_ADDRESS: ${GOVERNOR_ADDRESS}
-      DAO_NODE_START_BLOCK: ${DAO_NODE_START_BLOCK}
+      # Compose renders an unset var as an empty string rather than
+      # omitting it; the shell default here just makes that explicit.
+      # Patch 0003 treats blank/whitespace as unset too, on top of this.
+      DAO_NODE_START_BLOCK: ${DAO_NODE_START_BLOCK:-}
       DAO_NODE_ARCHIVE_NODE_HTTP: http://anvil:8545
       DAO_NODE_REALTIME_NODE_WS: ws://anvil:8545
       ABI_DIR: /abis
+      # Upstream defaults (2 realtime WS clients + 1 polling client) race
+      # against anvil's fast, low-latency local chain and intermittently
+      # hang the event loop on cold boot (see docs/compatibility-notes.md).
+      # One realtime client is enough to track new blocks locally; the
+      # polling client is only a backup for missed websocket events, so
+      # it's safe to disable for this local stack.
+      NUM_REALTIME_CLIENTS: "1"
+      NUM_POLLING_CLIENTS: "0"
     volumes:
       - ./dao-node/abis:/abis:ro
     depends_on:
@@ -58,6 +69,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 30s
 
 volumes:
   postgres-data:

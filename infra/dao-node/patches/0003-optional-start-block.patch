@@ -7,11 +7,17 @@
 # deployment block instead of scanning for a block older than 7 days
 # (which a brand-new anvil chain never has).
 #
+# Compose renders an unset ${DAO_NODE_START_BLOCK} as an empty string
+# rather than omitting the env var, so this treats blank/whitespace-only
+# as unset (not just "unset entirely"), and falls through to the block
+# search on a non-integer value instead of raising ValueError and
+# crashing the archive client.
+#
 diff --git a/app/clients_httpjson.py b/app/clients_httpjson.py
-index ae9f2cf..a734099 100644
+index ae9f2cf..a734d81 100644
 --- a/app/clients_httpjson.py
 +++ b/app/clients_httpjson.py
-@@ -247,7 +247,15 @@ class JsonRpcHistHttpClient(SubscriptionPlannerMixin):
+@@ -247,7 +247,22 @@ class JsonRpcHistHttpClient(SubscriptionPlannerMixin):
  
          if self.fallback_block:
              return self.fallback_block
@@ -20,10 +26,17 @@ index ae9f2cf..a734099 100644
 +        # The Runner sets DAO_NODE_START_BLOCK from the Part 1 deployment
 +        # manifest's deploymentBlock, so a fresh local chain (e.g. anvil)
 +        # doesn't need a multi-day block search to find a starting point.
-+        start_block = os.getenv('DAO_NODE_START_BLOCK', None)
-+        if start_block is not None:
-+            self.fallback_block = int(start_block)
-+            return self.fallback_block
++        # Compose renders an unset env var as an empty string rather than
++        # omitting it, so treat blank/whitespace-only as unset too, and
++        # tolerate a garbage value by falling through to the block search
++        # instead of crashing the archive client.
++        start_block = os.getenv('DAO_NODE_START_BLOCK', '').strip()
++        if start_block:
++            try:
++                self.fallback_block = int(start_block)
++                return self.fallback_block
++            except ValueError:
++                logr.error(f"Ignoring invalid DAO_NODE_START_BLOCK={start_block!r}; falling back to block search.")
 +
          w3 = self.connect()
              

@@ -154,7 +154,7 @@ then gone). Unrelated to dao-node; noted so a future task agent hitting a
 transient `forge build` failure in this shared directory knows to retry
 rather than assume the governor contracts are broken.
 
-### `JsonRpcRtHttpClient.read()` (the polling client) blocks the event loop; anvil + full default client mix can hang boot
+### `JsonRpcRtHttpClient.read()` (the polling client) blocks the event loop; mitigated by disabling it in compose
 
 `app/clients_httpjson.py` `JsonRpcRtHttpClient.read()` (line ~506) is
 declared `async def` but its body (`w3.eth.block_number`,
@@ -164,49 +164,104 @@ under the hood) with no `await` before the first `yield`. This is
 pre-existing upstream behaviour, not something any of our four patches
 touch.
 
-With the full default client mix (`NUM_REALTIME_CLIENTS=2`,
-`NUM_POLLING_CLIENTS=1`, none of which we override in compose), we saw
-the container hang completely on cold start twice out of five boots in
-this session: TCP connect succeeded but every HTTP request timed out
-forever, including from `docker exec` inside the container itself, and
-the healthcheck never turned healthy. Isolation tests (varying
-`NUM_REALTIME_CLIENTS`/`NUM_POLLING_CLIENTS` on ad hoc `docker run`
-containers against the same anvil) showed the WS realtime client alone
-and the polling client alone (whose first real poll only fires after
-`POLLING_WAIT_CYCLE`, default 120s) each boot and serve fine on their
-own; only the full default combination reproduced the hang, and not on
-every boot. `docker compose restart dao-node` (or `up -d --build` again)
-cleared it every time it was observed, and the resulting image, once
-healthy, ran cleanly under repeated `/v1/progress` polling. We believe
-this is a race between the two realtime WS subscriptions and the
-synchronous archive/polling reads against anvil's very low-latency,
-fast-block-time (`--block-time 2`) local chain, a condition upstream
-almost certainly never hits against a real mainnet/L2 RPC endpoint.
+With the full upstream default client mix (`NUM_REALTIME_CLIENTS=2`,
+`NUM_POLLING_CLIENTS=1`), we saw the container hang completely on cold
+start on 2 of 5 boots in the first verification pass: TCP connect
+succeeded but every HTTP request timed out forever, including from
+`docker exec` inside the container itself, and the healthcheck never
+turned healthy. Isolation tests (varying `NUM_REALTIME_CLIENTS`/
+`NUM_POLLING_CLIENTS` on ad hoc `docker run` containers against the same
+anvil) showed the WS realtime client alone and the polling client alone
+(whose first real poll only fires after `POLLING_WAIT_CYCLE`, default
+120s) each boot and serve fine on their own; only the full default
+combination reproduced the hang, and not on every boot. We believe this
+is a race between the two realtime WS subscriptions and the synchronous
+archive/polling reads against anvil's very low-latency, fast-block-time
+(`--block-time 2`) local chain, a condition upstream almost certainly
+never hits against a real mainnet/L2 RPC endpoint.
 
-We did not patch this: it's outside the three patches this task was
-scoped to, the code it lives in is untouched by any of them, and a
-proper fix (moving the polling client's web3 calls to
-`loop.run_in_executor` or an async provider) is a real behavioural
-change to upstream dao-node that deserves its own review rather than
-being folded into this task silently. If Task 6 (or CI) sees
-`dao-node` stuck at `health: starting` past a few healthcheck retries,
-`docker compose restart dao-node` is the known workaround; consider
-filing this upstream or, if it recurs often enough to block Task 6,
-setting `NUM_POLLING_CLIENTS=0` in `infra/.env` for local/anvil use
-(the polling client is described in its own docstring as "a backup to
-the web-sockets... if everything is working, none of the events caught
-in polling would ever be needed").
+**Mitigation shipped (configuration, not a source patch):**
+`infra/docker-compose.yml`'s `dao-node` service now sets
+`NUM_REALTIME_CLIENTS: "1"` and `NUM_POLLING_CLIENTS: "0"`, and its
+healthcheck gained `start_period: 30s`. One realtime websocket client is
+enough to track new blocks on a local chain; the polling client is
+upstream's own backup for missed websocket events (its docstring: "if
+everything is working, none of the events caught in polling would ever
+be needed"), so disabling it removes the only other client that was
+ever observed hanging the loop, at no functional loss for this stack.
+We did not patch `JsonRpcRtHttpClient.read()` itself (e.g. wrapping it in
+`asyncio.to_thread`): the controller ruling was to mitigate by
+configuration first, and five consecutive cold boots with this mitigation
+all came up healthy (see results below), so a fifth patch was not needed.
+If a source-level fix is wanted later regardless (e.g. because some other
+deployment needs `NUM_POLLING_CLIENTS>0`), the fix is straightforward:
+move the blocking `web3.py` calls in `read()` onto a thread with
+`asyncio.to_thread` so they don't block the Sanic event loop.
 
-### Patch 0003 (`DAO_NODE_START_BLOCK`) verified with a positive and negative control
+Five consecutive cold boots with the mitigation in place
+(`docker compose down dao-node && docker compose up -d dao-node`,
+polling `docker inspect --format='{{.State.Health.Status}}'` up to a 90s
+timeout per run):
 
-With `DAO_NODE_START_BLOCK=0` set: log shows
+| Run | Result    | Time to healthy |
+|-----|-----------|------------------|
+| 1   | healthy   | 7s               |
+| 2   | healthy   | 7s               |
+| 3   | healthy   | 7s               |
+| 4   | healthy   | 7s               |
+| 5   | healthy   | 7s               |
+
+All five healthy, consistent ~7s each. Log for each boot showed exactly
+one `Realtime client N started` line and no `Polling client` line at all,
+confirming the env vars took effect.
+
+If `dao-node` is ever still seen stuck at `health: starting` past its
+healthcheck retries despite this, `docker compose restart dao-node`
+remains a safe workaround while investigating further.
+
+### Patch 0003 (`DAO_NODE_START_BLOCK`) verified through Compose itself, both directions, plus the empty-string bug fix
+
+**Bug found in review and fixed:** the first version of this patch did
+`start_block = os.getenv('DAO_NODE_START_BLOCK', None); if start_block is
+not None: self.fallback_block = int(start_block)`. Compose renders an
+*unset* `${DAO_NODE_START_BLOCK}` as an empty string rather than omitting
+the env var entirely, so `os.getenv(...)` returned `''` (not `None`),
+`'' is not None` was `True`, and `int('')` raised `ValueError`, crashing
+the archive client instead of falling through to the block search. Fixed
+to `start_block = os.getenv('DAO_NODE_START_BLOCK', '').strip(); if
+start_block: try: ... except ValueError: log and fall through`, so blank/
+whitespace is treated as unset and a garbage value is logged and ignored
+rather than crashing. `infra/docker-compose.yml` also now spells out
+`DAO_NODE_START_BLOCK: ${DAO_NODE_START_BLOCK:-}` so the rendered value
+is explicit rather than implicit.
+
+Verified via `docker compose config` (renders the `dao-node.environment`
+block; ran once with `DAO_NODE_START_BLOCK` absent from `infra/.env`,
+once with it set to `0`):
+
+```
+# infra/.env has no DAO_NODE_START_BLOCK line
+$ docker compose config | grep DAO_NODE_START_BLOCK
+      DAO_NODE_START_BLOCK: ""
+
+# infra/.env has DAO_NODE_START_BLOCK=0
+$ docker compose config | grep DAO_NODE_START_BLOCK
+      DAO_NODE_START_BLOCK: "0"
+```
+
+Then verified with real boots through Compose (not just `docker run`):
+with the var absent (rendering `""`) the container did **not** crash and
+its log showed `Searching for a block ~7 days ago from block 5` then
+`No block older than 7 days found.` before reading from block 0 (the old,
+correct fallback behaviour, now reachable again since `int('')` no longer
+raises); with `DAO_NODE_START_BLOCK=0` the log showed
 `Reading from client #1 of type JsonRpcHistHttpClient from block 0`
-immediately, no block-search log lines. With the env var unset: log
-shows `Searching for a block ~7 days ago from block 203` followed by
-`No block older than 7 days found.` (anvil's chain is too young to have
-any block older than 7 days) before falling back to block 0 anyway, just
-after a wasted full-chain scan. Confirms the patch is both effective and
-correctly gated on the env var being set.
+immediately, no search. Also spot-checked two more cases directly against
+the built image: a whitespace-only value (`"   "`) behaves exactly like
+unset, and a non-numeric value (`"not-a-number"`) logs
+`Ignoring invalid DAO_NODE_START_BLOCK='not-a-number'; falling back to
+block search.` and then proceeds with the normal 7-day search, rather
+than crashing.
 
 ### Patch 0002 (marker tolerance) verified with a temporary, non-shipped-differently unit test, then made permanent as patch 0004
 
