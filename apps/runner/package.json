@@ -23,6 +23,7 @@
     "@fleet/sdk": "workspace:*",
     "commander": "15.0.0",
     "dotenv": "17.4.2",
+    "marked": "18.0.13",
     "next": "16.3.5",
     "pg": "8.23.0",
     "pino": "10.3.1",

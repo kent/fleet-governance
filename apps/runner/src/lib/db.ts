@@ -20,6 +20,8 @@ export type UiRunRow = {
 
 export interface UiRunStore {
   insert(row: UiRunRow): Promise<void>;
+  /** Every row, newest first (`GET /api/runs`, task 6 controller notes). */
+  list(): Promise<UiRunRow[]>;
 }
 
 /** JSON-file `UiRunStore`: one `ui-runs.json` array under `experiments/reports/`. Used whenever
@@ -39,6 +41,12 @@ export class JsonFileUiRunStore implements UiRunStore {
       : [];
     rows.push(row);
     writeFileSync(this.filePath, `${JSON.stringify(rows, null, 2)}\n`, "utf8");
+  }
+
+  async list(): Promise<UiRunRow[]> {
+    if (!existsSync(this.filePath)) return [];
+    const rows: UiRunRow[] = JSON.parse(readFileSync(this.filePath, "utf8")) as UiRunRow[];
+    return [...rows].reverse();
   }
 }
 
@@ -79,6 +87,27 @@ export class PgUiRunStore implements UiRunStore {
          read_side = EXCLUDED.read_side`,
       [row.runId, row.experimentPath, row.deployConfigPath, row.logPath, row.pid, row.readSide],
     );
+  }
+
+  async list(): Promise<UiRunRow[]> {
+    const res = await this.pool.query<{
+      run_id: string;
+      experiment_path: string;
+      deploy_config_path: string;
+      log_path: string;
+      pid: number;
+      read_side: boolean;
+      created_at: Date;
+    }>("SELECT run_id, experiment_path, deploy_config_path, log_path, pid, read_side, created_at FROM ui_runs ORDER BY created_at DESC");
+    return res.rows.map((row) => ({
+      runId: row.run_id,
+      experimentPath: row.experiment_path,
+      deployConfigPath: row.deploy_config_path,
+      logPath: row.log_path,
+      pid: row.pid,
+      readSide: row.read_side,
+      createdAt: row.created_at.toISOString(),
+    }));
   }
 
   async close(): Promise<void> {

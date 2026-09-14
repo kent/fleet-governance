@@ -1,3 +1,7 @@
+import path from "node:path";
+import { openUiRunStore } from "../../../lib/db.js";
+import { loadRunnerEnv } from "../../../lib/env.js";
+import { repoRoot } from "../../../lib/paths.js";
 import { handleCreateRun } from "../../../lib/runs-handler.js";
 
 /**
@@ -15,4 +19,13 @@ export async function POST(request: Request): Promise<Response> {
   }
   const result = await handleCreateRun(body);
   return Response.json(result.body, { status: result.status });
+}
+
+/** `GET /api/runs`: every run the UI has started, newest first (task 6 controller notes), for the
+ *  home page's runs list. */
+export async function GET(): Promise<Response> {
+  loadRunnerEnv();
+  const store = await openUiRunStore({ pgUrl: process.env["RUNNER_PG_URL"], reportsDir: path.join(repoRoot, "experiments", "reports") });
+  const runs = await store.list();
+  return Response.json({ runs });
 }
