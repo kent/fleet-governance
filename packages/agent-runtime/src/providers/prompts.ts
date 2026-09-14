@@ -35,6 +35,22 @@ export function templateVariableNames(template: string): string[] {
   return names;
 }
 
+const UNTRUSTED_CLOSE_PATTERN = /<\/untrusted/gi;
+
+/**
+ * Wraps `text` (content that originated from another agent, the task repository, or a tool
+ * result, never from our own code) in a delimited section that marks it as inert data, per the
+ * constitution's data-not-instructions rule (`constitution.md`). Any literal `</untrusted`
+ * sequence already inside `text` is neutralised first (case-insensitively, since a model reading
+ * the rendered prompt is not a strict XML parser and would just as easily be fooled by
+ * `</UNTRUSTED>`), so proposer-controlled content can never forge the section's own closing tag
+ * and "escape" into a position that reads as trusted prompt structure.
+ */
+export function untrusted(name: string, text: string): string {
+  const neutralized = text.replace(UNTRUSTED_CLOSE_PATTERN, "</ untrusted");
+  return `<untrusted name="${name}">\n${neutralized}\n</untrusted>`;
+}
+
 const fileCache = new Map<string, string>();
 
 function loadPromptFile(name: string): string {
@@ -109,9 +125,11 @@ export function buildEvaluateProposalPrompt(input: AnchoredProposal): { system: 
     task: taskForPrompt(input.task),
     charterVersion: String(input.task.charterVersion),
     charter: charterForPrompt(input.charter),
-    proposalDescription: input.proposal.description,
+    proposalDescription: untrusted("proposalDescription", input.proposal.description),
+    // The decision decoded from the description is proposer text too (its summary and rationale
+    // especially), so it gets the same wrapping, not just the raw description.
     decodedAction: decodedAction
-      ? jsonForPrompt(decodedAction)
+      ? untrusted("decodedAction", jsonForPrompt(decodedAction))
       : "(the proposal description did not decode to a fleet.decision.v1 object)",
     verificationResult: input.verificationOk
       ? "verified: the decision matches the proposal's on-chain calldata and a registered proposer."
@@ -136,7 +154,10 @@ export function buildNextStepPrompt(input: NextStepPromptInput): { system: strin
     task: taskForPrompt(input.task),
     charterVersion: String(input.task.charterVersion),
     charter: charterForPrompt(input.charter),
-    recentActivity: input.recentActivity.length > 0 ? input.recentActivity.join("\n") : "(none yet)",
+    recentActivity:
+      input.recentActivity.length > 0
+        ? untrusted("recentActivity", input.recentActivity.join("\n"))
+        : "(none yet)",
   });
   return { system: buildSystemPrompt(input.memberRole), user };
 }
@@ -155,7 +176,7 @@ export function buildObjectionPrompt(input: ObjectionPromptInput): { system: str
     task: taskForPrompt(input.task),
     charterVersion: String(input.task.charterVersion),
     charter: charterForPrompt(input.charter),
-    proposedStep: jsonForPrompt({ tool: input.proposedStep.tool, why: input.proposedStep.why }),
+    proposedStep: untrusted("proposedStep", jsonForPrompt({ tool: input.proposedStep.tool, why: input.proposedStep.why })),
   });
   return { system: buildSystemPrompt(input.memberRole), user };
 }
@@ -176,9 +197,11 @@ export function buildBlockResponsePrompt(input: BlockResponsePromptInput): { sys
     task: taskForPrompt(input.task),
     charterVersion: String(input.task.charterVersion),
     charter: charterForPrompt(input.charter),
-    blockedTool: toolCallForPrompt(input.blockedTool),
+    blockedTool: untrusted("blockedTool", toolCallForPrompt(input.blockedTool)),
+    // blockReason is the gateway's own generated reason string (spec 10.2), not proposer text,
+    // so it stays trusted and unwrapped.
     blockReason: input.blockReason,
-    draft: jsonForPrompt(input.draft),
+    draft: untrusted("draft", jsonForPrompt(input.draft)),
   });
   return { system: buildSystemPrompt(input.memberRole), user };
 }

@@ -17,8 +17,12 @@ type Schema = z.infer<typeof Schema>;
 
 const FAKE_API_KEY = "sk-or-test-key-must-never-appear-in-any-assertion-failure-either";
 
+// 60_000 matches spec 10.6's production timeout and, just as importantly for these tests, leaves
+// comfortably more than MIN_REMAINING_MS_TO_RETRY after a fast fake-server round trip, so a test
+// that is not specifically about the shared deadline (see the "single deadline across retries"
+// describe block) does not have to think about it.
 function req(overrides: Partial<CompleteRequest<Schema>> = {}): CompleteRequest<Schema> {
-  return { system: "sys", user: "usr", schema: Schema, maxTokens: 500, timeoutMs: 2000, ...overrides };
+  return { system: "sys", user: "usr", schema: Schema, maxTokens: 500, timeoutMs: 60_000, ...overrides };
 }
 
 /** A minimal local HTTP server for faking OpenRouter, the pattern `apps/runner`'s
@@ -310,6 +314,123 @@ describe("OpenRouterProvider (against a local fake HTTP server)", () => {
       expect(result.value).toEqual({ schema: "fleet.vote.v1", support: "FOR", rationale: "ok" });
       expect("confidenceBps" in result.value).toBe(false);
     }
+  });
+
+  it("fix round 1 F2: a .nullable() (non-optional) field stays required, and its null is never stripped", async () => {
+    const NullableSchema = z.object({ a: z.string().nullable() }).strict();
+    const handle = await startFakeServer((request, res) => {
+      jsonResponse(res, 200, {
+        model: "m",
+        choices: [{ message: { content: '{"a":null}' }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      });
+    });
+    activeServer = handle;
+
+    const provider = new OpenRouterProvider({ apiKey: FAKE_API_KEY, baseUrl: handle.url });
+    const result = await provider.complete({ system: "s", user: "u", schema: NullableSchema, maxTokens: 100, timeoutMs: 2000 });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toEqual({ a: null });
+  });
+
+  it("fix round 1 F2: an .optional() (non-nullable) field's returned null is stripped, same as an omitted field", async () => {
+    const OptionalSchema = z.object({ b: z.string().optional() }).strict();
+    const handle = await startFakeServer((request, res) => {
+      jsonResponse(res, 200, {
+        model: "m",
+        choices: [{ message: { content: '{"b":null}' }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      });
+    });
+    activeServer = handle;
+
+    const provider = new OpenRouterProvider({ apiKey: FAKE_API_KEY, baseUrl: handle.url });
+    const result = await provider.complete({ system: "s", user: "u", schema: OptionalSchema, maxTokens: 100, timeoutMs: 2000 });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value).toEqual({});
+      expect("b" in result.value).toBe(false);
+    }
+  });
+
+  it("fix round 1 F2: a .nullable().optional() nested object round-trips both a null and a present object", async () => {
+    const NestedSchema = z.object({ c: z.object({ d: z.string() }).strict().nullable().optional() }).strict();
+    let respondWith: unknown = { c: null };
+    const handle = await startFakeServer((request, res) => {
+      jsonResponse(res, 200, {
+        model: "m",
+        choices: [{ message: { content: JSON.stringify(respondWith) }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      });
+    });
+    activeServer = handle;
+    const provider = new OpenRouterProvider({ apiKey: FAKE_API_KEY, baseUrl: handle.url });
+
+    const nullResult = await provider.complete({ system: "s", user: "u", schema: NestedSchema, maxTokens: 100, timeoutMs: 2000 });
+    expect(nullResult.ok).toBe(true);
+    if (nullResult.ok) expect(nullResult.value).toEqual({ c: null });
+
+    respondWith = { c: { d: "x" } };
+    const presentResult = await provider.complete({ system: "s", user: "u", schema: NestedSchema, maxTokens: 100, timeoutMs: 2000 });
+    expect(presentResult.ok).toBe(true);
+    if (presentResult.ok) expect(presentResult.value).toEqual({ c: { d: "x" } });
+  });
+
+  it("fix round 1 F3: skips the 429 retry when fewer than 5s remain on the shared deadline (never a fresh timeoutMs per attempt)", async () => {
+    let callCount = 0;
+    let currentTime = 1_000_000;
+    const now = () => currentTime;
+    const handle = await startFakeServer((request, res) => {
+      callCount++;
+      if (callCount === 1) {
+        // The first attempt itself "takes" 8s of a 10s budget, leaving 2s: below the 5s floor.
+        // If timeoutMs were a fresh allowance per attempt instead of one shared deadline, this
+        // would still retry (and the total call could run past 10s).
+        currentTime += 8_000;
+        jsonResponse(res, 429, { error: { message: "rate limited" } });
+        return;
+      }
+      jsonResponse(res, 200, {
+        model: "m",
+        choices: [{ message: { content: '{"schema":"fleet.vote.v1","support":"FOR","rationale":"r"}' }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      });
+    });
+    activeServer = handle;
+
+    const provider = new OpenRouterProvider({ apiKey: FAKE_API_KEY, baseUrl: handle.url, retryBackoffMs: 1, now });
+    const result = await provider.complete(req({ timeoutMs: 10_000 }));
+
+    expect(callCount).toBe(1);
+    expect(result).toMatchObject({ ok: false, error: "provider" });
+  });
+
+  it("fix round 1 F3: still retries once when at least 5s remain on the shared deadline", async () => {
+    let callCount = 0;
+    let currentTime = 1_000_000;
+    const now = () => currentTime;
+    const handle = await startFakeServer((request, res) => {
+      callCount++;
+      if (callCount === 1) {
+        currentTime += 1_000; // 9s of the 10s budget left: comfortably above the 5s floor.
+        jsonResponse(res, 429, { error: { message: "rate limited" } });
+        return;
+      }
+      jsonResponse(res, 200, {
+        model: "m",
+        choices: [{ message: { content: '{"schema":"fleet.vote.v1","support":"FOR","rationale":"r"}' }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      });
+    });
+    activeServer = handle;
+
+    const provider = new OpenRouterProvider({ apiKey: FAKE_API_KEY, baseUrl: handle.url, retryBackoffMs: 1, now });
+    const result = await provider.complete(req({ timeoutMs: 10_000 }));
+
+    expect(callCount).toBe(2);
+    expect(result.ok).toBe(true);
   });
 
   it("sends the model, HTTP-Referer, and X-Title headers, and does not send it for other backends by mistake", async () => {

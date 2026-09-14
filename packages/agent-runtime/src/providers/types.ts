@@ -10,7 +10,10 @@ export type Usage = { inputTokens: number; outputTokens: number; model: string }
 
 /** One structured-output request: a system and user prompt, the zod schema the reply must
  *  satisfy, a token budget, and a per-call timeout in milliseconds (spec 10.6: 60 000 in
- *  production, shorter in tests). */
+ *  production, shorter in tests). `timeoutMs` is a single deadline for the whole `complete()`
+ *  call, not a fresh allowance per HTTP attempt: an adapter that retries internally (openrouter's
+ *  one 429/5xx retry) must spend that retry out of the same budget, never grant itself a second
+ *  full `timeoutMs` window, so one `complete()` call can never run past `timeoutMs` in total. */
 export type CompleteRequest<T> = {
   system: string;
   user: string;

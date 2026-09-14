@@ -56,6 +56,11 @@ export type OpenRouterProviderOpts = {
    *  gated live smoke test to record latency, usage, and cost without a second live call; not
    *  otherwise part of the `Provider` contract. */
   onResponseBody?: (body: OpenRouterResponseBody) => void;
+  /** Injectable clock for tests (fix round 1, F3): defaults to `Date.now`. `complete()`'s retry
+   *  budget is computed from this, so a test can move time forward between a 429 response and
+   *  the retry decision without waiting in real time or fighting `AbortSignal.timeout`'s own
+   *  native timer. Not meant to be set in production. */
+  now?: () => number;
 };
 
 function errorMessage(err: unknown): string {
@@ -132,6 +137,42 @@ function makeNullable(node: JsonSchemaNode): void {
   node.anyOf = [original, { type: "null" }];
 }
 
+/** True when a property's own JSON Schema node already accepts `null`, independent of whether
+ *  `requireEveryPropertyEverywhere` would widen it: a plain `type` array containing `"null"`
+ *  (`.nullable()` on a simple type, e.g. `{"type":["string","null"]}`), a bare `{"type":"null"}`,
+ *  or an `anyOf` with a `{"type":"null"}` branch (`.nullable()` on an object/array, which
+ *  `zod-to-json-schema` represents as `anyOf: [<real schema>, {"type":"null"}]`, verified
+ *  empirically). Fix round 1, F2: a property that already accepts null this way has a zod schema
+ *  where `null` is a meaningful value (`.nullable()`), not a stand-in for "omitted", so it must
+ *  never be stripped from a response the way a forced-nullable-for-strict-mode-only field is. */
+function alreadyAcceptsNull(node: JsonSchemaNode): boolean {
+  if (node.type === "null") return true;
+  if (Array.isArray(node.type) && node.type.includes("null")) return true;
+  if (Array.isArray(node.anyOf)) {
+    return node.anyOf.some((b) => isPlainObject(b) && alreadyAcceptsNull(b));
+  }
+  return false;
+}
+
+/**
+ * Tracks, in the same shape as the JSON Schema `requireEveryPropertyEverywhere` builds, exactly
+ * which property keys at each level were forced into `required` (and widened to accept `null`)
+ * only because OpenRouter's strict mode demands it, as opposed to keys that were always required
+ * or were already nullable in the original zod schema. `OpenRouterProvider.complete` walks a
+ * parsed response alongside this tree (`stripForcedNulls`) so only a `null` at one of these exact
+ * forced positions is treated as "field omitted"; a `null` anywhere else (a genuinely `.nullable()`
+ * field, or a value nested somewhere this tree never forced anything) passes through untouched.
+ */
+type ForcedNullableNode = {
+  forcedKeys: Set<string>;
+  properties: Record<string, ForcedNullableNode>;
+  items?: ForcedNullableNode;
+};
+
+function emptyForcedNullableNode(): ForcedNullableNode {
+  return { forcedKeys: new Set(), properties: {} };
+}
+
 /**
  * OpenAI/Meta-style `strict: true` JSON Schema requires `required` to list every key in
  * `properties`, even ones the zod schema marks `.optional()` (verified live against OpenRouter's
@@ -141,78 +182,100 @@ function makeNullable(node: JsonSchemaNode): void {
  * properties. Missing 'confidenceBps'."`; `anthropic/claude-sonnet-5` on the same account
  * tolerated the omission, so this was silent on the model this adapter happened to be verified
  * against first). The documented workaround for this style of strict mode is to require every
- * key and represent true optionality by widening the property's own type to also allow `null`;
- * `OpenRouterProvider.complete` strips any top-level `null` back out of the parsed response
- * before validating against the original zod schema, so a model that dutifully returns `null`
- * for an unset optional field still validates as if the field had been omitted.
+ * key and represent true optionality by widening the property's own type to also allow `null`,
+ * but only when it does not already accept `null` (`alreadyAcceptsNull`): a `.nullable()` field
+ * is left exactly as `zod-to-json-schema` generated it and is still added to `required` (strict
+ * mode's requirement), but is not recorded in `tracking.forcedKeys`, since its own `null` is
+ * meaningful and must survive `stripForcedNulls` on the response side untouched.
+ *
+ * `anyOf`/`oneOf`/`allOf` branches are walked with the *same* tracking node as their parent
+ * (rather than a fresh one) because `zod-to-json-schema` represents `.nullable()` on an
+ * object/array as `anyOf: [<real object/array schema>, {"type":"null"}]`: the real branch's own
+ * `properties` populate this property's tracking node exactly as if there were no `anyOf`
+ * wrapper, and the `{"type":"null"}` branch contributes nothing (it has no `.properties`).
  */
-function requireEveryPropertyEverywhere(node: unknown): void {
+function requireEveryPropertyEverywhere(node: unknown, tracking: ForcedNullableNode): void {
   if (!isPlainObject(node)) return;
 
   if (isPlainObject(node.properties)) {
     const properties = node.properties;
     const originallyRequired = new Set(Array.isArray(node.required) ? (node.required as unknown[]) : []);
     for (const [key, propSchema] of Object.entries(properties)) {
-      if (!originallyRequired.has(key) && isPlainObject(propSchema)) {
+      if (!isPlainObject(propSchema)) continue;
+      if (!originallyRequired.has(key) && !alreadyAcceptsNull(propSchema)) {
+        tracking.forcedKeys.add(key);
         makeNullable(propSchema);
       }
+      const childTracking = tracking.properties[key] ?? emptyForcedNullableNode();
+      tracking.properties[key] = childTracking;
+      requireEveryPropertyEverywhere(propSchema, childTracking);
     }
     node.required = Object.keys(properties);
-    for (const value of Object.values(properties)) {
-      requireEveryPropertyEverywhere(value);
-    }
   }
   if (Array.isArray(node.items)) {
-    for (const item of node.items) requireEveryPropertyEverywhere(item);
+    // Tuple-style items: no schema this adapter sends today uses this shape. Each element still
+    // gets the additionalProperties/required treatment, just with its own untracked (never
+    // forced-null-stripped) node, since a tuple position cannot be addressed by property key.
+    for (const item of node.items) requireEveryPropertyEverywhere(item, emptyForcedNullableNode());
   } else if (node.items !== undefined) {
-    requireEveryPropertyEverywhere(node.items);
+    const itemsTracking = tracking.items ?? emptyForcedNullableNode();
+    tracking.items = itemsTracking;
+    requireEveryPropertyEverywhere(node.items, itemsTracking);
   }
   for (const key of ["anyOf", "oneOf", "allOf"]) {
     const branch = node[key];
     if (Array.isArray(branch)) {
-      for (const b of branch) requireEveryPropertyEverywhere(b);
+      for (const b of branch) requireEveryPropertyEverywhere(b, tracking);
     }
   }
   for (const key of ["definitions", "$defs"]) {
     const defs = node[key];
     if (isPlainObject(defs)) {
-      for (const value of Object.values(defs)) requireEveryPropertyEverywhere(value);
+      for (const value of Object.values(defs)) requireEveryPropertyEverywhere(value, emptyForcedNullableNode());
     }
   }
 }
 
-/** Undoes `requireEveryPropertyEverywhere`'s nullable widening on the response side: a model that
- *  returns an explicit JSON `null` for a field this adapter forced into `required` (because the
- *  underlying zod field is actually `.optional()`, not `.nullable()`) is treated the same as if
- *  the model had omitted that field, so `req.schema.safeParse` (the caller's real zod schema,
- *  never widened) sees the same shape it would from a provider that never had this constraint.
- *  Recurses into arrays and nested objects; leaves non-null values untouched. */
-function stripNullProperties(value: unknown): unknown {
+/** Undoes `requireEveryPropertyEverywhere`'s nullable widening on the response side, and only
+ *  that: a model that returns an explicit JSON `null` for a field `tracking` marks as forced
+ *  (widened purely for OpenRouter's strict mode, because the underlying zod field is `.optional()`
+ *  and not itself `.nullable()`) is treated the same as if the model had omitted that field, so
+ *  `req.schema.safeParse` (the caller's real, unwidened zod schema) sees the same shape it would
+ *  from a provider that never had this constraint. A `null` for any other key, at any depth,
+ *  including a genuinely `.nullable()` field, is left exactly as returned (fix round 1, F2). */
+function stripForcedNulls(value: unknown, tracking: ForcedNullableNode | undefined): unknown {
+  if (!tracking) return value;
   if (Array.isArray(value)) {
-    return value.map(stripNullProperties);
+    return value.map((item) => stripForcedNulls(item, tracking.items));
   }
   if (isPlainObject(value)) {
     const result: Record<string, unknown> = {};
     for (const [key, v] of Object.entries(value)) {
-      if (v === null) continue;
-      result[key] = stripNullProperties(v);
+      if (v === null && tracking.forcedKeys.has(key)) continue;
+      result[key] = stripForcedNulls(v, tracking.properties[key]);
     }
     return result;
   }
   return value;
 }
 
-function buildJsonSchema(schema: z.ZodType<unknown>): Record<string, unknown> {
+function buildJsonSchema(schema: z.ZodType<unknown>): { schema: Record<string, unknown>; forcedNullable: ForcedNullableNode } {
   const generated = zodToJsonSchema(schema) as Record<string, unknown>;
   delete generated.$schema;
   forceNoAdditionalPropertiesEverywhere(generated);
-  requireEveryPropertyEverywhere(generated);
-  return generated;
+  const forcedNullable = emptyForcedNullableNode();
+  requireEveryPropertyEverywhere(generated, forcedNullable);
+  return { schema: generated, forcedNullable };
 }
 
 function isRetryableStatus(status: number): boolean {
   return status === 429 || status >= 500;
 }
+
+/** Below this much remaining time on the shared `timeoutMs` deadline, the 429/5xx retry is
+ *  skipped (fix round 1, F3): retrying anyway risks spending the whole budget on a second attempt
+ *  that itself has almost no time to complete. */
+const MIN_REMAINING_MS_TO_RETRY = 5_000;
 
 /**
  * `Provider` backed by OpenRouter's OpenAI-compatible `chat/completions` endpoint (controller
@@ -221,10 +284,13 @@ function isRetryableStatus(status: number): boolean {
  * is the caller's zod type converted with `zod-to-json-schema`. `finish_reason: "length"` (output
  * truncated by `maxTokens`) is reported as a `"malformed"` result with `truncated: true` rather
  * than attempting to parse a cut-off string, so `withOneRepair` can ask again with a higher
- * budget. HTTP 429 and 5xx get one retry after `retryBackoffMs`; every other non-2xx status
- * (including 403 "attestation required" and 404 "model ineligible on this account", both seen
- * live against `meta/muse-spark-1.3-contributor`) is a `"provider"` failure whose `raw` is the
- * response body verbatim, so the caller sees OpenRouter's own message and any `configure_url`.
+ * budget. HTTP 429 and 5xx get one retry after `retryBackoffMs`, as long as at least
+ * `MIN_REMAINING_MS_TO_RETRY` remains on `req.timeoutMs`'s single shared deadline (fix round 1,
+ * F3: `timeoutMs` bounds the whole `complete()` call, including the retry, never a fresh
+ * `timeoutMs` per HTTP attempt); every other non-2xx status (including 403 "attestation required"
+ * and 404 "model ineligible on this account", both seen live against
+ * `meta/muse-spark-1.3-contributor`) is a `"provider"` failure whose `raw` is the response body
+ * verbatim, so the caller sees OpenRouter's own message and any `configure_url`.
  */
 export class OpenRouterProvider implements Provider {
   readonly name = "openrouter";
@@ -234,6 +300,7 @@ export class OpenRouterProvider implements Provider {
   private readonly fetchImpl: typeof fetch;
   private readonly retryBackoffMs: number;
   private readonly onResponseBody: (body: OpenRouterResponseBody) => void;
+  private readonly now: () => number;
 
   constructor(opts: OpenRouterProviderOpts) {
     this.apiKey = opts.apiKey;
@@ -242,11 +309,13 @@ export class OpenRouterProvider implements Provider {
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.retryBackoffMs = opts.retryBackoffMs ?? 300;
     this.onResponseBody = opts.onResponseBody ?? (() => {});
+    this.now = opts.now ?? (() => Date.now());
   }
 
   async complete<T>(req: CompleteRequest<T>): Promise<CompleteResult<T>> {
-    const started = Date.now();
-    const jsonSchema = buildJsonSchema(req.schema as z.ZodType<unknown>);
+    const started = this.now();
+    const deadline = started + req.timeoutMs;
+    const { schema: jsonSchema, forcedNullable } = buildJsonSchema(req.schema as z.ZodType<unknown>);
     const body = {
       model: this.model,
       messages: [
@@ -262,8 +331,11 @@ export class OpenRouterProvider implements Provider {
 
     const maxAttempts = 2;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), req.timeoutMs);
+      const remainingBeforeAttempt = deadline - this.now();
+      if (remainingBeforeAttempt <= 0) {
+        return { ok: false, error: "timeout", raw: "", latencyMs: this.now() - started };
+      }
+
       let res: Response;
       try {
         res = await this.fetchImpl(this.baseUrl, {
@@ -275,28 +347,29 @@ export class OpenRouterProvider implements Provider {
             "X-Title": X_TITLE,
           },
           body: JSON.stringify(body),
-          signal: controller.signal,
+          // One deadline for the whole call (F3): each attempt gets whatever is left of
+          // req.timeoutMs, never a fresh req.timeoutMs of its own.
+          signal: AbortSignal.timeout(remainingBeforeAttempt),
         });
       } catch (err) {
-        const latencyMs = Date.now() - started;
-        if (err instanceof Error && err.name === "AbortError") {
+        const latencyMs = this.now() - started;
+        if (err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError")) {
           return { ok: false, error: "timeout", raw: "", latencyMs };
         }
         return { ok: false, error: "provider", raw: errorMessage(err), latencyMs };
-      } finally {
-        clearTimeout(timer);
       }
 
       if (!res.ok) {
-        if (isRetryableStatus(res.status) && attempt < maxAttempts) {
+        const remainingForRetry = deadline - this.now();
+        if (isRetryableStatus(res.status) && attempt < maxAttempts && remainingForRetry >= MIN_REMAINING_MS_TO_RETRY) {
           await sleep(this.retryBackoffMs);
           continue;
         }
         const text = await res.text().catch(() => "");
-        return { ok: false, error: "provider", raw: text, latencyMs: Date.now() - started };
+        return { ok: false, error: "provider", raw: text, latencyMs: this.now() - started };
       }
 
-      const latencyMs = Date.now() - started;
+      const latencyMs = this.now() - started;
       const payload = (await res.json()) as OpenRouterResponseBody;
       this.onResponseBody(payload);
 
@@ -320,8 +393,9 @@ export class OpenRouterProvider implements Provider {
       }
 
       // Undo requireEveryPropertyEverywhere's null-for-optional widening before validating
-      // against the caller's real (unwidened) zod schema.
-      const result = req.schema.safeParse(stripNullProperties(parsed));
+      // against the caller's real (unwidened) zod schema; only the keys it actually forced, per
+      // forcedNullable, are stripped (fix round 1, F2).
+      const result = req.schema.safeParse(stripForcedNulls(parsed, forcedNullable));
       if (!result.success) {
         return { ok: false, error: "malformed", raw: content, usage, latencyMs };
       }
@@ -330,6 +404,6 @@ export class OpenRouterProvider implements Provider {
     }
 
     // Unreachable: the loop above always returns on its final attempt.
-    return { ok: false, error: "provider", raw: "", latencyMs: Date.now() - started };
+    return { ok: false, error: "provider", raw: "", latencyMs: this.now() - started };
   }
 }
