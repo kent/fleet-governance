@@ -234,6 +234,20 @@ function modelRecord(overrides: Partial<RunRecordDocument> = {}): RunRecordDocum
 }
 
 describe("renderReport for a model run", () => {
+  it("shows the exact publication permission without mislabelling it as a charter amendment", () => {
+    const record = modelRecord();
+    const ref = record.proposals[0]!;
+    delete ref.action;
+    ref.execution = { schema: "fleet.execution-permit.v1", chainId: 31337,
+      executor: `0x${"11".repeat(20)}`, ledger: `0x${"22".repeat(20)}`, actor: `0x${"33".repeat(20)}`,
+      target: `0x${"44".repeat(20)}`, targetCodeHash: `0x${"55".repeat(32)}`, taskId: "1", charterVersion: 1,
+      data: "0x12345678", nonce: "1", deadline: "2000000000" };
+    const report = renderReport(record, { title: "Publication" });
+    expect(report).toContain("Decoded action: exact contract permission");
+    expect(report).toContain("Approval does not establish that publication occurred");
+    expect(report).toContain(JSON.stringify(ref.execution));
+    expect(report).not.toContain("this decision's payload is a charter");
+  });
   it("renders the model sections in order and not the scripted decision table", () => {
     const report = renderReport(modelRecord(), { title: "Model Run", agoraNextBaseUrl: "https://agora-next.example.com" });
     const order = ["## Run summary", "## What the fleet did", "## Proposals", "## Expected versus actual", "## Rubric"].map((h) => report.indexOf(h));

@@ -104,6 +104,7 @@ polling. This measures the current harness, not maximum chain throughput.
 | 2,000-member contract execution | 4,000 ballots; one rejected and one approved proposal. Rejected, direct, changed and replayed writes reverted. The approved exact call published once. | [Report](docs/evidence/execution-2000-1789411525744/report.md), [execution receipts](docs/evidence/execution-2000-1789411525744/executor-checks.json) |
 | 2,000-member tool gateway | A defeated network exception sent zero requests to the local canary. An approved constitution amendment allowed one request. | [Report](docs/evidence/scale-2000-1789408328458/report.md), [gateway checks](docs/evidence/scale-2000-1789408328458/executor-checks.json) |
 | Five-member contract execution | The same publication checks on a smaller, easier-to-inspect run. | [Report](docs/evidence/execution-5-1789411395881/report.md) |
+| Model task-loop publication | Three members review a file permission. Approval publishes once; rejection leaves the artifact untouched. Scripted providers drive the normal task loop. | [Approved](docs/evidence/model-publication-20260914/approve.md), [rejected](docs/evidence/model-publication-20260914/reject.md) |
 
 These are **scripted governance experiments**. They exercise real contracts, transactions and
 execution checks. They do not demonstrate 2,000 model agents independently choosing how to vote.
@@ -140,10 +141,11 @@ cd contracts
 forge test
 ```
 
-Latest validation: **1,156 unit tests passed** with 28 skipped, and **129 contract tests passed**.
+Latest validation: **1,170 unit tests passed** with 30 skipped, and **129 contract tests passed**.
 Twenty contract tests cover execution permissions, including no ballots, all abstentions,
 insufficient yes votes, ties, pending approvals, revocation and replay. The model integration
-suite passed two scenarios with its optional live-model test skipped.
+suite passed four scenarios, including approved and rejected task-loop publication. Its optional
+live-model test was skipped.
 
 Docker is required for the sandbox integration tests. Prepare `node:22-alpine`, then run:
 
@@ -164,8 +166,11 @@ reserved voting capacity, and a durable token and dollar budget journal. Hosted 
 2,000 agents do not require 2,000 GPUs. Cost depends on their work, context size and proposal volume;
 see the [2,000-agent cost assumptions](docs/scale-costs.md) before sizing a run.
 
-Contract publication still needs to be connected to the normal model task loop. Host package
-installation is disabled until an isolated installer can mediate its dependency traffic. The
+Model task loops can request publication with `publish_artifact`: name a file, consider its exact
+permission, and retry after settled approval. The new `artifact-publication` fixture asks for
+review without prescribing a vote. [Run it and inspect the boundary](docs/execution-permits.md#publication-in-the-model-task-loop).
+
+Host package installation is disabled until an isolated installer can mediate its dependency traffic. The
 current gateway checks new actions; terminating already running external jobs needs a supervisor
 and credential revocation. Neither demo proves containment against the full Hugging Face exploit
 chain. [Current progress and remaining work](docs/goal-progress.md)

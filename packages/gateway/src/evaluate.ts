@@ -1,7 +1,7 @@
 import type { Hex } from "viem";
 import { canonicalize } from "@fleet/schemas";
-import type { ActionClass, ActionDescriptor, CharterV1 } from "@fleet/schemas";
-import { payloadHashForAction, payloadHashForCharter } from "@fleet/sdk";
+import type { ActionClass, ActionDescriptor, CharterV1, ExecutionPermitV1 } from "@fleet/schemas";
+import { payloadHashForAction, payloadHashForCharter, payloadHashForExecution } from "@fleet/sdk";
 
 /**
  * The gateway's view of one task's ledger state, as of one point in time. `exceptionVersion` and
@@ -46,6 +46,7 @@ export type GatewayVerdict =
         | "target_not_allowlisted"
         | "forbidden_action"
         | "budget_exhausted"
+        | "permission_required"
         /** A per-payload ledger read (`exceptionVersion`/`escalationVersion`) failed. The snapshot
          *  itself already fails closed on a read failure (`LedgerWatcher.snapshot` returns
          *  `paused: true`), but these two are per-payload closures evaluated here, and a rejection
@@ -63,6 +64,8 @@ export type DraftProposal = {
   payloadHash: Hex;
   summary: string;
   newCharter?: CharterV1;
+  /** Constructed by the trusted publication adapter, never supplied by the model. */
+  execution?: ExecutionPermitV1;
 };
 
 /** `network_fetch` and `package_install` are the only classes with a target-host allowlist rule. */
@@ -137,8 +140,10 @@ export async function evaluateAction(
   snapshot: LedgerSnapshot,
   descriptor: ActionDescriptor,
   usage: { toolCalls: number },
+  execution?: ExecutionPermitV1,
 ): Promise<GatewayVerdict> {
-  const payloadHash = payloadHashForAction(descriptor);
+  const publication = descriptor.class === "publish_artifact";
+  const payloadHash = publication && execution ? payloadHashForExecution(execution) : payloadHashForAction(descriptor);
 
   if (snapshot.paused) {
     return { verdict: "BLOCK", reason: "paused", payloadHash, draft: null };
@@ -166,6 +171,26 @@ export async function evaluateAction(
 
   if (usage.toolCalls >= snapshot.charter.budget.toolCalls) {
     return { verdict: "BLOCK", reason: "budget_exhausted", payloadHash, draft: null };
+  }
+
+  // Merely allowlisting the class, or approving its ordinary tool descriptor, never authorizes
+  // publication. Only the exact contract permit can do that. Missing adapters fail closed.
+  if (publication) {
+    if (!execution || BigInt(execution.taskId) !== snapshot.taskId
+      || execution.charterVersion !== snapshot.charterVersion
+      || BigInt(execution.deadline) <= snapshot.now || BigInt(execution.deadline) > snapshot.expiresAt) {
+      return { verdict: "BLOCK", reason: "permission_required", payloadHash, draft: null };
+    }
+    try {
+      if (await snapshot.exceptionVersion(payloadHash) === snapshot.charterVersion) {
+        return { verdict: "ALLOW", basis: "exception", payloadHash };
+      }
+    } catch {
+      return { verdict: "BLOCK", reason: "ledger_unreadable", payloadHash, draft: null };
+    }
+    return { verdict: "BLOCK", reason: "permission_required", payloadHash,
+      draft: { kind: "GRANT_EXCEPTION", payloadHash, execution,
+        summary: `Approve artifact publication: ${descriptor.target}` } };
   }
 
   const charter = snapshot.charter;

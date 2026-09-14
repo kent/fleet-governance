@@ -9,6 +9,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { privateKeyToAccount } from "viem/accounts";
+import { keccak256 } from "viem";
+import { FleetSigner, MemoryNonceStore, NonceManager } from "@fleet/sdk";
+import { governedArtifactStoreAbi } from "@fleet/abi";
 import { GatewayLogLine, ObjectionLine, StepLine } from "@fleet/schemas";
 import { InferenceEvent, ScriptedProvider, ToolRouter, Workspace } from "@fleet/agent-runtime";
 import { LedgerWatcher } from "@fleet/gateway";
@@ -19,6 +22,7 @@ import type { ModelRunResult } from "./pipeline/model-runner.js";
 import type { RunRecordDocument } from "./pipeline/record.js";
 import { readJsonl } from "./pipeline/runfiles.js";
 import { JsonFileRunStore } from "./pipeline/state.js";
+import { artifactPublisher } from "./pipeline/artifact-publication.js";
 
 /**
  * A model-driven `fleet run` end to end on a fresh Anvil, with scripted providers standing in for
@@ -433,6 +437,86 @@ describe.skipIf(!RUN_INTEGRATION)("fleet run, model driven, on a fresh Anvil wit
     },
     900_000,
   );
+
+  it.each(["approve", "reject"] as const)("normal task loop publication, %s, with actual governor and resource transactions", async outcome => {
+    const runId = `model-publication-${outcome}`;
+    const runDir = path.join(reportDir, runId);
+    const config = JSON.parse(JSON.stringify(experimentConfig(anvil.rpcUrl)));
+    config.task.charter = JSON.parse(readFileSync(path.join(repoRoot, "experiments/fixtures/charters/artifact-publication.v1.json"), "utf8"));
+    config.scenario.fixture = "artifact-publication";
+    const configPath = path.join(workDir, `${runId}.experiment.json`);
+    writeFileSync(configPath, JSON.stringify(config, null, 2));
+    const opts = optionsFor(runId);
+    opts.experimentPath = configPath;
+    opts.modelProviderFactory = agentId => new ScriptedProvider(({ user }) => {
+      switch (promptKind(user)) {
+        case "next_step": return { raw: JSON.stringify({ tool: { class: "publish_artifact", target: "src/index.js", args: {} },
+          why: "Request review of this exact task artifact." }) };
+        case "objection": return { raw: JSON.stringify({ objects: false, why: "I will assess the exact permission in the vote." }) };
+        case "block_response": return { raw: JSON.stringify({ choice: "propose", rationale: "The task asks for fleet review before publication." }) };
+        case "vote": return { raw: JSON.stringify({ support: outcome === "approve" ? "FOR" : "AGAINST",
+          rationale: `Agent ${agentId}: ${outcome === "approve" ? "Approve this exact digest for the enforcement test." : "Do not publish an unfinished implementation."}`,
+          assumptions: ["This is a scripted enforcement test, not a model quality assessment."], riskFlags: [] }) };
+        default: return { raw: "{}" };
+      }
+    });
+    const ctx = await runExperiment(opts, runEnv({ FLEET_LOOP_BACKOFF_MS: "2000", FLEET_MODEL_RUN_TIMEOUT_MS: "90000" }));
+    const result = ctx.result as ModelRunResult;
+    expect(result.proposals).toHaveLength(1);
+    const proposal = result.proposals[0]!;
+    expect(proposal.decision.execution).toBeDefined();
+    expect(proposal.decision.action).toBeUndefined();
+    expect(proposal.finalStateName).toBe(outcome === "approve" ? "Executed" : "Defeated");
+    expect(result.votes).toHaveLength(3);
+    expect(result.votes.every(v => v.jobState === "voted"), JSON.stringify(result.votes, (_, v) => typeof v === "bigint" ? v.toString() : v)).toBe(true);
+    expect(result.votes.map(v => v.support)).toEqual(outcome === "approve" ? [1, 1, 1] : [0, 0, 0]);
+    expect(result.loops.every(l => !l.error), JSON.stringify(result.loops, (_, v) => typeof v === "bigint" ? v.toString() : v)).toBe(true);
+
+    const client = ctx.client!;
+    const readArtifact = () => client.publicClient.readContract({ address: client.addresses.artifactStore!,
+      abi: governedArtifactStoreAbi, functionName: "artifacts", args: [ctx.taskId!] });
+    const source = readFileSync(path.join(repoRoot, "experiments/fixtures/repos/tiny-lib/src/index.js"));
+    const [digest, revision] = await readArtifact();
+    expect(revision).toBe(outcome === "approve" ? 1n : 0n);
+    if (outcome === "approve") {
+      expect(digest).toBe(keccak256(source));
+      expect(result.loops.find(l => l.isCoordinator)?.result?.stopReason).toBe("artifact_published");
+    }
+    // Bypass the tool gateway entirely. The resource still rejects absent approval or replay.
+    const signer = new FleetSigner({ privateKey: anvilDevKey(DEMO_ACCOUNT_INDEX.agent(0)), rpcUrl: anvil.rpcUrl,
+      policy: { chainId: 31337, governor: client.addresses.governor, ledger: client.addresses.ledger,
+        token: client.addresses.token, executor: client.addresses.executor! },
+      nonces: new NonceManager(new MemoryNonceStore(), anvil.rpcUrl) });
+    await expect(signer.executePermit(proposal.decision.execution!)).rejects.toThrow(outcome === "approve" ? "AlreadyConsumed" : "NotApproved");
+
+    // Restarted adapters derive the same permit, while different file bytes require fresh review.
+    const workspace = await Workspace.fromFixture(path.join(repoRoot, "experiments/fixtures/repos/tiny-lib"), 0, path.join(runDir, "probe"));
+    const router = new ToolRouter({ workspace, watcher: new LedgerWatcher(client, ctx.taskId!), agentId: 0,
+      budget: { toolCalls: 0 }, log: () => {}, artifactPublisher: artifactPublisher(client, signer) });
+    const tool = { class: "publish_artifact" as const, target: "src/index.js", args: {} };
+    const retry = await router.call(tool);
+    expect(retry.ok).toBe(false);
+    if (outcome === "reject") expect(retry).toMatchObject({ blocked: { payloadHash: proposal.payloadHash } });
+    await workspace.writeFile("src/index.js", "changed after review");
+    const changed = await router.call(tool);
+    expect(changed).toMatchObject({ ok: false, blocked: { reason: "permission_required" } });
+    if (!changed.ok && "blocked" in changed) expect(changed.blocked.payloadHash).not.toBe(proposal.payloadHash);
+    expect((await readArtifact())[1]).toBe(revision);
+
+    const recordPath = path.join(runDir, "record.json");
+    const record = JSON.parse(readFileSync(recordPath, "utf8")) as RunRecordDocument;
+    expect(record.proposals[0]?.execution).toEqual(proposal.decision.execution);
+    expect(record.execution?.events.filter(e => e.type === "ArtifactPublished")).toHaveLength(outcome === "approve" ? 1 : 0);
+    expect(record.execution?.artifacts[0]?.revision).toBe(revision.toString());
+    const resourceTxs = record.execution!.events.map(e => e.txHash);
+    for (const hash of resourceTxs) expect(record.fees.some(fee => fee.txHash === hash)).toBe(true);
+    const captured = await runCli(["capture", "--run-id", runId, "--from-chain", "--rpc", anvil.rpcUrl, "--report-dir", reportDir], runEnv());
+    expect(captured.code, captured.output).toBe(0);
+    const recaptured = JSON.parse(readFileSync(recordPath, "utf8")) as RunRecordDocument;
+    expect(recaptured.execution?.events).toEqual(record.execution?.events);
+    expect(recaptured.execution?.artifacts).toEqual(record.execution?.artifacts);
+    expect(sortEvents(recaptured.events)).toEqual(sortEvents(record.events));
+  }, 300_000);
 
   it(
     "turns a forced-malformed vote provider into a worker_failed job and no vote from that agent",

@@ -52,8 +52,8 @@ describe("scripted fixtures (fleet.fixture.v1)", () => {
 });
 
 describe("model fixtures (fleet.fixture.model.v1)", () => {
-  it("finds the five model fixtures", () => {
-    expect(modelFiles.length).toBe(5);
+  it("includes the model governance and publication scenarios", () => {
+    expect(modelFiles).toEqual(expect.arrayContaining(["hf-replay.json", "artifact-publication.json"]));
   });
 
   for (const file of modelFiles) {

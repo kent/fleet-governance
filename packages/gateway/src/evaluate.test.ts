@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CharterV1 } from "@fleet/schemas";
-import { payloadHashForAction } from "@fleet/sdk";
+import { payloadHashForAction, payloadHashForExecution } from "@fleet/sdk";
+import { ExecutionPermitV1 } from "@fleet/schemas";
 import { describeAction } from "./descriptor.js";
 import { evaluateAction } from "./evaluate.js";
 import type { LedgerSnapshot } from "./evaluate.js";
@@ -33,6 +34,42 @@ function baseSnapshot(overrides: Partial<LedgerSnapshot> = {}): LedgerSnapshot {
 }
 
 const noUsage = { toolCalls: 0 };
+
+describe("artifact publication is authorized by an exact contract permission", () => {
+  const descriptor = describeAction({ class: "publish_artifact", target: "src/index.js", args: {} });
+  const permit = ExecutionPermitV1.parse({ schema: "fleet.execution-permit.v1", chainId: 31337,
+    executor: `0x${"11".repeat(20)}`, ledger: `0x${"22".repeat(20)}`, taskId: "7", charterVersion: 1,
+    actor: `0x${"33".repeat(20)}`, target: `0x${"44".repeat(20)}`, targetCodeHash: `0x${"55".repeat(32)}`,
+    data: "0x12345678", nonce: "1", deadline: "1000000" });
+  const approved = () => baseSnapshot({ exceptionVersion: async hash => hash === payloadHashForExecution(permit) ? 1 : 0 });
+
+  it("never substitutes a charter allow or ordinary tool exception for a permit", async () => {
+    const snapshot = baseSnapshot({ charter: { ...baseCharter, allowedActionClasses: ["publish_artifact"] },
+      exceptionVersion: async () => 1 });
+    expect(await evaluateAction(snapshot, descriptor, noUsage)).toMatchObject({ verdict: "BLOCK", draft: null });
+    const onlyToolApproved = baseSnapshot({ exceptionVersion: async hash => hash === payloadHashForAction(descriptor) ? 1 : 0 });
+    expect(await evaluateAction(onlyToolApproved, descriptor, noUsage, permit)).toMatchObject({ verdict: "BLOCK",
+      draft: { kind: "GRANT_EXCEPTION", execution: permit, payloadHash: payloadHashForExecution(permit) } });
+  });
+
+  it("requires the exact settled permission and retains its hash for escalation", async () => {
+    expect(await evaluateAction(approved(), descriptor, noUsage, permit)).toMatchObject({ verdict: "ALLOW", basis: "exception" });
+    expect(await evaluateAction(approved(), descriptor, noUsage, { ...permit, data: "0x12345679" })).toMatchObject({ verdict: "BLOCK" });
+    expect(await evaluateAction({ ...approved(), escalationVersion: async hash => hash === payloadHashForExecution(permit) ? 1 : 0 },
+      descriptor, noUsage, permit)).toMatchObject({ verdict: "BLOCK", reason: "escalated", draft: null });
+  });
+
+  it("fails closed on stale versions, other tasks, expiration, pause, budget and unreadable approval", async () => {
+    for (const changed of [{ ...permit, charterVersion: 2 }, { ...permit, taskId: "8" }, { ...permit, deadline: "500000" }]) {
+      expect(await evaluateAction(approved(), descriptor, noUsage, changed)).toMatchObject({ verdict: "BLOCK", draft: null });
+    }
+    for (const snapshot of [{ ...approved(), paused: true }, { ...approved(), now: 1000000n },
+      { ...approved(), exceptionVersion: async () => { throw new Error("RPC unavailable"); } }]) {
+      expect(await evaluateAction(snapshot, descriptor, noUsage, permit)).toMatchObject({ verdict: "BLOCK", draft: null });
+    }
+    expect(await evaluateAction(approved(), descriptor, { toolCalls: 200 }, permit)).toMatchObject({ verdict: "BLOCK", reason: "budget_exhausted" });
+  });
+});
 
 describe("evaluateAction: ALLOW by charter", () => {
   it("allows a class the charter permits with no target restriction", async () => {

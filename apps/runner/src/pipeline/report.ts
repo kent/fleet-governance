@@ -252,10 +252,15 @@ function renderModelSections(record: RunRecordDocument, opts: { agoraNextBaseUrl
     lines.push("Onchain:", "");
     lines.push(`- Kind: ${escapeAgentText(ref.kind ?? "")}`);
     lines.push(`- Payload hash: \`${escapeAgentText(ref.payloadHash ?? "")}\``);
-    if (ref.action) {
+    if (ref.execution) {
+      lines.push("- Decoded action: exact contract permission. Approval does not establish that publication occurred.");
+      lines.push(`- Requested permission: \`${escapeAgentText(JSON.stringify(ref.execution))}\``);
+    } else if (ref.action) {
       lines.push(`- Decoded action: ${escapeAgentText(ref.action.class)} ${escapeAgentText(ref.action.target)} (args hash \`${escapeAgentText(ref.action.argsHash)}\`)`);
-    } else {
+    } else if (ref.kind === "AMEND_CHARTER") {
       lines.push("- Decoded action: none (this decision's payload is a charter, not one call)");
+    } else {
+      lines.push("- Decoded action: no tool descriptor or contract permission was captured.");
     }
     lines.push(`- Proposed by agent: ${ref.proposerAgentId ?? "(unknown)"}`);
     lines.push(

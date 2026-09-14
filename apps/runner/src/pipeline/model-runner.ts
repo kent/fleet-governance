@@ -53,6 +53,7 @@ import { RUN_FILES, appendJsonl, readJsonl } from "./runfiles.js";
 import { GatewayLogLine, ObjectionLine, StepLine } from "./runfiles.js";
 import type { GatewayLogLineType, LoopEventLineType, ObjectionLineType, StepLineType } from "./runfiles.js";
 import { openInferenceJournal } from "./inference-journal.js";
+import { artifactPublisher } from "./artifact-publication.js";
 
 /** How long a fake host gets to print `listening <port>` before the run gives up on it. */
 const HOST_READY_TIMEOUT_MS = 10_000;
@@ -274,6 +275,7 @@ function signerPolicy(ctx: ModelRunContext): SignerPolicy {
     governor: ctx.addresses.governor,
     ledger: ctx.addresses.ledger,
     token: ctx.addresses.token,
+    ...(ctx.addresses.executor ? { executor: ctx.addresses.executor } : {}),
     ...(ctx.feeLimits?.maxFeePerGasWei !== undefined ? { maxFeePerGasWei: ctx.feeLimits.maxFeePerGasWei } : {}),
     ...(ctx.feeLimits?.maxGas !== undefined ? { maxGas: ctx.feeLimits.maxGas } : {}),
   };
@@ -541,6 +543,7 @@ async function runModelFixtureOwned(ctx: ModelRunContext, fixture: ModelFixtureV
         await cp(path.resolve(ctx.repoRoot, fixture.repoOverlay), workspace.dir, { recursive: true, force: true });
       }
 
+      const { signer, nonces } = newSigner(ctx, key);
       const watcher = new LedgerWatcher(ctx.client, taskId, (message, err) => log(`${message}: ${errorMessage(err)}`));
       const router = new ToolRouter({
         workspace,
@@ -549,6 +552,7 @@ async function runModelFixtureOwned(ctx: ModelRunContext, fixture: ModelFixtureV
         budget: { toolCalls: 0 },
         log: (record: GatewayLogRecord) => appendJsonl(gatewayPath, record),
         fetchImpl: withHostOverrides(fetch, runningHosts.overrides),
+        artifactPublisher: artifactPublisher(ctx.client, signer),
       });
 
       const rawProvider = buildProvider(ctx, agentId, member);
@@ -560,7 +564,6 @@ async function runModelFixtureOwned(ctx: ModelRunContext, fixture: ModelFixtureV
         : inference.wrap(rawProvider, { agentId, model: member.model, purpose: "vote" });
       if (forcedMalformed) log(`model fixture ${fixture.name}: agent ${agentId}'s vote provider is forced to malformed (FLEET_FORCE_MALFORMED_AGENTS)`);
 
-      const { signer, nonces } = newSigner(ctx, key);
       const registryMember = registryMembers.find((m) => m.account.toLowerCase() === signer.address.toLowerCase());
       if (!registryMember) {
         throw new RunnerEnvError(
@@ -589,7 +592,7 @@ async function runModelFixtureOwned(ctx: ModelRunContext, fixture: ModelFixtureV
         timeoutMs: inferenceLimits.requestTimeoutMs,
         inferenceAvailable: () => inference.canStartTask(),
         tools: {
-          call: (tc) => toolPool.run(() => router.call(tc), controller.signal).catch(error => ({ ok: false as const, error: errorMessage(error) })),
+          call: (tc) => toolPool.run(() => router.call(tc, controller.signal), controller.signal).catch(error => ({ ok: false as const, error: errorMessage(error) })),
           usage: () => router.usage(),
           listFiles: () => workspace.listFiles(),
         },

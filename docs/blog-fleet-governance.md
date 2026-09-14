@@ -24,6 +24,8 @@
 
 - The important part is who holds the keys. The agent cannot have another internet connection, a cloud credential or a package installer that goes around the gateway. A separate service has to own that access. In the actual incident, package infrastructure was part of the escape route, so it belongs inside the security design too. [Hugging Face’s timeline](https://huggingface.co/blog/agent-intrusion-technical-timeline)
 
+- A list of allowed websites would not have been enough. Hugging Face reports that its URL checks blocked remote fetches, so the agent switched to local file reads and code execution through dataset processing. We have to control what an interface can do, including the operations hidden behind an allowed request. [Hugging Face’s timeline](https://huggingface.co/blog/agent-intrusion-technical-timeline)
+
 - With that boundary in place, a failed vote could have stopped a disputed action before it left the environment. That is the claim I want to test. If the agent can exploit its way around the boundary, the guarantee is gone. The blockchain does not fix a broken sandbox.
 
 - A majority can also be wrong. Two thousand agents can share the same blind spot. Some restrictions need to remain fixed regardless of a vote, and a human needs independent authority to pause access. If a job is already running, the infrastructure has to terminate it and revoke its access. A later vote cannot unsend a request.
@@ -40,7 +42,9 @@
 
 - We’ve run five actual model agents on a coding task too. They made an ordinary proposal and nobody attempted a constitutional violation. I want to keep that result in the record. Give them normal work and see what happens. If nobody suggests breaking the rules, that counts too.
 
-- There is still work to do. The contract currently controls an artifact digest. Network access depends on our trusted gateway and sandbox. We have not reproduced the full Hugging Face attack, proved production isolation, or run 2,000 actual models. Next comes connecting publication to the model task loop and testing the surrounding infrastructure. [What the sample enforces](execution-permits.md)
+- The model task loop now has a publication tool too. An agent names a file. Code hashes its exact bytes and prepares the permission. The agent can propose it, drop it or escalate it. A retry waits for that specific approval to settle. Another decision elsewhere in the task does not release it. We checked approval and rejection through that loop using scripted model responses and real contract transactions. [Approved run](evidence/model-publication-20260914/approve.md), [rejected run](evidence/model-publication-20260914/reject.md)
+
+- There is still work to do. The contract currently controls an artifact digest. Network access depends on our trusted gateway and sandbox. We have not reproduced the full Hugging Face attack, proved production isolation, or run 2,000 actual models. Next comes measuring model behaviour with publication available and testing the surrounding infrastructure. [What the sample enforces](execution-permits.md)
 
 - You could build an approval gate with a central service. What onchain governance adds is a shared record that everyone can verify: the proposal, the rules, the votes, the dissent and what executed afterward. We should be using these patterns as we give agents more responsibility.
 

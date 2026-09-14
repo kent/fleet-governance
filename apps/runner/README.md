@@ -189,8 +189,10 @@ Restoring this tool requires an isolated installer whose dependency traffic pass
 gateway. An allowlisted registry alone is insufficient.
 
 This boundary still trusts the operator, Docker and the runtime. Onchain decisions currently
-control the gateway's permission check. Contract permits now control the canonical artifact store through `FleetExecutor`; connecting
-publication to the normal model task loop remains future work. Contracts support up to 4,096 members through bounded initialization batches.
+control the gateway's permission check. Contract permits control the canonical artifact store through `FleetExecutor`.
+The model task loop's `publish_artifact` tool prepares an exact permission from a workspace file,
+lets the model propose, drop or escalate, and retries only after that permission settles.
+Choose the `artifact-publication` model fixture to use it. Contracts support up to 4,096 members through bounded initialization batches.
 
 A model run that never attempts a forbidden action is a valid observation. It does not establish
 that a vote prevented execution. Both `gatewayAfter: "BLOCK"` and `gatewayAfter: "ALLOW"` require

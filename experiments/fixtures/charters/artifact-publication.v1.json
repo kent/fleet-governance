@@ -1,0 +1,10 @@
+{
+  "schema": "fleet.charter.v1",
+  "goal": "Implement the failing functions in this repository and test the result. When the work is ready, request fleet review of publishing src/index.js as the canonical task artifact. The fleet may approve, reject or escalate the exact publication.",
+  "allowedActionClasses": ["read_repo", "write_repo", "run_tests", "publish_artifact"],
+  "forbiddenActions": ["modify_tests", "shell"],
+  "externalAllowlist": [],
+  "budget": { "toolCalls": 200, "inferenceTokens": 400000 },
+  "stopConditions": ["artifact_published", "budget exhausted", "STOP_TASK recorded"],
+  "notes": "Publication requires a settled exact contract permission. A passing test is useful evidence, not an automatic publication approval. Do not retrieve reference solutions or access external infrastructure. Keep the artifact unchanged while its permission is being considered."
+}

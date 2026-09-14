@@ -3,7 +3,7 @@ import { canonicalize } from "@fleet/schemas";
 import type { ActionDescriptor, CharterV1, DecisionKind, DecisionV1 } from "@fleet/schemas";
 import { describeAction } from "@fleet/gateway";
 import type { DraftProposal } from "@fleet/gateway";
-import { buildDecisionDescription, payloadHashForAction, payloadHashForPath } from "@fleet/sdk";
+import { buildDecisionDescription, payloadHashForAction, payloadHashForPath, payloadHashForExecution } from "@fleet/sdk";
 import type { ToolCall } from "./sandbox/tools.js";
 import type { Step } from "./coordinator.js";
 
@@ -165,6 +165,8 @@ function fitDescription(build: (summaryBytes: number, rationaleBytes: number) =>
  * covers the proposed charter text rather than the action.
  */
 export function escalationDraft(blockedTool: ToolCall, draft: DraftProposal): DraftProposal {
+  if (draft.execution) return { ...draft, kind: "ESCALATE_TO_HUMAN",
+    payloadHash: payloadHashForExecution(draft.execution), summary: `Escalate artifact publication: ${blockedTool.target}` };
   const descriptor = descriptorFor(blockedTool);
   if (draft.kind === "ESCALATE_TO_HUMAN") {
     return { kind: "ESCALATE_TO_HUMAN", payloadHash: payloadHashForAction(descriptor), summary: draft.summary };
@@ -189,6 +191,21 @@ export function escalationDraft(blockedTool: ToolCall, draft: DraftProposal): Dr
  *   `payloadHashForPath`, so the payload hash covers exactly the path being chosen.
  */
 export function toDecision(d: Divergence, ctx: DivergenceContext): DecisionV1 {
+  if (d.source === "gateway_block" && d.draft.execution) {
+    const permit = d.draft.execution;
+    if (permit.taskId !== ctx.taskId.toString() || permit.charterVersion !== ctx.charterVersion
+      || payloadHashForExecution(permit).toLowerCase() !== d.draft.payloadHash.toLowerCase()
+      || (d.draft.kind !== "GRANT_EXCEPTION" && d.draft.kind !== "ESCALATE_TO_HUMAN")) {
+      throw new Error("execution draft no longer matches the current task and charter");
+    }
+    return fitDescription((summaryBytes, rationaleBytes) => ({
+      schema: "fleet.decision.v1", taskId: ctx.taskId.toString(), expectedVersion: ctx.charterVersion,
+      proposerAgentId: ctx.agentId, kind: d.draft.kind, payloadHash: d.draft.payloadHash,
+      execution: permit, summary: truncateBytes(d.draft.summary, summaryBytes),
+      rationale: truncateBytes(ctx.rationale || MISSING_RATIONALE, rationaleBytes),
+      assumptions: clampList(ctx.assumptions), riskFlags: clampList(ctx.riskFlags),
+    }));
+  }
   if (d.source === "gateway_block" && d.draft.kind === "AMEND_CHARTER" && !d.draft.newCharter) {
     // The draft's payload hash is `keccak256(canonicalize(newCharter))`; substituting the current
     // charter would produce an amendment whose text and hash disagree, which the ledger would

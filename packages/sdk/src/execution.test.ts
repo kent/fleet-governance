@@ -5,7 +5,7 @@ import { fleetExecutorAbi } from "@fleet/abi";
 import { ExecutionPermitV1 } from "@fleet/schemas";
 import { buildDecisionDescription, verifyDescriptionAgainstCalldata } from "./description.js";
 import { encodeRecordDecision } from "./actions.js";
-import { decisionForExecution, decodeExecutePermit, encodeExecutePermit, executionPermitArgs, payloadHashForExecution } from "./execution.js";
+import { artifactPublicationPermit, decisionForExecution, decodeExecutePermit, encodeExecutePermit, executionPermitArgs, payloadHashForExecution } from "./execution.js";
 import { FleetSigner, checkPolicy } from "./signer.js";
 import { MemoryNonceStore, NonceManager } from "./nonce.js";
 
@@ -19,6 +19,18 @@ const calldata = encodeRecordDecision({ taskId: 1n, kind: "GRANT_EXCEPTION", exp
   payloadHash: decision.payloadHash as Hex, newCharterText: "", summary: decision.summary });
 
 describe("execution permissions", () => {
+  it("rebuilds publication permissions across restart without renewing spent authority", () => {
+    const input = { chainId: 31337, addresses: { ...policy, registry: address(7), hook: address(8), timelock: address(9), artifactStore: address(4) },
+      taskId: 1n, charterVersion: 1, actor: address(3), targetCodeHash: keccak256(toHex("code")),
+      digest: keccak256(toHex("artifact")), expiresAt: 2000000000n };
+    const original = artifactPublicationPermit(input);
+    expect(artifactPublicationPermit(input)).toEqual(original);
+    for (const change of [{ taskId: 2n }, { charterVersion: 2 }, { digest: keccak256(toHex("changed bytes")) }]) {
+      const changed = artifactPublicationPermit({ ...input, ...change });
+      expect(changed.nonce).not.toBe(original.nonce);
+      expect(payloadHashForExecution(changed)).not.toBe(payloadHashForExecution(original));
+    }
+  });
   it("makes every domain and capability field part of the public commitment", () => {
     const hash = payloadHashForExecution(permit);
     const changes = { chainId: 31338, executor: address(8), ledger: address(8), taskId: "2", charterVersion: 2,

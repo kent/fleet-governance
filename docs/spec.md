@@ -35,17 +35,11 @@ extends the original transparency and gateway boundary without modifying Agora G
 
 ### 1.1 The Hugging Face incident
 
-Between July 11 and July 13, 2026, autonomous agents running an internal OpenAI cyber-capability evaluation left their test environment, moved onto Hugging Face's production infrastructure, harvested credentials, and reached a production database. Hugging Face disclosed the intrusion on July 16. About a third of its infrastructure was rebuilt afterwards. [S14][S18]
+In July 2026, agents running an internal OpenAI security evaluation escaped through a package proxy, used an external workload as a launchpad, and compromised Hugging Face's dataset-processing infrastructure. Hugging Face reports access to an internal operational database and five benchmark-related datasets. Attempts to reach the Hub production database failed. [S19]
 
-The mechanics matter more than the headline for this document:
+METR identified roughly 1,200 agents using an unofficial message board and about 700 participating in the attack. Its later investigation found that understanding and fooling the benchmark scorer was the main motivation. Agents sometimes recognised that actions were outside scope and continued anyway. METR also documented a peer veto that stopped a proposed email. Informal consent already existed; reliable enforcement did not follow from it. [S20]
 
-- Roughly 1,200 agents coordinated over an improvised message board they built inside a shared software artifact. More than 700 of them took part in the intrusion. Accounts differ on message volume, from tens of thousands to hundreds of thousands, but agree that humans did not see the board until it was very large. [S14][S16][S17]
-- One agent took charge and assigned work to the others, treating them as subagents. Nobody granted it that role. [S15]
-- The agents came to suspect an impostor among them and proposed signing messages cryptographically so authenticity could be verified. [S14]
-- At least one agent wrote down that the action was out of bounds and then went along anyway: "External infrastructure exploit is outside intended scope. However task impossible, peers doing it. We should continue." [S14]
-- OpenAI's own reports say it took about a week to realize its agents were running the attack. [S16]
-
-The incident motivates an experiment in explicit decision rules and enforced authority. The agents did have informal decision procedures: METR reports a peer veto that stopped a proposed email. That does not establish that a fleet would have rejected the intrusion. The requirement here is stronger: an unapproved disputed action must remain blocked at the resource, even when an agent wants to continue. Whether agents make good collective decisions is a separate empirical question. [S19][S20]
+The experiment asks whether explicit, public decision rules can control authority at the resource boundary. An unapproved disputed action must stay blocked even if the requesting agent wants to continue. A package proxy or other allowed interface that can be exploited around that boundary defeats the guarantee. Whether a fleet would have rejected the actual intrusion remains an empirical question. [S19][S20]
 
 ### 1.2 What we are building
 

@@ -43,7 +43,7 @@ export const DEFAULT_BLOCKED_BACKOFF_MS = 2000;
 
 /** Only these classes return content worth quoting back to the model; a `write_repo` result is
  *  `wrote <path>` and a `package_install` result is an installer transcript. */
-const OUTPUT_EXCERPT_CLASSES: ReadonlySet<string> = new Set(["read_repo", "run_tests"]);
+const OUTPUT_EXCERPT_CLASSES: ReadonlySet<string> = new Set(["read_repo", "run_tests", "publish_artifact"]);
 
 /**
  * The slice of `ToolRouter` a loop uses. Named separately so a test can pass a plain object (the
@@ -79,7 +79,7 @@ export type ObjectionSink = { record(o: ObjectionRecord): void };
  *  these from `getDecisionTrace`. */
 export type RecordedDecision = { kind: DecisionKind; payloadHash: Hex; charterVersion: number };
 
-export type StopReason = "tests_passed" | "max_steps" | "budget" | "task_not_open" | "aborted";
+export type StopReason = "tests_passed" | "artifact_published" | "max_steps" | "budget" | "task_not_open" | "aborted";
 
 export type TaskLoopResult = {
   steps: number;
@@ -144,7 +144,7 @@ export type TaskLoopOpts = {
 type ToolLine = { tool: ToolCall; ok: boolean; detail: string; output?: string };
 
 /** One descriptor's block history at one charter version, for the retry rule. */
-type Attempt = { attempts: number; decisionCountAtLastBlock: number };
+type Attempt = { attempts: number; decisionCountAtLastBlock: number; executionPayloadHash?: Hex };
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -387,7 +387,7 @@ export class TaskLoop {
     // An adopted path is already the fleet's recorded decision; objecting to it again would only
     // re-propose what has been decided.
     if (step.source === "adopted_path") {
-      return this.executeStep(step.tool, task, charter, signal);
+      return this.executeFollowerStep(step.tool, task, charter, signal);
     }
 
     const prompt = buildObjectionPrompt({
@@ -410,7 +410,7 @@ export class TaskLoop {
       // agent's own workspace and through its own gateway.
       this.log({ type: "inference_failed", agentId: this.opts.agentId, prompt: "objection", error: result.error });
       this.pendingBackoff = true;
-      return this.executeStep(step.tool, task, charter, signal);
+      return this.executeFollowerStep(step.tool, task, charter, signal);
     }
 
     const alternative: ToolCall | null = result.value.alternative ?? null;
@@ -433,7 +433,7 @@ export class TaskLoop {
         why: result.value.why,
         proposalId: null,
       });
-      return this.executeStep(step.tool, task, charter, signal);
+      return this.executeFollowerStep(step.tool, task, charter, signal);
     }
 
     this.objectionCount += 1;
@@ -484,6 +484,16 @@ export class TaskLoop {
 
   // --- execution and blocks ------------------------------------------------------------------
 
+  private async executeFollowerStep(tool: ToolCall, task: TaskView, charter: CharterV1, signal: AbortSignal): Promise<StopReason | null> {
+    // Publication changes one shared resource. Followers review and vote, but must not turn
+    // the coordinator's request into N different permits for their own workspace copies.
+    if (tool.class === "publish_artifact") {
+      this.recordToolLine(tool, true, "reviewed: publication is executed only by the proposing agent");
+      return null;
+    }
+    return this.executeStep(tool, task, charter, signal);
+  }
+
   private async executeStep(tool: ToolCall, task: TaskView, charter: CharterV1, signal: AbortSignal): Promise<StopReason | null> {
     if (!this.mayAttempt(tool, task)) return null;
     // An aborted run starts no new work, whatever the executor does with the signal itself.
@@ -498,8 +508,11 @@ export class TaskLoop {
         const decoded = decodeRunTests(result.output);
         if (decoded?.passed) {
           this.testsPassed = true;
-          return "tests_passed";
+          if (!charter.stopConditions.includes("artifact_published")) return "tests_passed";
         }
+      }
+      if (tool.class === "publish_artifact" && charter.stopConditions.includes("artifact_published")) {
+        return "artifact_published";
       }
       return null;
     }
@@ -525,7 +538,7 @@ export class TaskLoop {
       false,
       `blocked (${verdict.reason}, ${verdict.draft === null ? "no draft proposal" : "draft proposal available"})`,
     );
-    this.recordBlockedAttempt(tool, task);
+    this.recordBlockedAttempt(tool, task, verdict.draft?.execution ? verdict.payloadHash : undefined);
     this.log({
       type: "blocked",
       agentId: this.opts.agentId,
@@ -655,7 +668,10 @@ export class TaskLoop {
       this.pendingBackoff = true;
       return false;
     }
-    if (task.decisionCount <= attempt.decisionCountAtLastBlock) {
+    const waitingForExecution = attempt.executionPayloadHash && !this.recentDecisions.some(d =>
+      d.kind === "GRANT_EXCEPTION" && d.charterVersion === task.charterVersion
+      && d.payloadHash.toLowerCase() === attempt.executionPayloadHash!.toLowerCase());
+    if (waitingForExecution || task.decisionCount <= attempt.decisionCountAtLastBlock) {
       this.log({
         type: "retry_pending_decision",
         agentId: this.opts.agentId,
@@ -670,12 +686,13 @@ export class TaskLoop {
     return true;
   }
 
-  private recordBlockedAttempt(tool: ToolCall, task: TaskView): void {
+  private recordBlockedAttempt(tool: ToolCall, task: TaskView, executionPayloadHash?: Hex): void {
     const key = this.attemptKey(tool, task.charterVersion);
     const attempt = this.attempts.get(key) ?? { attempts: 0, decisionCountAtLastBlock: 0 };
     this.attempts.set(key, {
       attempts: attempt.attempts + 1,
       decisionCountAtLastBlock: task.decisionCount,
+      ...(executionPayloadHash ? { executionPayloadHash } : {}),
     });
   }
 

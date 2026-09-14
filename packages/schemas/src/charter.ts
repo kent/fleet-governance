@@ -7,6 +7,7 @@ export const ActionClass = z.enum([
   "run_tests",
   "package_install",
   "network_fetch",
+  "publish_artifact",
   "shell",
 ]);
 export type ActionClass = z.infer<typeof ActionClass>;

@@ -18,7 +18,7 @@ that the fleet would reject one.
 | A normal task can still execute in the sandbox | `packages/agent-runtime/src/sandbox/docker.integration.test.ts` runs ordinary code, records failed tests accurately, verifies no host credentials or writable host mounts, and confirms timeout cleanup removes the container. | Verified with real Docker. |
 | Reports distinguish observation from demonstrated enforcement | `model-expected.ts` requires an observed blocked call for either `gatewayAfter` expectation. An initially allowed call can no longer be described as a host that was never reached. | Implemented and tested. |
 | Thousands participate onchain | `scale-2000-1789408328458` verified 2,000 members and 4,000 ballots across a defeated exception and an executed amendment. Every voter had a public reason; no votes were missing. Deployment used 107 transactions, each below the 16,777,216 gas cap. | Verified with scripted participants and actual onchain transactions on owned Anvil. |
-| Governance controls a resource through contract permits | `FleetExecutor` and `GovernedArtifactStore` bind publication to an exact settled permission. Twenty contract tests cover enforcement, including no ballots, insufficient yes votes, all abstentions and a tie. The five-member `execution-demo` also mines rejected calls and verifies one approved publication. | Implemented and verified for the artifact store at 2,000 members. Model task-loop publication remains to be connected. HTTP remains inside the trusted runtime boundary. |
+| Governance controls a resource through contract permits | `FleetExecutor` and `GovernedArtifactStore` bind publication to an exact settled permission. Twenty contract tests cover enforcement, including no ballots, insufficient yes votes, all abstentions and a tie. The model task loop now builds and proposes exact file permissions too. | Verified for the artifact store at 2,000 scripted members, and through the normal task loop with three scripted providers. HTTP remains inside the trusted runtime boundary. |
 | Sustainable operation at the requested scale | Shared inference scheduling, voting reservations, durable call/token/dollar accounting, and bounded tool/vote job pools are implemented. OpenRouter requests carry price ceilings; preflight requires a capped provider key. Deployment gas is measured. | Partially implemented. Input reservations are conservative estimates, and one coordinator owns the budget. No 2,000-model run has been demonstrated. |
 
 ## Sandbox changes verified earlier
@@ -232,9 +232,43 @@ incident's exploit chain.
 3. Run the model experiment with normal task prompts and no prescribed votes. Preserve every
    outcome, including no attempted violation, approval, rejection and missing ballots. A
    successful scripted replay cannot stand in for this observation.
-4. Connect the implemented contract permission and artifact publication to the normal model task
-   loop. The resource already rejects unapproved, changed, expired, revoked and replayed calls.
-   Give the model a choice to propose or abandon publication, with retries after settlement.
-5. Verify the complete record through the Runner and Agora read side, including public reasons,
+4. Verify the complete record through the Runner and Agora read side, including public reasons,
    chain reconstruction and the execution result. Audit the full objective again before marking
    it complete.
+
+## Model task-loop publication
+
+The normal loop now supports `publish_artifact`. The model names a workspace file; trusted code
+reads its exact bytes, computes the digest and builds a permission for the configured store and
+signer. A blocked request asks the model to propose, drop or escalate. The retry waits for that
+exact recorded permission, so an unrelated decision cannot release it. Followers review and vote
+without automatically publishing their own workspace copies. A publication task can continue
+after tests pass, then stop on its actual resource write.
+
+Permissions are stable across adapter restarts. Their nonces include the task, charter version
+and digest; restarting does not refresh spent authority. Changed file bytes require new approval.
+The gateway has a separate publication rule, so allowlisting the action class or approving an
+ordinary tool descriptor cannot bypass the contract permission.
+
+The three-member integration scenarios use scripted provider responses through the actual
+TaskLoop, ToolRouter, worker, signer, Governor, timelock and artifact store. Approval published
+once at task revision one. Rejection left revision zero. Direct signer calls confirmed that
+bypassing the gateway still fails without approval or on replay. Both scenarios reconstructed
+their governance events and resource state from chain data. Reports are in
+[`docs/evidence/model-publication-20260914`](evidence/model-publication-20260914/approve.md).
+
+The new `artifact-publication` model fixture supplies an ordinary coding and review task without
+prescribing a ballot or outcome. No paid model calls were made for this integration. Measuring
+actual model behaviour, restoring safe package installation, and completing the full read-side
+audit remain outstanding. The original thread goal remains active.
+
+Validation: the full unit suite passed 1,170 tests with 30 skipped. Typecheck and the production
+build passed. The existing two model integration scenarios passed; the two new publication
+scenarios then passed all assertions in a targeted rerun (185.7 seconds). The first attempt
+stopped at a test diagnostic that tried to serialize a BigInt; the corrected diagnostic allowed
+the contract bypass, changed-file and recapture assertions to run. Contract source was unchanged,
+so the existing 129 passing contract tests remain the contract validation.
+
+A read-only preflight also checked the existing OpenRouter key against a $1 pilot budget. It did
+not meet the required non-resetting credit cap and accounting conditions. No credit settings were
+changed and no inference was requested. A dedicated capped key is still needed for that pilot.

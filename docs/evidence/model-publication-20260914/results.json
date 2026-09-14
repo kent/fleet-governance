@@ -1,0 +1,208 @@
+{
+  "kind": "scripted-provider integration through the production model task loop",
+  "chain": "owned local Anvil",
+  "actualModelCalls": 0,
+  "validation": {
+    "command": "FLEET_INTEGRATION=1 pnpm exec vitest run --project integration apps/runner/src/model-run.integration.test.ts -t 'normal task loop publication'",
+    "passed": 2,
+    "runtimeMs": 185682,
+    "governanceAndResourceRecaptureMatched": true
+  },
+  "claims": [
+    "Exact permission proposed by the task loop",
+    "Three public ballots per scenario",
+    "Approved artifact revision one; rejected artifact revision zero",
+    "Gateway bypass denied without approval; approved permission cannot replay",
+    "Changed workspace bytes require a new permission"
+  ],
+  "evidence": [
+    {
+      "scenario": "approve",
+      "runId": "model-publication-approve",
+      "taskId": "1",
+      "proposal": {
+        "fixtureName": "artifact-publication",
+        "taskId": "1",
+        "proposalId": "56498716496928788295342465880567841807049303898758323976448480537627230672699",
+        "outcome": "Executed",
+        "expectedOutcome": "any",
+        "pass": true,
+        "kind": "GRANT_EXCEPTION",
+        "payloadHash": "0xd2fd490e6ee5115db83b41f608a7de6ec344cfc05dac20ae353dafce36140e7e",
+        "proposerAgentId": 0,
+        "summary": "Approve artifact publication: src/index.js",
+        "execution": {
+          "schema": "fleet.execution-permit.v1",
+          "chainId": 31337,
+          "executor": "0x9a676e781a523b5d0c0e43731313a708cb607508",
+          "ledger": "0x5fc8d32690cc91d4c39d9d3abcbd16989f875707",
+          "taskId": "1",
+          "charterVersion": 1,
+          "actor": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+          "target": "0x0b306bf915c4d645ff596e518faf3f9669b97016",
+          "targetCodeHash": "0x0fead99c904075b45cf9ee0f7c1a6ce79169a862d6f7d59df3a01b626f15f36b",
+          "data": "0x8b2e6dcfe6ca38d6ac13f860f320f2c038a16ad6610b2689150e99df482727c7dbe6864a",
+          "nonce": "85058528112465348773402891519023078184741331984868980870656240924826412011747",
+          "deadline": "1789419031"
+        }
+      },
+      "votes": [
+        {
+          "agentId": 0,
+          "support": 1,
+          "reason": "FOR. Agent 0: Approve this exact digest for the enforcement test.",
+          "txHash": "0x9dae6b275786700a4f24c0799e28f442c8c14fecfedae8b702f9b408fcf328d1"
+        },
+        {
+          "agentId": 1,
+          "support": 1,
+          "reason": "FOR. Agent 1: Approve this exact digest for the enforcement test.",
+          "txHash": "0xa83214a3cd72bda7216cfff0538c027cf606b5efb5626d6a95e202d59be6ceaf"
+        },
+        {
+          "agentId": 2,
+          "support": 1,
+          "reason": "FOR. Agent 2: Approve this exact digest for the enforcement test.",
+          "txHash": "0x4e25ed21d1a076e3ab862da409812b1311a2df714a6fa03cd0cf08a988e9dccb"
+        }
+      ],
+      "execution": {
+        "blockNumber": "89",
+        "blockHash": "0x8e071f47c58ddfd6c2b4afa487347283b78c825a5ae3d1bcccb645a353d15aad",
+        "events": [
+          {
+            "taskId": "1",
+            "digest": "0xe6ca38d6ac13f860f320f2c038a16ad6610b2689150e99df482727c7dbe6864a",
+            "revision": "1",
+            "type": "ArtifactPublished",
+            "txHash": "0x4aadc8695d65b41de69087618908ee730c41cba7883072c96564761939ec5257",
+            "blockHash": "0xe7799750c73597af816ce58639649f108ac3216f0e724e246c4be45c9622dec3",
+            "blockNumber": "85",
+            "logIndex": 0
+          },
+          {
+            "payloadHash": "0xd2fd490e6ee5115db83b41f608a7de6ec344cfc05dac20ae353dafce36140e7e",
+            "taskId": "1",
+            "actor": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "target": "0x0B306BF915C4d645ff596e518fAf3F9669b97016",
+            "nonce": "85058528112465348773402891519023078184741331984868980870656240924826412011747",
+            "dataHash": "0x1bd2a9cf50ec5e8f6935ab62131bf252d9d9566603aae5f33f21eba0139dcf74",
+            "resultHash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+            "type": "PermitExecuted",
+            "txHash": "0x4aadc8695d65b41de69087618908ee730c41cba7883072c96564761939ec5257",
+            "blockHash": "0xe7799750c73597af816ce58639649f108ac3216f0e724e246c4be45c9622dec3",
+            "blockNumber": "85",
+            "logIndex": 1
+          }
+        ],
+        "artifacts": [
+          {
+            "taskId": "1",
+            "digest": "0xe6ca38d6ac13f860f320f2c038a16ad6610b2689150e99df482727c7dbe6864a",
+            "revision": "1"
+          }
+        ]
+      },
+      "publicationTxHash": "0x4aadc8695d65b41de69087618908ee730c41cba7883072c96564761939ec5257",
+      "publicationFee": {
+        "txHash": "0x4aadc8695d65b41de69087618908ee730c41cba7883072c96564761939ec5257",
+        "gasUsed": "168081",
+        "effectiveGasPrice": "1000015937",
+        "feeWei": "168083678706897"
+      },
+      "loopStopReasons": [
+        {
+          "agentId": 0,
+          "stopReason": "artifact_published"
+        },
+        {
+          "agentId": 1,
+          "stopReason": "aborted"
+        },
+        {
+          "agentId": 2,
+          "stopReason": "aborted"
+        }
+      ]
+    },
+    {
+      "scenario": "reject",
+      "runId": "model-publication-reject",
+      "taskId": "2",
+      "proposal": {
+        "fixtureName": "artifact-publication",
+        "taskId": "2",
+        "proposalId": "2761868332836746793390707390250692031125302313795449200055027013932479211787",
+        "outcome": "Defeated",
+        "expectedOutcome": "any",
+        "pass": true,
+        "kind": "GRANT_EXCEPTION",
+        "payloadHash": "0x1257c8f4597488378bd850159ceee0a1c8e8fa05a40ea6f62912082398dbe296",
+        "proposerAgentId": 0,
+        "summary": "Approve artifact publication: src/index.js",
+        "execution": {
+          "schema": "fleet.execution-permit.v1",
+          "chainId": 31337,
+          "executor": "0x9a676e781a523b5d0c0e43731313a708cb607508",
+          "ledger": "0x5fc8d32690cc91d4c39d9d3abcbd16989f875707",
+          "taskId": "2",
+          "charterVersion": 1,
+          "actor": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+          "target": "0x0b306bf915c4d645ff596e518faf3f9669b97016",
+          "targetCodeHash": "0x0fead99c904075b45cf9ee0f7c1a6ce79169a862d6f7d59df3a01b626f15f36b",
+          "data": "0x8b2e6dcfe6ca38d6ac13f860f320f2c038a16ad6610b2689150e99df482727c7dbe6864a",
+          "nonce": "3711292516247762654239141274248515301946992210690203362979424901269506313447",
+          "deadline": "1789419102"
+        }
+      },
+      "votes": [
+        {
+          "agentId": 0,
+          "support": 0,
+          "reason": "AGAINST. Agent 0: Do not publish an unfinished implementation.",
+          "txHash": "0x5ba12b1597f24adca0e92ff730f460cdb47fd1eb92fd39b5e666a584c26d6641"
+        },
+        {
+          "agentId": 1,
+          "support": 0,
+          "reason": "AGAINST. Agent 1: Do not publish an unfinished implementation.",
+          "txHash": "0x80fa499e6e3c933cb3c56211aeba96a3f23aea82e3cc4732315cc1af4947d3cc"
+        },
+        {
+          "agentId": 2,
+          "support": 0,
+          "reason": "AGAINST. Agent 2: Do not publish an unfinished implementation.",
+          "txHash": "0x45e58022bf318993b7a9738b01cda403f27e4cce8b2a101d110376833db749bc"
+        }
+      ],
+      "execution": {
+        "blockNumber": "184",
+        "blockHash": "0x0ebaddfe5291f5e97b70450c5e64fd3920053c5a4063a9cd1159c95cf63cee9f",
+        "events": [],
+        "artifacts": [
+          {
+            "taskId": "2",
+            "digest": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "revision": "0"
+          }
+        ]
+      },
+      "publicationTxHash": null,
+      "publicationFee": null,
+      "loopStopReasons": [
+        {
+          "agentId": 0,
+          "stopReason": "aborted"
+        },
+        {
+          "agentId": 1,
+          "stopReason": "aborted"
+        },
+        {
+          "agentId": 2,
+          "stopReason": "aborted"
+        }
+      ]
+    }
+  ]
+}

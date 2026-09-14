@@ -1,7 +1,8 @@
 import { decodeFunctionData, encodeAbiParameters, encodeFunctionData, keccak256, toHex } from "viem";
 import type { Hex } from "viem";
-import { fleetExecutorAbi } from "@fleet/abi";
+import { fleetExecutorAbi, governedArtifactStoreAbi } from "@fleet/abi";
 import { DecisionV1, ExecutionPermitV1 } from "@fleet/schemas";
+import type { FleetAddresses } from "./addresses.js";
 
 const permitTuple = {
   type: "tuple",
@@ -57,4 +58,24 @@ export function decisionForExecution(input: {
     expectedVersion: execution.charterVersion, payloadHash: payloadHashForExecution(execution),
     proposerAgentId: input.proposerAgentId, execution, summary: input.summary, rationale: input.rationale,
     assumptions: input.assumptions ?? [], riskFlags: input.riskFlags ?? [] });
+}
+
+/** A stable permission for one artifact, including across coordinator restarts. The nonce is
+ * domain separated by task and charter version because the executor consumes nonces per actor
+ * across all tasks. Changing bytes or the constitution requires a different approval. */
+export function artifactPublicationPermit(input: {
+  chainId: number; addresses: FleetAddresses; taskId: bigint; charterVersion: number;
+  actor: Hex; targetCodeHash: Hex; digest: Hex; expiresAt: bigint;
+}): ExecutionPermitV1 {
+  const { addresses } = input;
+  if (!addresses.executor || !addresses.artifactStore) throw new Error("artifact publication is unavailable on this deployment");
+  const nonce = BigInt(keccak256(encodeAbiParameters([
+    { type: "bytes32" }, { type: "uint256" }, { type: "uint32" }, { type: "bytes32" },
+  ], [keccak256(toHex("fleet.artifact-publication.v1")), input.taskId, input.charterVersion, input.digest])));
+  return ExecutionPermitV1.parse({ schema: "fleet.execution-permit.v1", chainId: input.chainId,
+    executor: addresses.executor, ledger: addresses.ledger, taskId: input.taskId.toString(),
+    charterVersion: input.charterVersion, actor: input.actor, target: addresses.artifactStore,
+    targetCodeHash: input.targetCodeHash,
+    data: encodeFunctionData({ abi: governedArtifactStoreAbi, functionName: "publish", args: [input.digest] }),
+    nonce: nonce.toString(), deadline: input.expiresAt.toString() });
 }

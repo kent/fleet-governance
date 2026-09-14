@@ -65,6 +65,7 @@ export type RecordProposalRef = {
   /** The action descriptor the decision covers, decoded from the proposal's own description. Absent
    *  for an `AMEND_CHARTER`, whose payload is a charter rather than one call. */
   action?: { class: string; target: string; argsHash: string };
+  execution?: import("@fleet/schemas").ExecutionPermitV1;
 };
 
 /** One agent's task loop, as the run's record remembers it (model runs only). `proposed` carries
@@ -436,6 +437,7 @@ export async function buildRecord(opts: {
           proposerAgentId: p.proposerAgentId,
           summary: p.summary,
           ...(p.decision.action ? { action: p.decision.action } : {}),
+          ...(p.decision.execution ? { execution: p.decision.execution } : {}),
         });
       }
       continue;

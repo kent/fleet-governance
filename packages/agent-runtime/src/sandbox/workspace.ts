@@ -129,6 +129,16 @@ export class Workspace {
     return readFile(await this.resolvePath(p), "utf8");
   }
 
+  /** Exact bytes for digest publication; UTF-8 replacement must not change an artifact's hash. */
+  async readArtifact(p: string): Promise<Uint8Array> {
+    const resolved = await this.resolvePath(p);
+    const stat = await lstat(resolved);
+    if (!stat.isFile() || stat.size > 1024 * 1024) throw new Error("artifact must be a regular file of at most 1 MiB");
+    const bytes = await readFile(resolved);
+    if (bytes.length > 1024 * 1024) throw new Error("artifact exceeds 1 MiB");
+    return bytes;
+  }
+
   async writeFile(p: string, content: string): Promise<void> {
     const resolved = await this.resolvePath(p);
     await mkdir(dirname(resolved), { recursive: true });

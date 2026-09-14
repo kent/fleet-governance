@@ -117,6 +117,39 @@ supervisor, cancellation, and revocation of its credentials and egress. The curr
 new calls; it is not a demonstrated fleet-wide process kill switch. The onchain resource check
 and write are atomic, so they do not have that offchain dispatch gap.
 
+## Publication in the model task loop
+
+`publish_artifact` accepts a workspace file path as `target` and empty `args`. It reads at most
+1 MiB and hashes the exact file bytes, including non-text bytes. The runtime supplies the actor,
+deployment, target code hash, expiry and nonce. Models have no raw transaction tool.
+
+The first request stays blocked while the model chooses `propose`, `drop` or `escalate`. A
+proposal carries the full permission through the usual voter workers, Governor and timelock.
+Retrying waits for a recorded `GRANT_EXCEPTION` for that specific permission. An unrelated
+decision does not release it. The contract rechecks authority when executing, and the tool reports
+success only after a receipt contains the matching `ArtifactPublished` event.
+
+The nonce is derived from the task, constitution version and digest. Restarting the adapter
+recreates the same permission instead of refreshing spent authority. Different bytes need a new
+approval. Followers review the step and vote; they do not publish their own copies automatically.
+The `artifact_published` stop condition keeps the coordinator working after tests pass until a
+publication succeeds or another stop condition applies.
+
+Select the **artifact-publication** model fixture in Runner, or use
+[`local-artifact-publication-model.experiment.json`](../experiments/examples/local-artifact-publication-model.experiment.json).
+It gives the fleet a coding task and asks for review before publication. It prescribes no ballot
+or outcome. Model runs require the configured provider budget and a dedicated capped key.
+
+The repeatable integration check uses scripted provider responses with the production task
+loop, signers and contracts:
+
+```sh
+pnpm typecheck
+pnpm --filter @fleet/agent-runtime build
+FLEET_INTEGRATION=1 pnpm exec vitest run --project integration \
+  apps/runner/src/model-run.integration.test.ts -t 'normal task loop publication'
+```
+
 ## Scope and remaining work
 
 This authority applies to the artifact store and other resources that grant the executor
@@ -128,8 +161,7 @@ Runtime code hashes protect against changed target bytecode. They do not detect 
 its implementation behind unchanged proxy bytecode. Use immutable targets, or separately govern
 and verify their upgrade authority before treating their behavior as fixed by a permit.
 
-The current execution harness prescribes proposals and ballots to test enforcement. It does not
-show spontaneous model behavior. The normal model task loop still needs an artifact publication
-tool that constructs these exact permissions, gives the model a choice to propose or abandon a
-blocked publication, and retries only after the recorded decision. That integration, a measured
-live-model pilot, and the full model experiment remain part of the goal.
+The execution harness and integration tests prescribe proposals and ballots to test enforcement.
+They do not show spontaneous model behaviour. A digest alone also does not establish that voters
+examined the file or that its contents are correct. A measured live-model pilot with publication
+available, the full model experiment, and infrastructure containment work remain part of the goal.

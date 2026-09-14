@@ -1,4 +1,6 @@
-import type { ActionClass, ActionDescriptor, CharterV1 } from "@fleet/schemas";
+import { keccak256 } from "viem";
+import type { Hex } from "viem";
+import type { ActionClass, ActionDescriptor, CharterV1, ExecutionPermitV1 } from "@fleet/schemas";
 import { describeAction, evaluateAction } from "@fleet/gateway";
 import type { DraftProposal, GatewayLogRecord, GatewayVerdict, LedgerSnapshot, LedgerWatcher } from "@fleet/gateway";
 import { payloadHashForAction } from "@fleet/sdk";
@@ -14,6 +16,13 @@ export type ToolResult =
 
 /** A successful sandbox invocation. Infrastructure failures return ToolResult.error. */
 export type RunTestsOutput = { passed: boolean; output: string };
+
+/** Trusted adapter fixed to the configured artifact store and this agent's signer. The model
+ * supplies a workspace path only. It cannot choose addresses, calldata, actor, nonce or expiry. */
+export type ArtifactPublisher = {
+  prepare(digest: Hex, snapshot: LedgerSnapshot): Promise<ExecutionPermitV1>;
+  execute(permit: ExecutionPermitV1): Promise<string>;
+};
 
 type SpawnResult = { code: number | null; output: string };
 type CommandRunner = (cmd: string, args: string[], opts: { cwd?: string }) => Promise<SpawnResult>;
@@ -34,6 +43,7 @@ export type ToolRouterOpts = {
    *  dependency traffic through the gateway. Host npm can execute scripts and contact hosts
    *  other than --registry, bypassing the fleet's decision. */
   packageInstallRunner?: CommandRunner;
+  artifactPublisher?: ArtifactPublisher | undefined;
 };
 
 /** Marker string an operator writes into `charter.forbiddenActions` to mean "no writes that
@@ -117,6 +127,7 @@ export class ToolRouter {
   private readonly fetchImpl: typeof fetch;
   private readonly runDockerTests: (dir: string) => Promise<{ passed: boolean; output: string }>;
   private readonly packageInstallRunner: CommandRunner | undefined;
+  private readonly artifactPublisher: ArtifactPublisher | undefined;
 
   constructor(opts: ToolRouterOpts) {
     this.workspace = opts.workspace;
@@ -127,13 +138,15 @@ export class ToolRouter {
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.runDockerTests = opts.dockerRunTests ?? realDockerRunTests;
     this.packageInstallRunner = opts.packageInstallRunner;
+    this.artifactPublisher = opts.artifactPublisher;
   }
 
   usage(): { toolCalls: number } {
     return { toolCalls: this.usageState.toolCalls };
   }
 
-  async call(tc: ToolCall): Promise<ToolResult> {
+  async call(tc: ToolCall, signal?: AbortSignal): Promise<ToolResult> {
+    if (signal?.aborted) return { ok: false, error: "aborted" };
     const descriptor = describeAction({ class: tc.class, target: tc.target, args: tc.args });
     const snapshot = await this.watcher.snapshot();
 
@@ -141,6 +154,19 @@ export class ToolRouter {
     // Every call counts against the budget, allowed or blocked (amendment 7): a fleet that keeps
     // calling tools after it has run out of budget keeps getting blocked, not a fresh chance.
     this.usageState.toolCalls += 1;
+
+    let execution: ExecutionPermitV1 | undefined;
+    if (tc.class === "publish_artifact" && this.artifactPublisher
+      && verdict.verdict === "BLOCK" && verdict.reason === "permission_required") {
+      try {
+        const bytes = await this.workspace.readArtifact(tc.target);
+        execution = await this.artifactPublisher.prepare(keccak256(bytes), snapshot);
+        verdict = await evaluateAction(snapshot, descriptor, { toolCalls: this.usageState.toolCalls - 1 }, execution);
+      } catch (err) {
+        this.logSink(this.buildLogRecord(snapshot, descriptor, verdict));
+        return { ok: false, error: errorMessage(err) };
+      }
+    }
 
     if (verdict.verdict === "ALLOW" && tc.class === "write_repo" && this.isForbiddenTestWrite(snapshot.charter, tc.target)) {
       // F3: this block is waivable like any other forbidden_action (spec 7.6, evaluate.ts's
@@ -166,7 +192,9 @@ export class ToolRouter {
     }
 
     try {
-      const output = await this.execute(tc);
+      if (signal?.aborted) return { ok: false, error: "aborted" };
+      const output = execution && this.artifactPublisher
+        ? await this.artifactPublisher.execute(execution) : await this.execute(tc);
       return { ok: true, output };
     } catch (err) {
       return { ok: false, error: errorMessage(err) };
@@ -214,6 +242,8 @@ export class ToolRouter {
         return this.packageInstall(tc);
       case "network_fetch":
         return this.networkFetch(tc);
+      case "publish_artifact":
+        throw new Error("artifact publication requires an exact contract permit");
       case "shell":
         // Unreachable: evaluateAction hard-blocks `shell` (spec 10.2) before ALLOW is ever
         // returned, so `call` never reaches `execute` for this class.
