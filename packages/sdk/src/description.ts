@@ -1,7 +1,7 @@
 import type { Hex } from "viem";
 import { DecisionV1, canonicalize } from "@fleet/schemas";
 import type { DecisionKind } from "@fleet/schemas";
-import { decodeRecordDecision } from "./actions.js";
+import { decodeRecordDecision, payloadHashForAction, payloadHashForCharter } from "./actions.js";
 
 /** The trailing marker the unpatched DAO Node parser requires, spec 8.2. */
 export const DESCRIPTION_MARKER = "#proposalTypeId=0";
@@ -118,11 +118,33 @@ export function parseDecisionDescription(description: string): { decision: Decis
   return { decision, markerPresent: lastLine === DESCRIPTION_MARKER };
 }
 
+function sameHash(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
 /**
  * Checks a proposal description's fenced decision against the decoded calldata it accompanies,
  * and against the account that actually proposed it. Spec 8.2: "the fenced JSON block is
  * canonical and its fields must match decoded calldata and the actual proposer, or the SDK
  * refuses to vote For". Reports every mismatch found, not just the first.
+ *
+ * The five scalar fields (`taskId`, `kind`, `expectedVersion`, `payloadHash`, `proposerAgentId`)
+ * are not enough on their own: `action` and `newCharter` are the two fields of that block that
+ * carry the payload a voter actually reads, and the ledger only ever sees the payload through
+ * `payloadHash`/`newCharterText`. Without the checks below, a description could render a benign
+ * charter or a benign action descriptor while the calldata committed to a different one, and this
+ * function would still report `ok` (final review C1). So the payload the description shows must
+ * hash to exactly the payload hash the calldata commits to:
+ *
+ * - `AMEND_CHARTER`: the description must carry `newCharter`, its canonical bytes must equal the
+ *   calldata's `newCharterText`, and `keccak256(newCharterText)` must equal `payloadHash` (the
+ *   same equality `TaskLedger._applyAmendment` enforces onchain);
+ * - any decision carrying an `action` descriptor: `payloadHashForAction(action)` must equal
+ *   `payloadHash`;
+ * - anything that is not an amendment: `newCharterText` must be empty and the description must
+ *   carry no `newCharter` (an amendment payload smuggled into a non-amendment kind);
+ * - `GRANT_EXCEPTION` and `CHOOSE_PATH`: the description must carry the `action` its payload hash
+ *   covers, so a voter can see what is being permitted.
  */
 export function verifyDescriptionAgainstCalldata(
   description: string,
@@ -151,6 +173,45 @@ export function verifyDescriptionAgainstCalldata(
     mismatches.push(
       `proposer: description names agent ${decision.proposerAgentId}, actual proposer is agent ${proposer.agentId}`,
     );
+  }
+
+  if (decoded.kind === "AMEND_CHARTER") {
+    if (!decision.newCharter) {
+      mismatches.push("newCharter: calldata is an AMEND_CHARTER but the description carries no newCharter object");
+    } else {
+      const canonicalNewCharter = canonicalize(decision.newCharter);
+      if (canonicalNewCharter !== decoded.newCharterText) {
+        mismatches.push(
+          "newCharter: the description's charter does not canonicalize to the calldata's newCharterText",
+        );
+      }
+    }
+    const charterPayloadHash = payloadHashForCharter(decoded.newCharterText);
+    if (!sameHash(charterPayloadHash, decoded.payloadHash)) {
+      mismatches.push(
+        `payloadHash: calldata's newCharterText hashes to ${charterPayloadHash}, calldata says ${decoded.payloadHash}`,
+      );
+    }
+  } else {
+    if (decoded.newCharterText !== "") {
+      mismatches.push(`newCharterText: calldata carries charter text on a ${decoded.kind} decision, which takes none`);
+    }
+    if (decision.newCharter) {
+      mismatches.push(`newCharter: description carries a charter on a ${decoded.kind} decision, which takes none`);
+    }
+  }
+
+  if (decision.action) {
+    const actionPayloadHash = payloadHashForAction(decision.action);
+    if (!sameHash(actionPayloadHash, decoded.payloadHash)) {
+      mismatches.push(
+        `payloadHash: the description's action hashes to ${actionPayloadHash}, calldata says ${decoded.payloadHash}`,
+      );
+    }
+  }
+
+  if ((decoded.kind === "GRANT_EXCEPTION" || decoded.kind === "CHOOSE_PATH") && !decision.action) {
+    mismatches.push(`action: calldata is a ${decoded.kind} but the description carries no action descriptor`);
   }
 
   if (mismatches.length > 0) return { ok: false, mismatches };

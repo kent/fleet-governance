@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Address, Hex } from "viem";
-import type { CharterV1, DecisionV1 } from "@fleet/schemas";
+import { canonicalize } from "@fleet/schemas";
+import type { ActionDescriptor, CharterV1, DecisionV1 } from "@fleet/schemas";
 import {
   ProposalState,
   TaskState,
   buildDecisionDescription,
   encodeRecordDecision,
+  payloadHashForAction,
+  payloadHashForCharter,
 } from "@fleet/sdk";
 import type { FleetClient, FleetSigner, NonceManager, ProposalCreatedView, TaskView } from "@fleet/sdk";
 import { MemoryJobStore } from "./jobs.js";
@@ -22,7 +25,15 @@ const PROPOSER_ACCOUNT = "0xdddddddddddddddddddddddddddddddddddddd" as Address;
 const OPERATOR = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" as Address;
 const TX_HASH = ("0x" + "44".repeat(32)) as Hex;
 const BLOCK_HASH = ("0x" + "55".repeat(32)) as Hex;
-const PAYLOAD_HASH = ("0x" + "11".repeat(32)) as Hex;
+/** The action the proposal's `CHOOSE_PATH` decision covers. Spec 8.2 requires the fenced block to
+ *  carry the payload its `payloadHash` commits to, and `verifyDescriptionAgainstCalldata` now
+ *  checks exactly that (final review C1), so this fixture's descriptor and hash agree. */
+const CHOSEN_ACTION: ActionDescriptor = {
+  class: "read_repo",
+  target: "src/lib.ts",
+  argsHash: ("0x" + "11".repeat(32)) as Hex,
+};
+const PAYLOAD_HASH = payloadHashForAction(CHOSEN_ACTION);
 const PROPOSAL_ID = 7n;
 const TASK_ID = 42n;
 const AGENT_ID = 3;
@@ -45,6 +56,7 @@ const DECISION: DecisionV1 = {
   expectedVersion: 1,
   payloadHash: PAYLOAD_HASH,
   proposerAgentId: PROPOSER_AGENT_ID,
+  action: CHOSEN_ACTION,
   summary: "Take the left fork",
   rationale: "It leads to the tests passing",
   assumptions: [],
@@ -99,6 +111,9 @@ function agentManifest(role: string): string {
 
 type FakeClientOpts = {
   members?: MemberRow[];
+  /** Overrides the `ProposalCreated` view every read returns, for tests about what the proposal
+   *  itself says (rather than about the worker's own state machine). */
+  proposal?: ProposalCreatedView;
   hasVoted?: boolean;
   proposalState?: ProposalState;
   deadline?: bigint;
@@ -128,7 +143,7 @@ function makeFakeClient(opts: FakeClientOpts = {}): FleetClient {
         transactionHash: hash,
       }),
     },
-    getProposalCreated: async () => makeProposal(),
+    getProposalCreated: async () => opts.proposal ?? makeProposal(),
     getTask: async () => makeTask(),
     listMembers: async () => members,
     getProposalState: async () => proposalState,
@@ -314,6 +329,60 @@ describe("Worker: verification mismatch (spec 8.2 / 10.4 to 10.8)", () => {
     const { worker, signer } = makeWorker({
       script: { [AGENT_ID]: "FOR" },
       client: makeFakeClient({ members: membersWithoutProposer }),
+    });
+    const job = await worker.handleProposal(PROPOSAL_ID);
+
+    expect(job.state).toBe("refused_for_on_mismatch");
+    expect(job.txHash).toBeNull();
+    expect(signer.castVoteWithReason).not.toHaveBeenCalled();
+  });
+
+  it("refuses FOR on an AMEND_CHARTER whose description renders a different charter than the calldata commits to", async () => {
+    // Final review C1. Every scalar field of the fenced block agrees with the calldata: the
+    // proposal renders the benign charter and sets payloadHash to keccak256 of the malicious
+    // charter text, which is exactly what TaskLedger._applyAmendment checks newCharterText
+    // against. Without the payload checks in verifyDescriptionAgainstCalldata this proposal reads
+    // as verified and the malicious charter becomes the task's charter on execution.
+    const benignCharter: CharterV1 = { ...CHARTER, allowedActionClasses: ["read_repo"] };
+    const maliciousCharter: CharterV1 = {
+      ...CHARTER,
+      allowedActionClasses: ["read_repo", "write_repo", "network_fetch", "package_install"],
+      forbiddenActions: [],
+    };
+    const maliciousCharterText = canonicalize(maliciousCharter);
+    const maliciousCharterHash = payloadHashForCharter(maliciousCharterText);
+
+    const lyingDecision: DecisionV1 = {
+      schema: "fleet.decision.v1",
+      taskId: TASK_ID.toString(),
+      kind: "AMEND_CHARTER",
+      expectedVersion: 1,
+      payloadHash: maliciousCharterHash,
+      proposerAgentId: PROPOSER_AGENT_ID,
+      newCharter: benignCharter,
+      summary: "Tidy the charter",
+      rationale: "A small clarification of the existing rules.",
+      assumptions: [],
+      riskFlags: [],
+    };
+    const lyingProposal: ProposalCreatedView = {
+      ...makeProposal(),
+      description: buildDecisionDescription(lyingDecision, "engineer"),
+      calldatas: [
+        encodeRecordDecision({
+          taskId: TASK_ID,
+          kind: "AMEND_CHARTER",
+          expectedVersion: 1,
+          payloadHash: maliciousCharterHash,
+          newCharterText: maliciousCharterText,
+          summary: lyingDecision.summary,
+        }),
+      ],
+    };
+
+    const { worker, signer } = makeWorker({
+      script: { [AGENT_ID]: "FOR" },
+      client: makeFakeClient({ proposal: lyingProposal }),
     });
     const job = await worker.handleProposal(PROPOSAL_ID);
 
