@@ -58,13 +58,32 @@ issue, in either the context-scoped or the global form; this reproduces identica
 both, so it is a `solar` limitation on this project layout, not a defect in the remapping
 itself.
 
-`[lint] ignore = ["lib/**"]` does not work around this: it only excludes matched files from
-having lint *rules* reported, but `solar` still tries to resolve their imports while building
-its analysis graph and still fails with the same "file not found" error.
+**Scoping tried first, before disabling anything.** Per review, I tried to scope the linter
+away from the submodule instead of disabling it project-wide, with `lint_on_build` left at
+its default (`true`):
 
-**Fix applied:** added to `contracts/foundry.toml`:
+- `[lint] ignore = ["lib/**"]` and `[lint] ignore = ["lib/agora-governor/**"]`, checked
+  against `forge lint --help` and the resolved config (`forge config`, which lists `ignore`
+  under `[lint]`). Both left `forge lint` (and `forge build`) failing with the identical
+  `solar run failed` / "file src/interfaces/IHooks.sol not found" error.
+- `forge lint src test` (passing our own directories directly as `PATH` arguments, which
+  `forge lint --help` documents as overriding the `ignore` project config). Still failed the
+  same way, because our own `test/unit/AgoraCompiles.t.sol` imports `AgoraGovernor`, so
+  `solar` must still resolve the whole import graph reachable from our file to lint it, and
+  that graph runs straight into `lib/agora-governor/src/AgoraGovernor.sol`'s own `src/...`
+  imports.
+
+Conclusion: `ignore` (by path glob, or by restricting the `forge lint` `PATH` arguments to
+only our own files) only controls which files get lint *rule* findings reported. It does not
+stop `solar` from needing to resolve every file reachable by import from whatever it is
+linting, which includes the submodule as soon as anything imports `AgoraGovernor`. There is
+no config that scopes `solar`'s import resolution itself away from `lib/`, so scoping is not
+viable here; disabling is the only working option.
+
+**Fix applied:** added to `contracts/foundry.toml`, with a comment recording why:
 
 ```toml
+# solar (forge lint) cannot resolve the submodule remapping; see docs/compatibility-notes.md
 [lint]
 lint_on_build = false
 ```
@@ -73,11 +92,31 @@ This is one section beyond the brief's verbatim `foundry.toml` content, added be
 without it `forge build` (the project's most basic command, used by every later task) always
 fails on this vendored submodule regardless of remapping choice. With `lint_on_build = false`,
 `forge build` and `forge build --sizes` compile cleanly with exit code 0 and no error output.
+Note this also disables lint-on-build for our own future `contracts/src` files, not just the
+submodule; there is no per-path way to disable it only for `lib/` (see above), so anyone
+wanting lint feedback on our own contracts should run `forge lint src test` explicitly (or
+their editor's Solidity lint integration) rather than relying on `forge build`.
 
-**Known residual noise:** `forge test` still prints the same non-fatal `solar` "file not
-found" lines to stderr on every run (this does not appear to be gated by
-`lint_on_build`), but it does not affect the exit code or test results; `forge test` exits 0
-and all tests pass. This looks like a `forge test` behavior that runs its own lint pass
-regardless of the `lint_on_build` setting used by `forge build`. Treat these lines as benign
-tool noise from `solar`, not a real compilation or test failure, unless a later Foundry
-release changes this behavior.
+**Known residual noise on `forge test`, and why it is safe to ignore:** `forge test` still
+prints the same non-fatal `solar` "file not found" lines to stderr on every run, for example:
+
+```
+error: file src/interfaces/IHooks.sol not found
+   --> lib/agora-governor/src/AgoraGovernor.sol:16:22
+```
+
+This is not gated by `[lint] lint_on_build`: it stayed `false` throughout and `forge test`
+printed the lines anyway. I also tried `FOUNDRY_LINT_ON_BUILD=false forge test` (env var
+override) and checked `forge test --help` / `forge build --help` / `forge --help` for a
+`--no-lint`-style flag; none exists in Foundry 1.7.1, and the env var did not change the
+output. There is no available config, flag, or env var that removes this noise from `forge
+test` in this Foundry version.
+
+It does not affect correctness: `forge test`'s exit code and its `[PASS]`/`[FAIL]` per-test
+results are unaffected, and the full suite consistently exits `0` with `3 passed; 0 failed`
+across repeated runs (clean and cached). **Any CI or script that runs `forge build` or
+`forge test` in this repository must judge success by the process exit code, never by
+scanning stdout/stderr for the strings "error" or "not found"** (or any other substring
+match), because `solar`'s non-fatal diagnostic noise will produce false failures under that
+approach. Treat the lines above as benign tool noise from `solar`, not a real compilation or
+test failure, unless a later Foundry release changes this behavior.

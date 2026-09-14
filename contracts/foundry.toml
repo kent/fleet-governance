@@ -24,5 +24,6 @@ fail_on_revert = false
 [profile.ci.fuzz]
 runs = 1024
 
+# solar (forge lint) cannot resolve the submodule remapping; see docs/compatibility-notes.md
 [lint]
 lint_on_build = false
