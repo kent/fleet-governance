@@ -1,5 +1,6 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadRunKeysFromEnv } from "./run-pipeline.js";
+import { loadRunKeysFromEnv, manifestPathsForRun } from "./run-pipeline.js";
 
 const KEY = (n: number) => `0x${n.toString().padStart(2, "0").repeat(32)}`;
 
@@ -45,5 +46,26 @@ describe("loadRunKeysFromEnv", () => {
       FLEET_KEEPER_KEY: KEY(4),
     };
     expect(loadRunKeysFromEnv(env, 0).agentKeys).toEqual({});
+  });
+});
+
+describe("manifestPathsForRun (final review I8)", () => {
+  it("writes under deployments/<chainId>/, the path the runbook and bootstrap-local.sh name", () => {
+    const paths = manifestPathsForRun("/repo/deployments", 84532, "run-7");
+    expect(paths.latest).toBe(path.join("/repo/deployments", "84532", "latest.json"));
+    expect(paths.perRun).toBe(path.join("/repo/deployments", "84532", "run-run-7.json"));
+  });
+
+  it("uses the same latest.json on Anvil that bootstrap-local.sh writes", () => {
+    expect(manifestPathsForRun("/repo/deployments", 31337, "run-1").latest).toBe(
+      path.join("/repo/deployments", "31337", "latest.json"),
+    );
+  });
+
+  it("gives two different runs on one chain different per-run copies", () => {
+    const a = manifestPathsForRun("/repo/deployments", 31337, "run-a");
+    const b = manifestPathsForRun("/repo/deployments", 31337, "run-b");
+    expect(a.latest).toBe(b.latest);
+    expect(a.perRun).not.toBe(b.perRun);
   });
 });

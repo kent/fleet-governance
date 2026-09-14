@@ -28,10 +28,19 @@ export type RunPipelineOptions = {
   fixturesDir: string;
   contractsDir: string;
   configDir: string;
-  manifestOutPath: string;
   infraDir: string;
   abiSourceDir: string;
+  /** Where deployment manifests live. `fleet run` writes this run's manifest to
+   *  `<deploymentsDir>/<chainId>/latest.json` plus a per-run copy
+   *  `<deploymentsDir>/<chainId>/run-<runId>.json` (spec section 8's deployment layout, spec 16.2's
+   *  "writes the manifest under `deployments/84532/`", and the same file
+   *  `infra/scripts/bootstrap-local.sh` writes for Anvil). Final review I8: the pipeline used to
+   *  write `deployments/experiment-latest.json`, which no other tool or document reads. */
   deploymentsDir: string;
+  /** Base report directory: this run's `record.json` and `report.md` go under
+   *  `<reportDir>/<runId>/`, the same directory `fleet capture`/`fleet report --report-dir` read
+   *  and the same one the run store uses. */
+  reportDir: string;
   store: RunStore;
   /** Whether the read side (Docker Compose: DAO Node, CPLS, Agora Next) is part of this run.
    *  Gates PREFLIGHT's `docker`/container-health/bucket checks, CPLS per-decision archive sync
@@ -43,6 +52,10 @@ export type RunPipelineOptions = {
 export type RunPipelineCtx = {
   opts: RunPipelineOptions;
   experiment: ExperimentConfigV1Type;
+  /** The chain id the target RPC actually reported, known from `CHAIN_READY` onward. */
+  chainId: number | null;
+  /** `<deploymentsDir>/<chainId>/latest.json`, derivable only once `chainId` is known. */
+  manifestOutPath: string | null;
   manifest: ManifestV1Type | null;
   addresses: FleetAddresses | null;
   client: FleetClient | null;
@@ -73,6 +86,15 @@ export function loadRunKeysFromEnv(env: NodeJS.ProcessEnv, memberCount: number):
   };
 }
 
+/** The two manifest paths a run writes, spec section 8's layout: `latest.json` is the pointer the
+ *  next deployment overwrites, and `run-<runId>.json` is this run's own copy, so a later
+ *  `fleet capture` or a report can still name the exact manifest a given run deployed against
+ *  after another run has moved `latest.json` on (final review I8). */
+export function manifestPathsForRun(deploymentsDir: string, chainId: number, runId: string): { latest: string; perRun: string } {
+  const dir = path.join(deploymentsDir, String(chainId));
+  return { latest: path.join(dir, "latest.json"), perRun: path.join(dir, `run-${runId}.json`) };
+}
+
 function loadExperiment(experimentPath: string): ExperimentConfigV1Type {
   const text = readFileSync(experimentPath, "utf8");
   const json: unknown = JSON.parse(text);
@@ -81,6 +103,16 @@ function loadExperiment(experimentPath: string): ExperimentConfigV1Type {
     throw new RunnerEnvError(`experiment config at ${experimentPath} does not parse as fleet.experiment.v1: ${result.error.message}`);
   }
   return result.data;
+}
+
+function requireChainId(ctx: RunPipelineCtx, stage: StageName): number {
+  if (ctx.chainId === null) throw new Error(`${stage}: chain id unknown (CHAIN_READY did not run)`);
+  return ctx.chainId;
+}
+
+function requireManifestPath(ctx: RunPipelineCtx, stage: StageName): string {
+  if (ctx.manifestOutPath === null) throw new Error(`${stage}: manifest path unknown (CHAIN_READY did not run)`);
+  return ctx.manifestOutPath;
 }
 
 /** Builds the ten spec 12.2 `fleet run` stages. Each stage checks chain or file state before
@@ -116,10 +148,16 @@ export function buildRunStages(env: NodeJS.ProcessEnv): readonly Stage<RunPipeli
         ...Object.entries(keys.agentKeys).map(([id, key]) => ({ label: `agent${id}`, address: privateKeyToAccount(key).address })),
       ];
 
+      // The manifest path depends on the chain id, which CHAIN_READY has not read yet, so look
+      // where a deployment for the configured target would already be: the experiment's own
+      // `target.kind` fixes that chain id (final review I2), and the RPC is checked against it
+      // below.
+      const targetChainId = chainIdForKind(ctx.experiment.target.kind);
+      const existingManifestPath = manifestPathsForRun(ctx.opts.deploymentsDir, targetChainId, ctx.opts.runId).latest;
       let existingManifestChainId: number | undefined;
-      if (existsSync(ctx.opts.manifestOutPath)) {
+      if (existsSync(existingManifestPath)) {
         try {
-          const parsed = ManifestV1.safeParse(JSON.parse(readFileSync(ctx.opts.manifestOutPath, "utf8")));
+          const parsed = ManifestV1.safeParse(JSON.parse(readFileSync(existingManifestPath, "utf8")));
           if (parsed.success) existingManifestChainId = parsed.data.chainId;
         } catch {
           // an unreadable or invalid existing manifest is DEPLOYED's problem, not PREFLIGHT's
@@ -133,7 +171,7 @@ export function buildRunStages(env: NodeJS.ProcessEnv): readonly Stage<RunPipeli
         }),
         readSideEnabled,
         keyAddresses,
-        expectedChainId: chainIdForKind(ctx.experiment.target.kind),
+        expectedChainId: targetChainId,
         ...(existingManifestChainId !== undefined ? { existingManifestChainId } : {}),
       };
       if (readSideEnabled) {
@@ -179,35 +217,43 @@ export function buildRunStages(env: NodeJS.ProcessEnv): readonly Stage<RunPipeli
           `CHAIN_READY: ${ctx.experiment.target.rpcHttp} reports chainId ${chainId}, but target.kind "${ctx.experiment.target.kind}" means chainId ${expected}`,
         );
       }
-      log(ctx, `chain ready: ${ctx.experiment.target.rpcHttp} reports chainId ${chainId}`);
-      return ctx;
+      const { latest } = manifestPathsForRun(ctx.opts.deploymentsDir, chainId, ctx.opts.runId);
+      log(ctx, `chain ready: ${ctx.experiment.target.rpcHttp} reports chainId ${chainId}; manifest path ${latest}`);
+      return { ...ctx, chainId, manifestOutPath: latest };
     },
 
     DEPLOYED: async (ctx) => {
       // PREFLIGHT always runs first (it is the first stage; runStages only ever resumes strictly
       // after it) and already loaded and balance-checked every key, including the deployer's.
       const keys = ctx.keys ?? loadRunKeysFromEnv(env, ctx.experiment.fleet.members.length);
+      const chainId = requireChainId(ctx, "DEPLOYED");
+      const { latest, perRun } = manifestPathsForRun(ctx.opts.deploymentsDir, chainId, ctx.opts.runId);
       const configPath = path.join(ctx.opts.configDir, `${ctx.experiment.name}.deploy.json`);
       const { manifest, deployed } = await deployFleet({
         contractsDir: ctx.opts.contractsDir,
         configPath,
         rpcUrl: ctx.experiment.target.rpcHttp,
         deployerKey: keys.deployerKey,
-        outPath: ctx.opts.manifestOutPath,
+        outPath: latest,
+        expectedChainId: chainId,
       });
-      log(ctx, `deployed: ${deployed ? "ran forge script" : "reused existing manifest"} at ${ctx.opts.manifestOutPath}`);
-      return { ...ctx, manifest, keys };
+      // The per-run copy is byte-identical to `latest.json` and never overwritten by a later run,
+      // so `record.json`'s manifest can always be matched back to a file on disk (final review I8).
+      mkdirSync(path.dirname(perRun), { recursive: true });
+      writeFileSync(perRun, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+      log(ctx, `deployed: ${deployed ? "ran forge script" : "reused existing manifest"} at ${latest} (run copy ${perRun})`);
+      return { ...ctx, manifest, keys, manifestOutPath: latest };
     },
 
     VERIFIED: async (ctx) => {
-      await verifyDeployment({ contractsDir: ctx.opts.contractsDir, manifestPath: ctx.opts.manifestOutPath, rpcUrl: ctx.experiment.target.rpcHttp });
+      await verifyDeployment({ contractsDir: ctx.opts.contractsDir, manifestPath: requireManifestPath(ctx, "VERIFIED"), rpcUrl: ctx.experiment.target.rpcHttp });
       log(ctx, "verified: VerifyDeployment.s.sol reported VERIFIED");
       return ctx;
     },
 
     INDEXERS_READY: async (ctx) => {
       await readside({
-        manifestPath: ctx.opts.manifestOutPath,
+        manifestPath: requireManifestPath(ctx, "INDEXERS_READY"),
         infraDir: ctx.opts.infraDir,
         abiSourceDir: ctx.opts.abiSourceDir,
         deploymentsDir: ctx.opts.deploymentsDir,
@@ -290,7 +336,7 @@ export function buildRunStages(env: NodeJS.ProcessEnv): readonly Stage<RunPipeli
         timings: {},
         versions: { node: process.version },
       });
-      const runDir = path.join(ctx.opts.deploymentsDir, "..", ctx.experiment.capture.reportDir, ctx.opts.runId);
+      const runDir = path.join(ctx.opts.reportDir, ctx.opts.runId);
       const recordPath = path.join(runDir, "record.json");
       writeJsonRecord(recordPath, record);
       log(ctx, `captured: wrote ${recordPath}`);
@@ -316,6 +362,8 @@ export function buildRunStages(env: NodeJS.ProcessEnv): readonly Stage<RunPipeli
 export function toRunPayload(ctx: RunPipelineCtx): Record<string, unknown> {
   return {
     experimentName: ctx.experiment.name,
+    chainId: ctx.chainId,
+    manifestOutPath: ctx.manifestOutPath,
     manifestChainId: ctx.manifest?.chainId ?? null,
     taskId: ctx.taskId?.toString() ?? null,
     proposalId: ctx.result?.proposalId?.toString() ?? null,
@@ -331,6 +379,8 @@ export async function runExperiment(opts: RunPipelineOptions, env: NodeJS.Proces
   const initialCtx: RunPipelineCtx = {
     opts,
     experiment,
+    chainId: null,
+    manifestOutPath: null,
     manifest: null,
     addresses: null,
     client: null,

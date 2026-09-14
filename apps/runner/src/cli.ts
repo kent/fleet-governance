@@ -192,10 +192,10 @@ program
         fixturesDir: defaultFixturesDir(),
         contractsDir: defaultContractsDir(),
         configDir: path.join(repoRoot, "deployments", "configs"),
-        manifestOutPath: path.join(repoRoot, "deployments", "experiment-latest.json"),
         infraDir: path.join(repoRoot, "infra"),
         abiSourceDir: defaultAbiSourceDir(),
         deploymentsDir: defaultDeploymentsDir(),
+        reportDir: opts.reportDir,
         readSide: opts.readside,
         store,
         log: (m) => {

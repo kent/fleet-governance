@@ -52,14 +52,17 @@ proposes, votes, or delegates, so it sits outside `FleetSigner`'s policy).
 
 The full pipeline, spec 12.2's stages exactly: `PREFLIGHT -> CHAIN_READY -> DEPLOYED -> VERIFIED ->
 INDEXERS_READY -> TASK_OPENED -> AGENTS_RUNNING -> TASK_ENDED -> CAPTURED -> REPORTED`, driven by a
-`fleet.experiment.v1` config and one scripted fixture (`scenario.fixture`). Every stage checks
-chain or file state before acting, so `--run-id <id>` resumes a partially completed run without
-redoing finished work. `DEPLOYED` deploys from `deployments/configs/<experiment name>.deploy.json`
-(a `fleet.deploy.v1` config named after the experiment). Run state is persisted in Postgres (table
-`runs`) when `RUNNER_PG_URL` is set, otherwise in a JSON file under the run's own report directory.
-Since `fleet.experiment.v1`
-only references keys "by reference to the secret store" rather than carrying them inline, `fleet
-run` reads one environment variable per role: `FLEET_DEPLOYER_KEY`, `FLEET_OPERATOR_KEY`,
+`fleet.experiment.v1` config and one scripted fixture (`scenario.fixture`). `DEPLOYED` deploys from
+`deployments/configs/<experiment name>.deploy.json` (a `fleet.deploy.v1` config named after the
+experiment) and writes the manifest to `deployments/<chainId>/latest.json`, the same path
+`infra/scripts/bootstrap-local.sh`, `fleet readside`, and the deployment runbook name, plus a
+per-run copy at `deployments/<chainId>/run-<runId>.json` that no later run overwrites. The chain id
+is known from `CHAIN_READY` onward, and `PREFLIGHT` refuses an RPC whose chain id is not the one
+`target.kind` names (or is not one of Anvil `31337` and Base Sepolia `84532` at all). Run state is
+persisted in Postgres (table `runs`) when `RUNNER_PG_URL` is set, otherwise in a JSON file under
+the run's own report directory. Since `fleet.experiment.v1` only references keys "by reference to
+the secret store" rather than carrying them inline, `fleet run` reads one environment variable per
+role: `FLEET_DEPLOYER_KEY`, `FLEET_OPERATOR_KEY`,
 `FLEET_GUARDIAN_KEY`, `FLEET_KEEPER_KEY`, and `FLEET_AGENT_KEY_<n>` for each fleet member `n`
 (matching the naming `apps/worker`, `apps/keeper`, and `DeployFleet.s.sol` already use).
 
