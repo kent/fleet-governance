@@ -8,6 +8,9 @@
   },
   "scripts": {
     "start": "tsx src/cli.ts",
+    "dev": "next dev -p 3100 --webpack",
+    "build": "next build --webpack",
+    "ui": "next start -p 3100",
     "test": "vitest run",
     "test:integration": "FLEET_INTEGRATION=1 vitest run --project integration",
     "typecheck": "tsc --noEmit"
@@ -19,12 +22,21 @@
     "@fleet/schemas": "workspace:*",
     "@fleet/sdk": "workspace:*",
     "commander": "15.0.0",
+    "dotenv": "17.4.2",
+    "next": "16.3.5",
     "pg": "8.23.0",
     "pino": "10.3.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
     "viem": "2.56.5"
   },
   "devDependencies": {
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.7",
     "@types/pg": "8.23.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "jsdom": "30.0.1",
     "tsx": "4.23.13"
   }
 }

@@ -2,9 +2,14 @@
 .worktrees/
 node_modules/
 dist/
+.next/
 *.tsbuildinfo
 .env
 infra/.env
 *.log
 .DS_Store
 contracts/.fleet-manifest-tmp.json
+deployments/demo-latest.json
+deployments/experiment-latest.json
+experiments/configs/*
+!experiments/configs/.gitkeep
