@@ -32,6 +32,8 @@ import type { JobState } from "@fleet/agent-runtime";
 import { describeAction } from "@fleet/gateway";
 import type { GatewayLogRecord } from "@fleet/gateway";
 import { checkGateway } from "./gateway-check.js";
+import { insertVoteRow, syncCplsAfterStage, waitForDaoNode } from "./cpls-sync.js";
+import type { FetchLike, QueryablePool } from "./cpls-sync.js";
 import { ZERO_BYTES32, timelockSalt } from "./timelock.js";
 
 export type FleetKeys = {
@@ -40,6 +42,19 @@ export type FleetKeys = {
   guardianKey: Hex;
   keeperKey: Hex;
   agentKeys: Record<number, Hex>;
+};
+
+/** Everything `runFixture` needs to sync the read side after each governance transaction (task 8
+ *  finding 3). `votesPool` must be connected to the `agora_web3` database (CPLS's own vote
+ *  source, `fleet.votes`; see `cpls-sync.ts`'s `insertVoteRow`). */
+export type ReadSideSyncConfig = {
+  votesPool: QueryablePool;
+  daoNodeUrl: string;
+  cplsUrl: string;
+  offline: boolean;
+  fakeGcsUrl?: string;
+  bucketName: string;
+  fetchFn?: FetchLike;
 };
 
 export type FixtureRunContext = {
@@ -57,6 +72,17 @@ export type FixtureRunContext = {
    *  to the deploy config's `votingPeriod`. */
   submissionMarginSec: number;
   log?: (message: string) => void;
+  /** Called once the trigger proposal's id is known (freshly submitted, or found already existing
+   *  on resume), before anything else about the fixture is driven (task 8 finding 1). A caller
+   *  that persists run state (`fleet run`) uses this to write a per-fixture sub-checkpoint, so a
+   *  crash-and-resume has a record of which proposal this fixture was already on, independent of
+   *  the top-level stage checkpoint (which only advances once the whole stage returns). */
+  onProposalKnown?: (proposalId: bigint, txHash: Hex) => Promise<void> | void;
+  /** When set, the read side is enabled: after propose, after every scripted vote, and after the
+   *  fixture reaches its final state, `runFixture` inserts the new `fleet.votes` rows CPLS needs
+   *  and posts+waits for a CPLS archive sync (task 8 finding 3). `undefined` (the default) means
+   *  the read side is not part of this run, matching `fleet demo` without `--readside`. */
+  readSideSync?: ReadSideSyncConfig;
 };
 
 export type FixtureVoteResult = {
@@ -250,13 +276,13 @@ async function roleForAgent(ctx: FixtureRunContext, agentId: number): Promise<st
   return "agent";
 }
 
-/** Submits the fixture's `trigger` as a real proposal, from `trigger.agentId`'s key, through
- *  `FleetSigner.propose` (task 8 controller notes). */
-async function submitTrigger(
-  ctx: FixtureRunContext,
-  taskId: bigint,
-  fixture: FixtureV1,
-): Promise<{ proposalId: bigint; txHash: Hex; description: string; decision: DecisionV1 }> {
+type TriggerDecision = { decision: DecisionV1; description: string; payloadHash: Hex; newCharterText: string };
+
+/** Deterministically rebuilds the fixture's trigger decision and its proposal description,
+ *  without sending anything. Shared by `submitTrigger` and `findExistingProposal` (task 8 finding
+ *  1: resuming a fixture mid-`AGENTS_RUNNING` must recompute the exact same proposal id a fresh
+ *  submission would have used, so both paths have to build byte-identical calldata/description). */
+export async function buildTriggerDecision(ctx: FixtureRunContext, taskId: bigint, fixture: FixtureV1): Promise<TriggerDecision> {
   const task = await ctx.client.getTask(taskId);
   const expectedVersion = task.charterVersion;
 
@@ -291,20 +317,80 @@ async function submitTrigger(
   const roleLabel = await roleForAgent(ctx, trigger.agentId);
   const description = buildDecisionDescription(decision, roleLabel);
 
+  return { decision, description, payloadHash, newCharterText };
+}
+
+/** Computes the proposal id a `propose()` call for `built` would resolve to, without sending
+ *  anything: a pure hash (`AgoraGovernor.getProposalId`) of the same targets/values/calldata/
+ *  descriptionHash `FleetSigner.propose` builds internally. */
+export async function computeTriggerProposalId(ctx: FixtureRunContext, taskId: bigint, fixture: FixtureV1, built: TriggerDecision): Promise<bigint> {
+  const calldata = encodeRecordDecision({
+    taskId,
+    kind: fixture.trigger.kind,
+    expectedVersion: built.decision.expectedVersion,
+    payloadHash: built.payloadHash,
+    newCharterText: built.newCharterText,
+    summary: fixture.trigger.summary,
+  });
+  const descriptionHash = keccak256(toHex(built.description));
+  return ctx.client.publicClient.readContract({
+    address: ctx.addresses.governor,
+    abi: agoraGovernorAbi,
+    functionName: "getProposalId",
+    args: [[ctx.addresses.ledger], [0n], [calldata], descriptionHash],
+  });
+}
+
+/**
+ * Task 8 finding 1: `AGENTS_RUNNING` re-submitting the trigger proposal on every resume hits a
+ * governor revert once the proposal already exists (a proposer may have only one unsettled
+ * proposal per task). Before submitting, recompute the exact proposal id a submission would use
+ * (deterministic; needs no chain write) and check whether `FleetHook`'s `DecisionProposed`/the
+ * governor's own `ProposalCreated` log for it already exists. Returns `null` for a genuinely fresh
+ * fixture (no such log yet); returns the existing proposal's identity for a resumed one, so
+ * `runFixture` can skip straight to reading current chain state (votes via `hasVoted`, queue/
+ * execute via governor `state()`) instead of re-submitting.
+ */
+export async function findExistingProposal(
+  ctx: FixtureRunContext,
+  taskId: bigint,
+  fixture: FixtureV1,
+): Promise<{ proposalId: bigint; txHash: Hex; description: string; decision: DecisionV1 } | null> {
+  const built = await buildTriggerDecision(ctx, taskId, fixture);
+  const proposalId = await computeTriggerProposalId(ctx, taskId, fixture, built);
+  try {
+    const created = await ctx.client.getProposalCreated(proposalId);
+    return { proposalId, txHash: created.txHash, description: built.description, decision: built.decision };
+  } catch {
+    return null;
+  }
+}
+
+/** Submits the fixture's `trigger` as a real proposal, from `trigger.agentId`'s key, through
+ *  `FleetSigner.propose` (task 8 controller notes). Callers must first check
+ *  `findExistingProposal` (task 8 finding 1); this function always sends a transaction. */
+async function submitTrigger(
+  ctx: FixtureRunContext,
+  taskId: bigint,
+  fixture: FixtureV1,
+): Promise<{ proposalId: bigint; txHash: Hex; description: string; decision: DecisionV1 }> {
+  const built = await buildTriggerDecision(ctx, taskId, fixture);
+  const trigger = fixture.trigger;
+
   const key = ctx.keys.agentKeys[trigger.agentId];
   if (!key) throw new Error(`fixture ${fixture.name}: no key configured for proposer agent ${trigger.agentId}`);
   const signer = newSigner(ctx, key);
   const { txHash, proposalId } = await signer.propose({
     taskId,
     kind: trigger.kind,
-    expectedVersion,
-    payloadHash,
-    newCharterText,
+    expectedVersion: built.decision.expectedVersion,
+    payloadHash: built.payloadHash,
+    newCharterText: built.newCharterText,
     summary: trigger.summary,
-    description,
+    description: built.description,
   });
 
-  return { proposalId, txHash, description, decision };
+  return { proposalId, txHash, description: built.description, decision: built.decision };
 }
 
 const LATE_SLACK_SEC = 3;
@@ -517,6 +603,56 @@ async function computeFees(ctx: FixtureRunContext, txHashes: readonly Hex[]): Pr
   return fees;
 }
 
+/** After a governance transaction, syncs the read side when it is enabled (task 8 finding 3):
+ *  waits for DAO Node to index whatever `daoNodePredicate` describes, then posts a CPLS sync job
+ *  and waits for its archive object. A no-op when `ctx.readSideSync` is not set. */
+async function syncReadSideStage(
+  ctx: FixtureRunContext,
+  proposalId: bigint,
+  label: string,
+  daoNode: { url: string; predicate: (body: unknown) => boolean; description: string },
+): Promise<void> {
+  const sync = ctx.readSideSync;
+  if (!sync) return;
+  const log = ctx.log ?? (() => {});
+  const fetchFn = sync.fetchFn ?? ((url, init) => fetch(url, init as never) as unknown as ReturnType<FetchLike>);
+  await waitForDaoNode(fetchFn, daoNode.url, daoNode.predicate, { description: daoNode.description });
+  await syncCplsAfterStage(fetchFn, {
+    cplsUrl: sync.cplsUrl,
+    identity: { governor: ctx.addresses.governor, chainId: ctx.chainId },
+    archive: { offline: sync.offline, bucketName: sync.bucketName, ...(sync.fakeGcsUrl ? { fakeGcsUrl: sync.fakeGcsUrl } : {}) },
+    proposalId: proposalId.toString(),
+    label,
+    log,
+  });
+}
+
+/** Inserts one `fleet.votes` row per `VoteCast` event this proposal has emitted so far (task 8
+ *  finding 3), reading each vote's real transaction hash, block number, and weight back off the
+ *  chain rather than assuming them, matching `infra/scripts/scripted-proposal.sh`'s own
+ *  `insert_vote_row`. Safe to call more than once for the same proposal (the resumed-fixture case,
+ *  finding 1): the table's own unique index makes a repeat insert a no-op. */
+async function insertVoteRowsFromChain(ctx: FixtureRunContext, proposalId: bigint): Promise<number> {
+  const sync = ctx.readSideSync;
+  if (!sync) return 0;
+  const trace = await getDecisionTrace(ctx.client, proposalId);
+  const voteCasts = trace.events.filter((e): e is Extract<typeof e, { type: "VoteCast" }> => e.type === "VoteCast");
+  for (const vc of voteCasts) {
+    await insertVoteRow(sync.votesPool, {
+      proposalId: proposalId.toString(),
+      transactionHash: vc.txHash,
+      blockNumber: vc.blockNumber,
+      chainId: ctx.chainId,
+      voter: vc.voter,
+      support: vc.support,
+      weight: vc.weight,
+      reason: vc.reason,
+      contract: ctx.addresses.governor,
+    });
+  }
+  return voteCasts.length;
+}
+
 /**
  * Runs one scripted fixture end to end on `taskId` (task 8 brief and controller notes): applies
  * `preSteps`, submits the trigger proposal, casts every scripted vote, drives the proposal to the
@@ -542,9 +678,28 @@ export async function runFixture(ctx: FixtureRunContext, fixture: FixtureV1, tas
     }
   }
 
-  const { proposalId, txHash: proposeTxHash, description, decision } = await submitTrigger(ctx, taskId, fixture);
-  log(`fixture ${fixture.name}: proposal ${proposalId.toString()} submitted (${proposeTxHash})`);
-  await ctx.client.publicClient.waitForTransactionReceipt({ hash: proposeTxHash });
+  let proposalId: bigint;
+  let proposeTxHash: Hex;
+  let description: string;
+  let decision: DecisionV1;
+  const existing = await findExistingProposal(ctx, taskId, fixture);
+  if (existing) {
+    ({ proposalId, txHash: proposeTxHash, description, decision } = existing);
+    log(`fixture ${fixture.name}: found existing proposal ${proposalId.toString()} (resuming without re-submitting)`);
+  } else {
+    ({ proposalId, txHash: proposeTxHash, description, decision } = await submitTrigger(ctx, taskId, fixture));
+    log(`fixture ${fixture.name}: proposal ${proposalId.toString()} submitted (${proposeTxHash})`);
+    await ctx.client.publicClient.waitForTransactionReceipt({ hash: proposeTxHash });
+  }
+  if (ctx.onProposalKnown) await ctx.onProposalKnown(proposalId, proposeTxHash);
+
+  if (ctx.readSideSync) {
+    await syncReadSideStage(ctx, proposalId, "proposed", {
+      url: `${ctx.readSideSync.daoNodeUrl}/v1/proposal/${proposalId.toString()}`,
+      predicate: (body) => (body as { proposal?: { id?: string } })?.proposal?.id === proposalId.toString(),
+      description: `DAO Node to index proposal ${proposalId.toString()}`,
+    });
+  }
 
   await waitForActive(ctx, proposalId);
   const activeAt = new Date().toISOString();
@@ -558,6 +713,17 @@ export async function runFixture(ctx: FixtureRunContext, fixture: FixtureV1, tas
 
   const votes = await castVotes(ctx, proposalId, fixture);
   const missingVotes = votes.filter((v) => v.jobState === "missed" || v.jobState === "absent").length;
+
+  if (ctx.readSideSync) {
+    const insertedCount = await insertVoteRowsFromChain(ctx, proposalId);
+    const castCount = votes.filter((v) => v.jobState === "voted").length;
+    await syncReadSideStage(ctx, proposalId, "voted", {
+      url: `${ctx.readSideSync.daoNodeUrl}/v1/vote_record/${proposalId.toString()}`,
+      predicate: (body) => Array.isArray((body as { vote_record?: unknown[] })?.vote_record) && ((body as { vote_record: unknown[] }).vote_record.length >= castCount),
+      description: `DAO Node to index ${castCount} votes for proposal ${proposalId.toString()}`,
+    });
+    ctx.log?.(`fixture ${fixture.name}: inserted ${insertedCount} fleet.votes row(s) for proposal ${proposalId.toString()}`);
+  }
 
   await waitForVotingClose(ctx, proposalId);
   const votingClosedAt = new Date().toISOString();
@@ -576,7 +742,21 @@ export async function runFixture(ctx: FixtureRunContext, fixture: FixtureV1, tas
   // Succeeded / Defeated: nothing further to drive.
 
   const finalState = await ctx.client.getProposalState(proposalId);
+  const finalStateName = ProposalState[finalState] as FixtureRunResult["finalStateName"];
   const task = await ctx.client.getTask(taskId);
+
+  if (ctx.readSideSync) {
+    const daoNodeUrl = `${ctx.readSideSync.daoNodeUrl}/v1/proposal/${proposalId.toString()}`;
+    const predicate =
+      finalState === ProposalState.Executed
+        ? (body: unknown): boolean => (body as { proposal?: { execute_event?: unknown } })?.proposal?.execute_event != null
+        : (body: unknown): boolean => (body as { proposal?: { id?: string } })?.proposal?.id === proposalId.toString();
+    await syncReadSideStage(ctx, proposalId, finalStateName.toLowerCase(), {
+      url: daoNodeUrl,
+      predicate,
+      description: `DAO Node to reflect final state ${finalStateName} for proposal ${proposalId.toString()}`,
+    });
+  }
 
   let gatewayAfter: GatewayLogRecord | null = null;
   if (fixture.expected.gatewayAfter) {
@@ -602,7 +782,6 @@ export async function runFixture(ctx: FixtureRunContext, fixture: FixtureV1, tas
   const traceTxHashes = trace.events.map((e) => e.txHash);
   const fees = await computeFees(ctx, [...traceTxHashes, ...extraTxHashes]);
 
-  const finalStateName = ProposalState[finalState] as FixtureRunResult["finalStateName"];
   const mismatches: string[] = [];
   if (finalStateName !== fixture.expected.outcome) {
     mismatches.push(`outcome: expected ${fixture.expected.outcome}, got ${finalStateName}`);

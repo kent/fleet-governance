@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { keccak256, toHex } from "viem";
 import type { CharterV1 } from "@fleet/schemas";
@@ -12,8 +12,9 @@ import { runFixture } from "./pipeline/fixture-runner.js";
 import { buildRecord, writeJsonRecord } from "./pipeline/record.js";
 import type { RunRecordDocument } from "./pipeline/record.js";
 import { renderReport } from "./pipeline/report.js";
+import { buildReadSideSyncConfig } from "./pipeline/readside-sync-config.js";
 import { openTask } from "./pipeline/task.js";
-import { readside } from "./readside.js";
+import { readEnvValue, readside } from "./readside.js";
 
 /** The task charter every `fleet demo` fixture task is opened with. Must stay in lock step with
  *  `experiments/fixtures/scripted/legit-amendment.json`'s `trigger.newCharter`, which is this
@@ -124,65 +125,86 @@ export async function runDemo(opts: DemoOptions): Promise<DemoOutcome> {
   const keys = buildDemoKeys();
   const advanceTime = opts.freshAnvil ? makeAdvanceTime(client) : undefined;
 
-  const ctx: FixtureRunContext = {
-    client,
-    rpcUrl: opts.rpcUrl,
-    chainId: manifest.chainId,
-    addresses,
-    keys,
-    ...(advanceTime ? { advanceTime } : {}),
-    submissionMarginSec: 6,
-    log,
-  };
+  // Task 8 finding 3: when the read side is enabled, sync CPLS's archive after every governance
+  // transaction. `readSideSyncHandle.close()` releases the `agora_web3` Postgres pool once the
+  // whole demo is done (or if it throws), regardless of how many fixtures ran.
+  const readSideSyncHandle = opts.readside ? buildReadSideSyncConfig(opts.infraDir) : null;
+  const agoraNextBaseUrl = opts.agoraNextBaseUrl ?? (opts.readside ? defaultAgoraNextBaseUrl(opts.infraDir) : undefined);
 
-  const fixtures = loadDemoFixtures(opts.fixturesDir);
-  const results: FixtureRunResult[] = [];
-  for (const fixture of fixtures) {
-    const { taskId } = await openTask({
+  try {
+    const ctx: FixtureRunContext = {
       client,
-      addresses,
-      chainId: manifest.chainId,
       rpcUrl: opts.rpcUrl,
-      operatorKey: keys.operatorKey,
-      charter: DEMO_TASK_CHARTER,
-      lifetimeSeconds: manifest.params.maxTaskLifetime,
+      chainId: manifest.chainId,
+      addresses,
+      keys,
+      ...(advanceTime ? { advanceTime } : {}),
+      ...(readSideSyncHandle ? { readSideSync: readSideSyncHandle.config } : {}),
+      submissionMarginSec: 6,
+      log,
+    };
+
+    const fixtures = loadDemoFixtures(opts.fixturesDir);
+    const results: FixtureRunResult[] = [];
+    for (const fixture of fixtures) {
+      const { taskId } = await openTask({
+        client,
+        addresses,
+        chainId: manifest.chainId,
+        rpcUrl: opts.rpcUrl,
+        operatorKey: keys.operatorKey,
+        charter: DEMO_TASK_CHARTER,
+        lifetimeSeconds: manifest.params.maxTaskLifetime,
+      });
+      log(`demo: opened task ${taskId.toString()} for fixture ${fixture.name}`);
+      const result = await runFixture(ctx, fixture, taskId);
+      results.push(result);
+      log(`demo: ${fixture.name} -> ${result.finalStateName} (${result.pass ? "PASS" : "FAIL: " + result.mismatches.join("; ")})`);
+      if (agoraNextBaseUrl) {
+        log(`demo: ${fixture.name} -> ${agoraNextBaseUrl.replace(/\/$/, "")}/proposals/${result.proposalId.toString()}`);
+      }
+    }
+
+    const configForHash = { schema: "fleet.demo.v1" as const, rpcUrl: opts.rpcUrl, freshAnvil: opts.freshAnvil, readside: opts.readside, fixtures: fixtures.map((f) => f.name) };
+    const record = await buildRecord({
+      client,
+      runId,
+      config: configForHash,
+      configHash: keccak256(toHex(canonicalize(configForHash))),
+      manifest,
+      results,
+      timings: {
+        startedAt: new Date(start).toISOString(),
+        finishedAt: new Date().toISOString(),
+        runtimeMs: Date.now() - start,
+      },
+      versions: { node: process.version, fleetSchemasSchema: "fleet.record.v1" },
     });
-    log(`demo: opened task ${taskId.toString()} for fixture ${fixture.name}`);
-    const result = await runFixture(ctx, fixture, taskId);
-    results.push(result);
-    log(`demo: ${fixture.name} -> ${result.finalStateName} (${result.pass ? "PASS" : "FAIL: " + result.mismatches.join("; ")})`);
+
+    const runDir = path.join(opts.reportDir, runId);
+    const recordPath = path.join(runDir, "record.json");
+    writeJsonRecord(recordPath, record);
+
+    const reportPath = path.join(runDir, "report.md");
+    const reportText = renderReport(record, {
+      title: "Fleet Governance Demo Report",
+      ...(agoraNextBaseUrl ? { agoraNextBaseUrl } : {}),
+    });
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(reportPath, reportText, "utf8");
+
+    const allPassed = results.every((r) => r.pass);
+    return { runId, results, record, recordPath, reportPath, allPassed, runtimeMs: Date.now() - start };
+  } finally {
+    if (readSideSyncHandle) await readSideSyncHandle.close();
   }
+}
 
-  const configForHash = { schema: "fleet.demo.v1" as const, rpcUrl: opts.rpcUrl, freshAnvil: opts.freshAnvil, fixtures: fixtures.map((f) => f.name) };
-  const record = await buildRecord({
-    client,
-    runId,
-    config: configForHash,
-    configHash: keccak256(toHex(canonicalize(configForHash))),
-    manifest,
-    results,
-    timings: {
-      startedAt: new Date(start).toISOString(),
-      finishedAt: new Date().toISOString(),
-      runtimeMs: Date.now() - start,
-    },
-    versions: { node: process.version, fleetSchemasSchema: "fleet.record.v1" },
-  });
-
-  const runDir = path.join(opts.reportDir, runId);
-  const recordPath = path.join(runDir, "record.json");
-  writeJsonRecord(recordPath, record);
-
-  const reportPath = path.join(runDir, "report.md");
-  const reportText = renderReport(record, {
-    title: "Fleet Governance Demo Report",
-    ...(opts.agoraNextBaseUrl ? { agoraNextBaseUrl: opts.agoraNextBaseUrl } : {}),
-  });
-  mkdirSync(runDir, { recursive: true });
-  writeFileSync(reportPath, reportText, "utf8");
-
-  const allPassed = results.every((r) => r.pass);
-  return { runId, results, record, recordPath, reportPath, allPassed, runtimeMs: Date.now() - start };
+function defaultAgoraNextBaseUrl(infraDir: string): string {
+  const envPath = path.join(infraDir, ".env");
+  const envText = existsSync(envPath) ? readFileSync(envPath, "utf8") : "";
+  const port = readEnvValue(envText, "AGORA_NEXT_PORT", "3000");
+  return `http://localhost:${port}`;
 }
 
 /** Renders the demo's plain-text results table (task 8 brief: "print a table and exit non-zero

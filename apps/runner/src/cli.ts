@@ -159,7 +159,8 @@ program
   .requiredOption("--experiment <path>", "fleet.experiment.v1 config JSON path")
   .option("--run-id <id>", "resume (or start) this run id")
   .option("--report-dir <path>", "base report directory", defaultReportDir())
-  .action(async (opts: { experiment: string; runId?: string; reportDir: string }) => {
+  .option("--readside", "bring up and sync the read side (Docker Compose, CPLS archive sync)", false)
+  .action(async (opts: { experiment: string; runId?: string; reportDir: string; readside: boolean }) => {
     try {
       const runId = opts.runId ?? `run-${Date.now()}`;
       const runDir = path.join(opts.reportDir, runId);
@@ -175,6 +176,7 @@ program
         infraDir: path.join(repoRoot, "infra"),
         abiSourceDir: defaultAbiSourceDir(),
         deploymentsDir: defaultDeploymentsDir(),
+        readSide: opts.readside,
         store,
         log: (m) => {
           logger.info(m);
