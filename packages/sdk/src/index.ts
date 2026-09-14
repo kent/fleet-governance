@@ -4,3 +4,6 @@ export * from "./description.js";
 export * from "./reason.js";
 export * from "./client.js";
 export * from "./trace.js";
+export * from "./signer.js";
+export * from "./nonce.js";
+export * from "./keeper.js";
