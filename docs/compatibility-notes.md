@@ -261,3 +261,13 @@ are all discarded. Code that needs to distinguish *why* a proposal or vote was r
 `FleetHook` cannot do so by inspecting the governor call's revert data; it would need to
 simulate the hook call directly (e.g. `eth_call` against `FleetHook` with the same arguments) to
 recover the real error.
+
+### Fix round 1: `decodeAction` minimum-length guard
+
+`decodeAction` now checks `data.length >= 4 + 6 * 32` (the selector plus the six-word static head
+of `(uint256, uint8, uint32, bytes32, string, string)`) before calling `abi.decode`, because a
+right-selector tail shorter than that static head previously reached `abi.decode` and reverted
+with empty return data instead of `FleetHook.MalformedCalldata()`; deeper structural malformation
+that still passes this length check, such as internally inconsistent dynamic-type offsets in an
+otherwise long-enough tail, still reverts through the ABI decoder without a custom error, but
+either path rejects the proposal (`beforePropose` never returns successfully either way).

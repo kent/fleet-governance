@@ -226,6 +226,10 @@ contract FleetHook is IHooks {
         if (data.length < 4) revert MalformedCalldata();
         bytes4 selector = bytes4(data);
         if (selector != TaskLedger.recordDecision.selector) revert InvalidSelector(selector);
+        // The six-field tuple (uint256, uint8, uint32, bytes32, string, string) has a static head of 6
+        // words; a tail shorter than that makes abi.decode revert with empty return data instead of
+        // MalformedCalldata(), so guard the minimum length before decoding.
+        if (data.length < 4 + 6 * 32) revert MalformedCalldata();
         bytes memory args = _tail(data);
         (action.taskId, action.kind, action.expectedVersion, action.payloadHash, action.newCharterText, action.summary) =
             abi.decode(args, (uint256, uint8, uint32, bytes32, string, string));

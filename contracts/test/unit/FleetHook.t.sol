@@ -143,6 +143,12 @@ contract FleetHookTest is Test {
         hook.decodeAction(trailing);
         vm.expectRevert(FleetHook.MalformedCalldata.selector);
         hook.decodeAction(hex"aabb");
+        // Right selector, tail shorter than the six-word static head: must revert MalformedCalldata(),
+        // not bubble abi.decode's own empty-return-data revert.
+        vm.expectRevert(FleetHook.MalformedCalldata.selector);
+        hook.decodeAction(abi.encodePacked(TaskLedger.recordDecision.selector));
+        vm.expectRevert(FleetHook.MalformedCalldata.selector);
+        hook.decodeAction(abi.encodePacked(TaskLedger.recordDecision.selector, bytes32(0), bytes32(0), bytes32(0)));
     }
 
     function test_BeforeVoteSucceededUsesForOnlyRule() public {
