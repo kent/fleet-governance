@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Hex } from "viem";
-import { ManifestV1 } from "@fleet/schemas";
+import { ManifestV1, assertAllowedChain } from "@fleet/schemas";
 import type { ManifestV1 as ManifestV1Type } from "@fleet/schemas";
 import type { ScriptedDirective } from "@fleet/agent-runtime";
 
@@ -110,7 +110,9 @@ export function parseWorkerEnv(env: NodeJS.ProcessEnv = process.env): WorkerEnv 
 }
 
 /** Reads `path`, parses it as JSON, and validates it against `ManifestV1`. Throws `EnvError` with
- *  the offending path (never the manifest's raw contents, which can be large) on any failure. */
+ *  the offending path (never the manifest's raw contents, which can be large) on any failure, and
+ *  refuses a manifest for a chain v1 does not operate on (final review I2: nothing in the repo
+ *  refused Base mainnet, so a manifest deployed there would drive a worker with real keys). */
 export function loadManifest(path: string): ManifestV1Type {
   let raw: string;
   try {
@@ -127,6 +129,11 @@ export function loadManifest(path: string): ManifestV1Type {
   const result = ManifestV1.safeParse(json);
   if (!result.success) {
     throw new EnvError(`FLEET_MANIFEST at ${path} does not parse as fleet.manifest.v1: ${result.error.message}`);
+  }
+  try {
+    assertAllowedChain(result.data.chainId);
+  } catch (err) {
+    throw new EnvError(`FLEET_MANIFEST at ${path}: ${err instanceof Error ? err.message : String(err)}`);
   }
   return result.data;
 }

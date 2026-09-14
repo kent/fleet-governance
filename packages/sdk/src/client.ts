@@ -8,7 +8,7 @@ import {
 } from "viem";
 import type { Address, Hex, PublicClient } from "viem";
 import { agoraGovernorAbi, fleetRegistryAbi, fleetVotesAbi, taskLedgerAbi } from "@fleet/abi";
-import { CharterV1 } from "@fleet/schemas";
+import { CharterV1, assertAllowedChain } from "@fleet/schemas";
 import type { FleetAddresses } from "./addresses.js";
 import { decisionKindFromUint8 } from "./actions.js";
 import type { DecisionKind } from "@fleet/schemas";
@@ -110,6 +110,10 @@ export class FleetClient {
   readonly chainId: number;
 
   constructor(opts: { rpcUrl: string; chainId: number; addresses: FleetAddresses }) {
+    // Final review I2: a client is never built for a chain v1 refuses to operate on, so a
+    // manifest that somehow named Base mainnet cannot get as far as a read, let alone a report
+    // that presents another chain's ledger as this fleet's.
+    assertAllowedChain(opts.chainId);
     this.addresses = opts.addresses;
     this.chainId = opts.chainId;
     const chain = defineChain({
@@ -119,6 +123,23 @@ export class FleetClient {
       rpcUrls: { default: { http: [opts.rpcUrl] } },
     });
     this.publicClient = createPublicClient({ chain, transport: http(opts.rpcUrl) });
+  }
+
+  /**
+   * Confirms the connected RPC really is the chain this client was configured for, and that the
+   * chain is one v1 operates on. Final review M7: the client took `chainId` from the manifest and
+   * never checked it, so only `FleetSigner.assertChain` ever compared configuration against
+   * reality; a keeper, worker, or gateway pointed at the wrong RPC read a different chain's ledger
+   * and reported its state as this fleet's. Call once at app startup, before the first read.
+   */
+  async assertChain(): Promise<void> {
+    const actual = await this.publicClient.getChainId();
+    if (actual !== this.chainId) {
+      throw new Error(
+        `connected RPC reports chain id ${actual}, this client is configured for chain id ${this.chainId}`,
+      );
+    }
+    assertAllowedChain(actual);
   }
 
   async getTask(taskId: bigint): Promise<TaskView> {

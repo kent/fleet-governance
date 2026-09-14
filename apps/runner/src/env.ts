@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Hex } from "viem";
-import { ManifestV1 } from "@fleet/schemas";
+import { ManifestV1, assertAllowedChain } from "@fleet/schemas";
 import type { ManifestV1 as ManifestV1Type } from "@fleet/schemas";
 
 /** Thrown by every env/file-loading helper in this file. Never carries a secret value in its
@@ -29,7 +29,8 @@ export function requirePrivateKeyEnv(env: NodeJS.ProcessEnv, name: string): Hex 
 }
 
 /** Reads and validates a `fleet.manifest.v1` file off disk. Throws `RunnerEnvError` with the
- *  offending path (never the manifest's raw contents) on any failure. */
+ *  offending path (never the manifest's raw contents) on any failure, and refuses a manifest for a
+ *  chain v1 does not operate on (final review I2). */
 export function loadManifest(path: string): ManifestV1Type {
   let raw: string;
   try {
@@ -46,6 +47,11 @@ export function loadManifest(path: string): ManifestV1Type {
   const result = ManifestV1.safeParse(json);
   if (!result.success) {
     throw new RunnerEnvError(`manifest at ${path} does not parse as fleet.manifest.v1: ${result.error.message}`);
+  }
+  try {
+    assertAllowedChain(result.data.chainId);
+  } catch (err) {
+    throw new RunnerEnvError(`manifest at ${path}: ${err instanceof Error ? err.message : String(err)}`);
   }
   return result.data;
 }

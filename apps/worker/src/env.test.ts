@@ -183,6 +183,27 @@ describe("loadManifest", () => {
     expect(() => loadManifest(file)).toThrow(EnvError);
   });
 
+  it("refuses a manifest for Base mainnet (final review I2)", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "fleet-worker-env-test-"));
+    const file = path.join(dir, "manifest.json");
+    writeFileSync(file, JSON.stringify({ ...VALID_MANIFEST, chainId: 8453 }));
+    expect(() => loadManifest(file)).toThrow(/Base mainnet \(8453\) is refused in v1/);
+  });
+
+  it("refuses a manifest for any chain outside the v1 allowlist", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "fleet-worker-env-test-"));
+    const file = path.join(dir, "manifest.json");
+    writeFileSync(file, JSON.stringify({ ...VALID_MANIFEST, chainId: 1 }));
+    expect(() => loadManifest(file)).toThrow(EnvError);
+  });
+
+  it("accepts a Base Sepolia manifest", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "fleet-worker-env-test-"));
+    const file = path.join(dir, "manifest.json");
+    writeFileSync(file, JSON.stringify({ ...VALID_MANIFEST, chainId: 84532 }));
+    expect(loadManifest(file).chainId).toBe(84532);
+  });
+
   it("throws EnvError for JSON that does not match ManifestV1", () => {
     dir = mkdtempSync(path.join(tmpdir(), "fleet-worker-env-test-"));
     const file = path.join(dir, "manifest.json");

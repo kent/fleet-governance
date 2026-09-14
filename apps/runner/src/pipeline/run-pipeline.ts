@@ -3,7 +3,7 @@ import path from "node:path";
 import { createPublicClient, http, keccak256, toHex } from "viem";
 import type { Address, Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { ExperimentConfigV1, ManifestV1, canonicalize } from "@fleet/schemas";
+import { ExperimentConfigV1, ManifestV1, assertAllowedChain, canonicalize, chainIdForKind } from "@fleet/schemas";
 import type { ExperimentConfigV1 as ExperimentConfigV1Type, ManifestV1 as ManifestV1Type } from "@fleet/schemas";
 import { FleetClient, addressesFromManifest } from "@fleet/sdk";
 import type { FleetAddresses } from "@fleet/sdk";
@@ -133,6 +133,7 @@ export function buildRunStages(env: NodeJS.ProcessEnv): readonly Stage<RunPipeli
         }),
         readSideEnabled,
         keyAddresses,
+        expectedChainId: chainIdForKind(ctx.experiment.target.kind),
         ...(existingManifestChainId !== undefined ? { existingManifestChainId } : {}),
       };
       if (readSideEnabled) {
@@ -166,19 +167,18 @@ export function buildRunStages(env: NodeJS.ProcessEnv): readonly Stage<RunPipeli
     },
 
     CHAIN_READY: async (ctx) => {
-      const probe = new FleetClient({
-        rpcUrl: ctx.experiment.target.rpcHttp,
-        chainId: 0,
-        addresses: {
-          registry: "0x0000000000000000000000000000000000000000",
-          token: "0x0000000000000000000000000000000000000000",
-          timelock: "0x0000000000000000000000000000000000000000",
-          ledger: "0x0000000000000000000000000000000000000000",
-          hook: "0x0000000000000000000000000000000000000000",
-          governor: "0x0000000000000000000000000000000000000000",
-        },
-      });
-      const chainId = await probe.publicClient.getChainId();
+      // A plain viem client rather than a `FleetClient`: no fleet is deployed yet, so there are no
+      // addresses to give one, and `FleetClient`'s constructor now refuses a chain outside the v1
+      // allowlist (final review I2/M7), which a placeholder chain id of 0 would trip.
+      const probe = createPublicClient({ transport: http(ctx.experiment.target.rpcHttp) });
+      const chainId = await probe.getChainId();
+      const expected = chainIdForKind(ctx.experiment.target.kind);
+      assertAllowedChain(chainId);
+      if (chainId !== expected) {
+        throw new Error(
+          `CHAIN_READY: ${ctx.experiment.target.rpcHttp} reports chainId ${chainId}, but target.kind "${ctx.experiment.target.kind}" means chainId ${expected}`,
+        );
+      }
       log(ctx, `chain ready: ${ctx.experiment.target.rpcHttp} reports chainId ${chainId}`);
       return ctx;
     },

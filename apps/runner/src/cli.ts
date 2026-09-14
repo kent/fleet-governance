@@ -3,7 +3,8 @@ import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
-import { CharterV1 } from "@fleet/schemas";
+import { createPublicClient, http } from "viem";
+import { CharterV1, assertAllowedChain } from "@fleet/schemas";
 import { deployFleet, verifyDeployment } from "./deploy.js";
 import { runDemo, formatDemoTable } from "./demo.js";
 import { RunnerEnvError, loadManifest, requirePrivateKeyEnv } from "./env.js";
@@ -42,6 +43,19 @@ function defaultContractsDir(): string {
   return path.join(repoRoot, "contracts");
 }
 
+/**
+ * Reads the chain id `rpcUrl` actually reports and refuses anything outside the v1 allowlist
+ * (final review I2). Every subcommand that takes `--rpc` calls this before it deploys, signs, or
+ * reads, so a Base mainnet URL pasted into any of them stops here rather than at the first
+ * transaction. Returns the chain id, since several callers want it anyway.
+ */
+async function assertRpcChainAllowed(rpcUrl: string): Promise<number> {
+  const probe = createPublicClient({ transport: http(rpcUrl) });
+  const chainId = await probe.getChainId();
+  assertAllowedChain(chainId);
+  return chainId;
+}
+
 function fail(err: unknown): never {
   const message = err instanceof Error ? err.message : String(err);
   logger.error(message);
@@ -62,6 +76,7 @@ program
   .requiredOption("--out <path>", "where to write the manifest")
   .action(async (opts: { config: string; rpc: string; keyEnv: string; out: string }) => {
     try {
+      await assertRpcChainAllowed(opts.rpc);
       const deployerKey = requirePrivateKeyEnv(process.env, opts.keyEnv);
       const { manifest, deployed } = await deployFleet({
         contractsDir: defaultContractsDir(),
@@ -85,6 +100,8 @@ program
   .requiredOption("--rpc <url>", "RPC URL for the target chain")
   .action(async (opts: { manifest: string; rpc: string }) => {
     try {
+      await assertRpcChainAllowed(opts.rpc);
+      loadManifest(opts.manifest);
       await verifyDeployment({ contractsDir: defaultContractsDir(), manifestPath: opts.manifest, rpcUrl: opts.rpc });
       // eslint-disable-next-line no-console
       console.log("fleet verify: VERIFIED");
@@ -130,9 +147,12 @@ program
   .requiredOption("--rpc <url>", "RPC URL for the target chain (not in the manifest itself)")
   .action(async (opts: { manifest: string; charter: string; lifetime: string; operatorKeyEnv: string; rpc: string }) => {
     try {
+      await assertRpcChainAllowed(opts.rpc);
       const manifest = loadManifest(opts.manifest);
       const addresses = addressesFromManifest(manifest);
       const client = new FleetClient({ rpcUrl: opts.rpc, chainId: manifest.chainId, addresses });
+      // M7: the client's configured chain against the RPC's own, once, before the first read.
+      await client.assertChain();
       const operatorKey = requirePrivateKeyEnv(process.env, opts.operatorKeyEnv);
       const { readFileSync } = await import("node:fs");
       const charterJson: unknown = JSON.parse(readFileSync(opts.charter, "utf8"));
@@ -212,8 +232,10 @@ program
       }
       if (!opts.rpc) throw new RunnerEnvError("capture --from-chain: --rpc is required");
 
+      await assertRpcChainAllowed(opts.rpc);
       const addresses = addressesFromManifest(existing.manifest);
       const client = new FleetClient({ rpcUrl: opts.rpc, chainId: existing.manifest.chainId, addresses });
+      await client.assertChain();
       const recaptured = await captureFromChain(client, existing);
       writeJsonRecord(recordPath, recaptured);
       // eslint-disable-next-line no-console
@@ -258,6 +280,7 @@ program
   .option("--agora-next-base-url <url>", "Agora Next base URL for printed proposal links")
   .action(async (opts: { rpc: string; freshAnvil: boolean; readside: boolean; reportDir: string; agoraNextBaseUrl?: string }) => {
     try {
+      await assertRpcChainAllowed(opts.rpc);
       const outcome = await runDemo({
         rpcUrl: opts.rpc,
         freshAnvil: opts.freshAnvil,

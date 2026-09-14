@@ -1,6 +1,7 @@
 export * from "./primitives.js";
 export * from "./canonical.js";
 export * from "./quorum.js";
+export * from "./chain.js";
 export * from "./charter.js";
 export * from "./decision.js";
 export * from "./agent.js";

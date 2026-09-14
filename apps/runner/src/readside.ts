@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { ManifestV1 } from "@fleet/schemas";
+import { ManifestV1, assertAllowedChain } from "@fleet/schemas";
 import { RunnerEnvError } from "./env.js";
 
 function errorMessage(err: unknown): string {
@@ -84,6 +84,9 @@ export async function readside(opts: {
     throw new RunnerEnvError(`manifest at ${opts.manifestPath} does not parse as fleet.manifest.v1: ${parsed.error.message}`);
   }
   const manifest = parsed.data;
+  // Final review I2: the read side is configured from a manifest, so a manifest for a chain v1
+  // does not operate on stops here rather than pointing DAO Node and Agora Next at it.
+  assertAllowedChain(manifest.chainId);
 
   // 1. infra/.env: TOKEN_ADDRESS, GOVERNOR_ADDRESS, DAO_NODE_START_BLOCK, preserving every other key.
   const envFile = path.join(opts.infraDir, ".env");

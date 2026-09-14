@@ -41,6 +41,9 @@ export async function main(): Promise<void> {
   }
 
   const client = new FleetClient({ rpcUrl: env.rpcHttpUrl, chainId: manifest.chainId, addresses });
+  // Final review M7: confirm the RPC really is the manifest's chain (and a chain v1 operates on)
+  // once, before the first read, rather than trusting the manifest that was written from it.
+  await client.assertChain();
 
   const account = privateKeyToAccount(env.keeperKey);
   const chain = defineChain({

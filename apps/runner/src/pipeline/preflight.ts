@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import type { Address } from "viem";
+import { assertAllowedChain } from "@fleet/schemas";
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -58,11 +59,36 @@ export type PreflightOptions = {
   /** When a manifest already exists at the run's deploy output path, its `chainId`, to catch a
    *  target RPC that does not match an existing deployment before anything is (re)deployed. */
   existingManifestChainId?: number;
+  /** The chain id the experiment's `target.kind` names (`ALLOWED_CHAIN_IDS[kind]`). The RPC must
+   *  report exactly this, and it must be a chain v1 operates on. Final review I2: `target.rpcHttp`
+   *  is a free URL and nothing compared it to the configured kind, so a Base mainnet RPC pasted
+   *  into a `base-sepolia` experiment deployed the whole fleet to mainnet and signed with the real
+   *  keys in the environment. */
+  expectedChainId?: number;
   readSide?: { daoNodeUrl: string; cplsUrl: string; agoraNextUrl: string };
   /** A URL whose `fetchUrl` result decides bucket access: the fake-gcs bucket listing endpoint
    *  offline, or a `HEAD` against the real bucket's public base URL otherwise. */
   bucketCheckUrl?: string;
 };
+
+/** The RPC's own chain id against the experiment's `target.kind`, and against the set of chains
+ *  v1 operates on at all (final review I2). Refusing here means no deploy, no key is ever used to
+ *  sign, and the refusal names both numbers rather than failing later with an opaque revert. */
+function targetChainCheck(chainId: number, expectedChainId: number | undefined): PreflightCheck {
+  try {
+    assertAllowedChain(chainId);
+  } catch (err) {
+    return { name: "chain_target", ok: false, detail: errorMessage(err) };
+  }
+  if (expectedChainId !== undefined && chainId !== expectedChainId) {
+    return {
+      name: "chain_target",
+      ok: false,
+      detail: `RPC reports chainId ${chainId}, but the experiment's target names chainId ${expectedChainId}`,
+    };
+  }
+  return { name: "chain_target", ok: true, detail: `chainId ${chainId} is an allowed v1 chain and matches the configured target` };
+}
 
 /**
  * Spec 12.2: "PREFLIGHT checks tool versions, container health, key balances, chain ID, and
@@ -90,8 +116,10 @@ export async function runPreflight(opts: PreflightOptions): Promise<PreflightRep
     } else {
       checks.push({ name: "chain_id", ok: true, detail: `reachable, chainId ${chainId}` });
     }
+    checks.push(targetChainCheck(chainId, opts.expectedChainId));
   } catch (err) {
     checks.push({ name: "chain_id", ok: false, detail: `chain not reachable: ${errorMessage(err)}` });
+    checks.push({ name: "chain_target", ok: false, detail: `chain not reachable, so its id could not be checked against the configured target: ${errorMessage(err)}` });
   }
 
   for (const { label, address } of opts.keyAddresses) {

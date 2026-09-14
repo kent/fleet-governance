@@ -23,7 +23,14 @@ describe("runPreflight (task 8 finding 2)", () => {
       keyAddresses: [{ label: "deployer", address: AGENT }],
     });
     expect(report.ok).toBe(true);
-    expect(report.checks.map((c) => c.name)).toEqual(["tool:forge", "tool:anvil", "tool:cast", "chain_id", "balance:deployer"]);
+    expect(report.checks.map((c) => c.name)).toEqual([
+      "tool:forge",
+      "tool:anvil",
+      "tool:cast",
+      "chain_id",
+      "chain_target",
+      "balance:deployer",
+    ]);
   });
 
   it("checks docker only when the read side is enabled", async () => {
@@ -139,7 +146,8 @@ describe("runPreflight (task 8 finding 2)", () => {
       readSideEnabled: false,
       keyAddresses: [{ label: "deployer", address: AGENT }],
     });
-    expect(report.checks.length).toBe(5);
+    // forge, anvil, cast, chain_id, chain_target, balance:deployer
+    expect(report.checks.length).toBe(6);
     expect(report.checks.every((c) => !c.ok)).toBe(true);
   });
 });
@@ -151,5 +159,69 @@ describe("formatPreflightReport", () => {
     const lines = text.split("\n");
     expect(lines.length).toBe(report.checks.length);
     expect(lines.every((l) => l.startsWith("[ok]"))).toBe(true);
+  });
+});
+
+describe("runPreflight: the configured target chain (final review I2)", () => {
+  it("fails when the RPC is Base mainnet, whatever the config says", async () => {
+    const report = await runPreflight({
+      deps: fakeDeps({ getChainId: async () => 8453 }),
+      readSideEnabled: false,
+      keyAddresses: [],
+      expectedChainId: 84532,
+    });
+    expect(report.ok).toBe(false);
+    const check = report.checks.find((c) => c.name === "chain_target");
+    expect(check?.ok).toBe(false);
+    expect(check?.detail).toContain("Base mainnet (8453) is refused in v1");
+  });
+
+  it("fails when the RPC is a different chain than target.kind names", async () => {
+    const report = await runPreflight({
+      deps: fakeDeps({ getChainId: async () => 31337 }),
+      readSideEnabled: false,
+      keyAddresses: [],
+      expectedChainId: 84532,
+    });
+    expect(report.ok).toBe(false);
+    const check = report.checks.find((c) => c.name === "chain_target");
+    expect(check?.ok).toBe(false);
+    expect(check?.detail).toContain("target names chainId 84532");
+  });
+
+  it("fails for a chain outside the allowlist even when no target is configured", async () => {
+    const report = await runPreflight({
+      deps: fakeDeps({ getChainId: async () => 1 }),
+      readSideEnabled: false,
+      keyAddresses: [],
+    });
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((c) => c.name === "chain_target")?.detail).toContain("not an allowed v1 chain");
+  });
+
+  it("passes when the RPC reports exactly the configured target chain", async () => {
+    const report = await runPreflight({
+      deps: fakeDeps({ getChainId: async () => 84532 }),
+      readSideEnabled: false,
+      keyAddresses: [],
+      expectedChainId: 84532,
+    });
+    expect(report.ok).toBe(true);
+    expect(report.checks.find((c) => c.name === "chain_target")?.ok).toBe(true);
+  });
+
+  it("reports chain_target as failed, not missing, when the chain is unreachable", async () => {
+    const report = await runPreflight({
+      deps: fakeDeps({
+        getChainId: async () => {
+          throw new Error("connect ECONNREFUSED");
+        },
+      }),
+      readSideEnabled: false,
+      keyAddresses: [],
+      expectedChainId: 31337,
+    });
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((c) => c.name === "chain_target")?.ok).toBe(false);
   });
 });
