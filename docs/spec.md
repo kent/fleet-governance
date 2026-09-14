@@ -21,7 +21,8 @@
 | Executable action | `TaskVault.approveCandidate` | `TaskLedger.recordDecision` |
 | Success rule | Custom `_voteSucceeded` override | For-only quorum at 60 percent of supply, via a `_quorumReached` override, plus For greater than Against |
 | Dashboard | Custom Next.js app and custom indexer | Agora Next, fed by Agora's DAO Node and Common Proposal Listing Service |
-| Deployment | Deploy scripts | `FleetFactory` deploys a whole fleet in one transaction, driven by an Experiment Runner with a config panel and a Run button |
+| Deployment | Deploy scripts | A deterministic deployment script driven by an Experiment Runner with a config panel and a Run button. No onchain factory: the governor's init code is larger than any contract may hold, so nothing can `new` it |
+| Rule enforcement in the governor | Subclass with overrides | The pinned Agora Governor deployed unmodified, with one `FleetHook` contract carrying membership, action, reason, and success rules through Agora's hook system |
 | Local development | Local chain plus custom UI | Fully local stack: Anvil, DAO Node, CPLS, archive storage, Postgres, Agora Next, Runner |
 
 ---
@@ -70,7 +71,7 @@ Those limitations are the honest boundary of a transparency-first release, and t
 
 A complete demonstration starts from an empty chain (or a fresh Base Sepolia deployment) and ends with a publicly reconstructable record of a fleet resolving a divergence while working a task.
 
-The Runner deploys a fleet through `FleetFactory`. The operator opens a task with a charter. N agent workers start the task inside a sandbox behind a charter-checked tool gateway. A scenario causes one member to want an out-of-charter action, or to disagree with the next step. That member's structured output becomes a proposal. Each other member independently reads the anchored proposal and votes For, Against, or Abstain with a public reason. A keeper queues and executes a succeeded proposal, which writes a decision to the ledger. The fleet's gateway reads the ledger and either allows the action or keeps blocking it. Work inside the charter continues throughout. Agora Next shows the fleet, delegations, proposals, votes, and reasons. The Runner produces an experiment record that can be checked against chain data.
+The Runner deploys a fleet with the deployment script. The operator opens a task with a charter. N agent workers start the task inside a sandbox behind a charter-checked tool gateway. A scenario causes one member to want an out-of-charter action, or to disagree with the next step. That member's structured output becomes a proposal. Each other member independently reads the anchored proposal and votes For, Against, or Abstain with a public reason. A keeper queues and executes a succeeded proposal, which writes a decision to the ledger. The fleet's gateway reads the ledger and either allows the action or keeps blocking it. Work inside the charter continues throughout. Agora Next shows the fleet, delegations, proposals, votes, and reasons. The Runner produces an experiment record that can be checked against chain data.
 
 The demonstration must show all of the following on the same deployment:
 
@@ -119,10 +120,11 @@ Roles guide evaluation. They create no contract permissions. Any member may prop
                                     v
    +--------------------------- Base (Anvil / Sepolia / Mainnet) ---------------------------+
    |                                                                                        |
-   |  FleetFactory --deploys--> FleetRegistry, FleetVotes (ERC-20), TimelockController,     |
-   |                            FleetGovernor (Agora), TaskLedger                           |
+   |  Deploy script --deploys--> FleetRegistry, FleetVotes (ERC-20), TimelockController,    |
+   |                             FleetHook, AgoraGovernor (unmodified), TaskLedger          |
    |                                                                                        |
-   |  FleetGovernor  --queue/execute-->  TimelockController  --recordDecision-->  TaskLedger |
+   |  AgoraGovernor --hooks--> FleetHook (membership, single ledger action, reason, rule)    |
+   |  AgoraGovernor --queue/execute-->  TimelockController  --recordDecision-->  TaskLedger  |
    |        ^                                                                       ^        |
    +--------|-----------------------------------------------------------------------|--------+
             | propose / castVoteWithReason                                          | read charter,
@@ -148,7 +150,7 @@ Trust boundary rules:
 - The guardian can pause the ledger and cancel queued operations. It cannot propose, vote, execute, or write a decision.
 - Agora Next, DAO Node, and CPLS are read-only consumers. Their failure delays visibility, not authority.
 
-Six production-shaped contracts: `FleetFactory`, `FleetRegistry`, `FleetVotes`, `FleetGovernor`, `TimelockController`, `TaskLedger`. No payment token is needed in v0.1. A `MockUSDC` fixture remains in the test tree for budget-related tests only.
+Six production-shaped contracts: `FleetRegistry`, `FleetVotes`, `FleetHook`, the unmodified `AgoraGovernor`, `TimelockController`, `TaskLedger`. Four of them are ours; the governor and timelock are the pinned upstream bytecode. No payment token is needed in v0.1.
 
 ---
 
@@ -180,11 +182,14 @@ All statements below were checked against the pinned source. [S1]
 - The constructor takes `(votingDelay, votingPeriod, proposalThreshold, quorumNumerator, IVotes token, TimelockController timelock, address admin, address manager, IHooks hooks)`. It inherits `GovernorCountingSimple`, `GovernorVotes`, `GovernorVotesQuorumFraction`, and `GovernorSettings`, and integrates the timelock directly. Do not stack another timelock extension.
 - `propose` reverts with `GovernorInvalidProposalLength` if arrays mismatch or are empty. Every proposal must carry at least one action. Our single action is the ledger write.
 - `quorumDenominator()` is 10,000. Our numerator is 6,000. `quorum(uint256)` takes a proposal ID and looks up that proposal's snapshot. Never pass a timestamp.
-- `_quorumReached` counts Against plus For plus Abstain against `quorum(proposalId)`. We override it to count For only. `_voteSucceeded` consults hooks and falls back to `GovernorCountingSimple`, which requires For greater than Against. We keep that.
-- `_castVote` requires the Active state, calls `hooks.beforeVote`, computes weight at the snapshot, counts, calls `hooks.afterVote`, and emits `VoteCast` or `VoteCastWithParams`. Membership and reason checks go in our override of this function so no alternate entrypoint bypasses them.
-- `cancel` is permitted to the proposer, the admin, or the executor (the timelock).
-- `queue` schedules a batch on the timelock with a salt derived from the description hash. `execute` calls `executeBatch{value: msg.value}`. We reject non-zero value.
-- Hooks can rewrite executions (`_modifiedExecutions`). Deploying with `hooks = IHooks(address(0))` disables that path; the hook library treats the zero address as valid. [S4]
+- `_quorumReached` counts Against plus For plus Abstain against `quorum(proposalId)`. `_voteSucceeded` asks the hook first (`beforeVoteSucceeded`); if the hook answers, its boolean decides, otherwise `GovernorCountingSimple` applies (For greater than Against). Our hook answers with `For >= quorum(proposalId) && For > Against`. Because For at or above quorum implies all ballots at or above quorum, the combined result equals the For-only rule.
+- `_castVote` requires the Active state, calls `hooks.beforeVote(sender, proposalId, account, support, reason, params)`, computes weight at the snapshot unless the hook supplied one, counts, calls `hooks.afterVote`, and emits `VoteCast` or `VoteCastWithParams`. Every voting entrypoint, including signed votes, passes through `_castVote`, so a `beforeVote` hook cannot be bypassed.
+- `propose` calls `hooks.beforePropose(sender, targets, values, calldatas, description)` before `super.propose`, and `hooks.afterPropose(sender, proposalId, ...)` after. The hook library is `internal` and inlined into the governor, so `sender` is the governor's `msg.sender`: the actual proposer or voter. The hook's own `msg.sender` is the governor.
+- Hook permissions are encoded in the low 16 bits of the hook contract's address (Uniswap v4 style). The hook constructor validates them, so a hook must be deployed with CREATE2 at a mined salt. [S4]
+- The governor's runtime bytecode is 23,005 bytes and its init code is 26,483 bytes at the pinned configuration. A contract's runtime may not exceed 24,576 bytes, so no contract can deploy the governor with `new`, and a subclass with meaningful additions would not fit either. The governor is therefore deployed unmodified from an externally owned account, and every fleet rule lives in `FleetHook`.
+- `cancel` is permitted to the proposer, the admin, the manager, or the executor (the timelock).
+- `queue` schedules a batch on the timelock with a salt derived from the description hash. `execute` calls `executeBatch{value: msg.value}`. Our proposals carry zero value; the keeper never sends value, and value sent by mistake would sit in the timelock with no governance path to recover it, because no proposal may target the timelock.
+- Hooks can rewrite executions in `beforeQueue` (`_modifiedExecutions`). `FleetHook` does not request the queue, cancel, or execute permissions, so that path is disabled by address.
 - Deploy with `admin = address(0)` and `manager = address(0)`. The admin can bypass normal governance checks. Never assign the guardian to either role.
 - Do not deploy `Middleware`, `ApprovalVoting`, `OptimisticModule`, or `MultiToken` in v0.1.
 
@@ -229,7 +234,7 @@ Checked against the pinned Agora Next source. [S11][S12]
 | --- | --- | --- | --- |
 | Chain ID | `31337` | `84532` | Mainnet `8453` is a manifest target, not authorized by this spec [S5] |
 | Block time | 2 seconds (`anvil --block-time 2`) | ~2 seconds | Timestamp clocks must advance without a transaction |
-| Electorate | N fixed addresses, default 5 | same | Set in `FleetFactory` config |
+| Electorate | N fixed addresses, default 5 | same | Set in the deployment config |
 | Token | `Fleet Vote`, symbol `FLEET`, 18 decimals | same | Name and symbol configurable per fleet |
 | Allocation | `1e18` per member | same | Minted in the constructor, self-delegated |
 | Total supply | `N * 1e18`, fixed | same | No mint or burn after deployment |
@@ -271,35 +276,45 @@ Delegation moves votes between members. It never creates votes. A member holding
 
 ## 7. Contract specifications
 
-### 7.1 FleetFactory
+### 7.1 Deployment sequence
 
-Deploys a complete fleet in one transaction from a configuration struct and emits a `FleetDeployed` event with every address.
+There is no onchain factory. The pinned governor's init code (26,483 bytes) exceeds the 24,576-byte runtime limit that any deploying contract would have to carry, so the governor can only be created by an externally owned account. Deployment is therefore a deterministic Foundry script, `DeployFleet.s.sol`, that the Runner drives and that reads one JSON config:
 
-```solidity
-struct FleetConfig {
-    string tokenName;
-    string tokenSymbol;
-    address[] members;             // N unique non-zero addresses
-    string[] agentManifests;       // N bounded JSON strings
-    string fleetManifest;          // bounded JSON string
-    address operator;              // may open tasks
-    address guardian;              // may pause the ledger and cancel queued operations
-    uint48 votingDelay;
-    uint32 votingPeriod;
-    uint256 proposalThreshold;
-    uint256 quorumNumerator;       // 6000 by default
-    uint256 timelockDelay;
-    uint64 taskLifetime;
+```json
+{
+  "schema": "fleet.deploy.v1",
+  "tokenName": "Fleet Vote",
+  "tokenSymbol": "FLEET",
+  "members": ["0x…", "0x…", "0x…", "0x…", "0x…"],
+  "agentManifests": ["{…}", "{…}", "{…}", "{…}", "{…}"],
+  "fleetManifest": "{…}",
+  "operator": "0x…",
+  "guardian": "0x…",
+  "votingDelay": 15,
+  "votingPeriod": 120,
+  "proposalThreshold": "1000000000000000000",
+  "quorumNumerator": 6000,
+  "timelockDelay": 30,
+  "maxTaskLifetime": 7200,
+  "hookSalt": "0x…"
 }
-
-function deployFleet(FleetConfig calldata cfg) external returns (FleetAddresses memory);
 ```
 
-Deployment order inside the factory: registry, token (against the registry), timelock (factory as temporary admin, no proposers or executors), ledger (against the timelock, operator, guardian), governor (against token, registry, ledger, timelock, zero admin, zero manager, zero hooks), then role wiring: governor gets proposer, executor, and canceller; guardian gets canceller; the factory renounces its timelock admin role. The timelock administers itself after that.
+Order of operations, each a separate transaction from the deployer key:
 
-The factory keeps no privileged role in the deployed system. It stores a `fleetId => FleetAddresses` mapping for discovery. Anyone can call `deployFleet`; a fleet is only meaningful to the people who configure and run it. Deploying with the same config twice produces a second, unrelated fleet.
+1. `FleetRegistry(members, agentManifests, fleetManifest)`.
+2. `FleetVotes(tokenName, tokenSymbol, registry)`. Mints and self-delegates in the constructor.
+3. `TimelockController(timelockDelay, [], [], deployer)`. The deployer is a temporary admin.
+4. `TaskLedger(timelock, operator, guardian, maxTaskLifetime)`.
+5. `FleetHook{salt: hookSalt}(registry, ledger)` through the canonical CREATE2 deployer at `0x4e59b44847b379578588920cA78FbF26c0B4956C`, which Anvil, Base Sepolia, and Base all provide. The salt is mined offchain so the address carries exactly the hook's permission bits (section 7.4). The salt depends only on the hook init code hash, so one mined salt serves every chain.
+6. `AgoraGovernor(votingDelay, votingPeriod, proposalThreshold, quorumNumerator, token, timelock, address(0), address(0), hook)`. Unmodified pinned bytecode.
+7. `hook.initialize(governor)`. One-time; reverts on a second call.
+8. Timelock roles: grant `PROPOSER_ROLE`, `EXECUTOR_ROLE`, `CANCELLER_ROLE` to the governor; grant `CANCELLER_ROLE` to the guardian; renounce `DEFAULT_ADMIN_ROLE` from the deployer.
+9. Write `deployments/<chainId>/<timestamp>.json` and `deployments/<chainId>/latest.json` with every address, the deployment block, config hash, bytecode hashes, and compiler settings.
 
-Gas: a full deployment is large. Foundry's gas report is part of M1 acceptance, and the Runner shows the deployment receipt.
+The verifier script (`VerifyDeployment.s.sol`) re-reads the manifest and asserts each step's post-condition. On a fresh Anvil with a fixed deployer, steps 1 to 4 and 6 produce the same addresses every run (CREATE with the same nonces) and step 5 is CREATE2, so a local redeploy needs no reconfiguration of the read side.
+
+The registry, token, timelock, and ledger are each far below the size limit and could be deployed by a helper contract later if a fleet ever wants to bootstrap itself fully onchain; the governor cannot, and the spec does not promise it.
 
 ### 7.2 FleetRegistry
 
@@ -332,46 +347,70 @@ One shared `ERC20Votes` contract per fleet. Constructor mints `1e18` to each reg
 
 Invariants: total supply is `N * 1e18` forever; every member's balance is `1e18`; voting power per member is between 0 and `N * 1e18`; the sum of voting power over members is `N * 1e18`; no non-member ever has balance or voting power.
 
-### 7.4 FleetGovernor
+### 7.4 AgoraGovernor and FleetHook
 
-Extends the pinned Agora Governor. Adds immutable `registry` and `ledger`. Overrides four things.
+The governor is the pinned `AgoraGovernor` bytecode, constructed with zero admin, zero manager, and `FleetHook` as its hooks contract. Every fleet rule lives in the hook.
 
-#### Proposal admission
+#### Permissions
 
-`propose(targets, values, calldatas, description)` requires:
+`FleetHook` requests exactly four hook permissions and its CREATE2 address must carry exactly these bits and no others in its low 16 bits:
 
-- `registry.isMember(msg.sender)`, plus the inherited historical proposal threshold.
+| Hook | Flag | Purpose |
+| --- | --- | --- |
+| `beforePropose` | `1 << 7` | Proposer is a member; exactly one action targeting the ledger; calldata canonical and valid against the ledger; description bounds; timing fits the task |
+| `afterPropose` | `1 << 6` | Store `actionOf[proposalId]` and `taskOf[proposalId]`; enforce one unsettled proposal per member per task; emit `DecisionProposed` |
+| `beforeVote` | `1 << 9` | Voter is a member with snapshot weight; support in range; reason 1 to 1,024 bytes; params empty |
+| `beforeVoteSucceeded` | `1 << 13` | Return `For >= quorum(proposalId) && For > Against` |
+
+Mask: `0x22C0`. The hook constructor validates the mask against `address(this)`. `beforeQueue`, `beforeExecute`, and every other hook are not requested, so the governor never calls them and no module can rewrite an execution.
+
+#### Wiring and guards
+
+The governor needs the hook address at construction and the hook needs the governor address to read votes, so the hook stores `governor` in a one-time `initialize(address)` callable only by the deployer recorded in the hook constructor. Every state-changing hook function requires `msg.sender == governor`. `beforeVoteSucceeded` is a view called by `staticcall`; it reads the governor and never writes.
+
+#### Proposal admission (`beforePropose`)
+
+`sender` is the proposer. Require:
+
+- `registry.isMember(sender)`. The token also guarantees this economically: only members can hold the `1e18` proposal threshold.
 - Exactly one target, value, and calldata. Target equals `ledger`. Value equals zero.
-- Selector equals `TaskLedger.recordDecision.selector`. Decode `(taskId, kind, expectedVersion, payloadHash, newCharterText, summary)`, validate, re-encode, and require byte equality with the submitted calldata to reject trailing or malformed data.
-- The task is Open, not expired, not paused, `expectedVersion` equals the ledger's current charter version, `kind` is a valid `DecisionKind`, string bounds hold, and `newCharterText` is non-empty exactly when `kind == AMEND_CHARTER`.
-- Remaining task time covers voting delay, voting period, timelock delay, and a 60-second margin.
+- Selector equals `TaskLedger.recordDecision.selector`. Decode `(taskId, kind, expectedVersion, payloadHash, newCharterText, summary)`, re-encode, and require byte equality with the submitted calldata.
+- Ledger state: not paused; task Open and not expired; `expectedVersion` equals the current charter version; `kind` in range; `newCharterText` non-empty and hash-matching exactly when `kind == AMEND_CHARTER`, empty otherwise; `summary` at most 1,024 bytes.
+- Remaining task time at least `votingDelay + votingPeriod + timelock.getMinDelay() + 60`.
 - Description length between 1 and 4,096 bytes.
-- The proposer has no unsettled proposal on this task (Pending, Active, Succeeded, or Queued reserve the slot; Defeated, Canceled, Executed, and Expired release it).
 
-On success the governor stores `actionOf[proposalId] = actionId` and `taskOf[proposalId] = taskId`, where
+Return `(selector, 0)`; the governor ignores the returned ID.
+
+#### Proposal registration (`afterPropose`)
+
+Decode the same calldata, compute
 
 ```text
 actionId = keccak256(abi.encode(chainId, ledger, taskId, kind, expectedVersion, payloadHash))
 ```
 
-The ledger emits the same `actionId` when it records the decision, so the execution event and the ledger event join without placing the proposal ID inside its own calldata.
+read `proposer = governor.proposalProposer(proposalId)`, and if `lastProposalOf[taskId][proposer]` is non-zero and its `governor.state()` is Pending, Active, Succeeded, or Queued, revert `MemberHasUnsettledProposal`. Store `actionOf[proposalId]`, `taskOf[proposalId]`, `lastProposalOf[taskId][proposer] = proposalId`, and emit `DecisionProposed(proposalId, taskId, kind, expectedVersion, payloadHash, actionId, proposer)`. The ledger emits the same `actionId` when the decision is recorded, so the two events join without the proposal ID appearing in its own calldata.
 
-#### Vote admission
+#### Vote admission (`beforeVote`)
 
-In `_castVote`: require a valid support value, `registry.isMember(account)`, non-zero snapshot weight, reason length between 1 and 1,024 bytes, and empty params. Inherited duplicate-vote protection applies. Signed votes pass the same checks. A bare `castVote` with an empty reason fails by design.
+Require `params.length == 0`, `support <= 2`, `registry.isMember(account)`, `governor.getVotes(account, governor.proposalSnapshot(proposalId)) > 0`, and reason length between 1 and 1,024 bytes. Return `(selector, false, 0)` so the governor computes weight itself. Inherited duplicate-vote protection applies. Signed votes reach the same hook. A bare `castVote` with an empty reason fails by design.
 
-#### Success
+#### Success (`beforeVoteSucceeded`)
 
 ```text
-_quorumReached(proposalId): forVotes >= quorum(proposalId)
-_voteSucceeded(proposalId): inherited, forVotes > againstVotes
+(against, for, abstain) = governor.proposalVotes(proposalId)
+return (selector, true, for >= governor.quorum(proposalId) && for > against)
 ```
 
-`quorum(proposalId)` is `snapshotSupply * 6000 / 10000`. With fixed supply that is `0.6 * N * 1e18`, and For votes are multiples of `1e18`, so the effective yes count is the smallest integer not below 0.6 N. `COUNTING_MODE()` returns `support=bravo,quorum=for` so generic tools do not assume the default. Agora Next's fleet tenant uses the For-only quorum case.
+`quorum(proposalId)` is `snapshotSupply * 6000 / 10000`. With fixed supply that is `0.6 * N * 1e18`, and For votes are multiples of `1e18`, so the effective yes count is the smallest integer not below 0.6 N. The governor's own `_quorumReached` (all ballots) still runs and is implied by this rule.
+
+#### What the hook cannot change
+
+`COUNTING_MODE()` still returns the inherited `support=bravo,quorum=for,abstain`. That string is wrong for this deployment; the Agora Next fleet tenant and the Runner both use the For-only rule explicitly and the manifest records `countingRule: "for-only-quorum"`. `execute` remains payable; proposals carry zero value and the keeper never sends any.
 
 #### Execution restrictions
 
-Reject non-zero `msg.value` at `execute`. No arbitrary call executor, no settings setters reachable by proposal (the only permitted target is the ledger), admin and manager zero, hooks zero. Test that no proposal can target the governor, the timelock, the token, or the registry.
+The only permitted target is the ledger, so no proposal can reach the governor's settings setters, `relay`, the timelock's role management, the token, or the registry. Admin and manager are zero. Test each of those targets fails at `propose`.
 
 ### 7.5 TimelockController
 
@@ -379,11 +418,11 @@ From the pinned OpenZeppelin fork.
 
 | Role | Holder |
 | --- | --- |
-| Proposer | FleetGovernor only |
-| Executor | FleetGovernor only |
-| Canceller | FleetGovernor and guardian |
+| Proposer | AgoraGovernor only |
+| Executor | AgoraGovernor only |
+| Canceller | AgoraGovernor and guardian |
 | Admin | Timelock itself |
-| Bootstrap admin | FleetFactory during deployment, renounced before `deployFleet` returns |
+| Bootstrap admin | The deployer key during the deployment script, renounced in the same run |
 
 Because the executor is the governor rather than the zero address, anyone may call the governor's public `queue` and `execute`, but the timelock only accepts calls that pass through the governor's checks. The guardian can cancel a queued operation. It cannot schedule, shorten, or execute one.
 
@@ -536,8 +575,8 @@ Onchain reason text: `AGAINST. <rationale> [flags: scope, provenance; confidence
 
 ## 9. End-to-end lifecycle
 
-1. The Runner validates the experiment config, starts or connects to the chain, and calls `FleetFactory.deployFleet`. It writes the deployment manifest.
-2. The Runner verifies: N members, `N * 1e18` supply, one vote each, timelock roles exactly as specified, governor admin and manager zero, hooks zero, `COUNTING_MODE()` as expected. It aborts on any mismatch.
+1. The Runner validates the experiment config, starts or connects to the chain, and runs the deployment script of section 7.1. It writes the deployment manifest.
+2. The Runner verifies: N members, `N * 1e18` supply, one vote each, timelock roles exactly as specified, governor admin and manager zero, the governor's `hooks()` equal to the deployed `FleetHook`, the hook's `governor()` equal to the governor, and the hook address mask `0x22C0`. It aborts on any mismatch.
 3. The Runner writes the DAO Node config and ABI files, starts DAO Node, waits for `/v1/progress` to reach the tip, starts CPLS with the bucket config, and writes the Agora Next deployment file. It opens the Agora Next tenant and confirms the fleet page renders N delegates.
 4. Time advances at least one second past the token's deployment. The Runner checks historical voting power.
 5. The operator key opens the task with the charter. Agora Next shows nothing yet (no proposal); the Runner shows the task.
@@ -666,7 +705,7 @@ The bucket is a cache of chain data. Deleting it and re-running CPLS must reprod
 Maintain a fork branch `fleet-tenant` on the pinned Agora Next commit with these changes and nothing else:
 
 - `TENANT_NAMESPACES.FLEET = "fleet"`, a `DaoSlug` mapping (using the existing escape hatch until a DB enum migration is warranted), and `BRAND_NAME_MAPPINGS`.
-- `src/lib/tenant/configs/contracts/fleet.ts`: chain `isProd ? base : baseSepolia`, or Anvil's chain ID when `FLEET_LOCAL=1`; addresses resolved from `FLEET_DEPLOYMENT_FILE` (JSON written by the Runner, re-read per request in development) or from environment variables in production; `governorType: GOVERNOR_TYPE.AGORA`; `delegationModel: DELEGATION_MODEL.FULL`; our `FleetGovernor` and `FleetVotes` ABIs added under `src/lib/contracts/abis`.
+- `src/lib/tenant/configs/contracts/fleet.ts`: chain `isProd ? base : baseSepolia`, or Anvil's chain ID when `FLEET_LOCAL=1`; addresses resolved from `FLEET_DEPLOYMENT_FILE` (JSON written by the Runner, re-read per request in development) or from environment variables in production; `governorType: GOVERNOR_TYPE.AGORA`; `delegationModel: DELEGATION_MODEL.FULL`; the pinned `AgoraGovernor` v2 ABI and our `FleetVotes` ABI added under `src/lib/contracts/abis` (the repository's existing `AgoraGovernor.json` is an earlier version).
 - `src/lib/tenant/configs/ui/fleet.ts`: toggles `proposals`, `delegates`, `use-archive-for-proposals`, `use-archive-for-proposal-details`, `use-archive-for-vote-history`, `use-daonode-for-voting-power`, `use-daonode-for-votable-supply`, `use-daonode-for-proposal-types`. Gasless, forum, EAS, and sponsored toggles off.
 - A `FLEET` case wherever quorum counting is switched by namespace, returning For only, so derived status equals chain status. Cover the Prisma path, the archive path, and any bigint variant.
 - Prisma: add `fleet` to the schema list and clone the per-namespace view models. Ship `infra/postgres/agora-stub.sql` that creates the `fleet` schema with empty tables matching those views and the user-content tables Agora Next queries on the pages we use.
@@ -735,18 +774,18 @@ fleet-governance/
     experiments.md
   contracts/
     src/
-      FleetFactory.sol
       FleetRegistry.sol
       FleetVotes.sol
-      FleetGovernor.sol
+      FleetHook.sol
       TaskLedger.sol
+      libraries/ActionId.sol
     test/
       unit/ integration/ invariant/ negative/
       fixtures/MockUSDC.sol
     script/
-      DeployLocal.s.sol
-      DeployBaseSepolia.s.sol
+      DeployFleet.s.sol
       VerifyDeployment.s.sol
+      HookMiner.sol
     lib/agora-governor        (submodule, pinned)
     foundry.toml
     remappings.txt
@@ -790,7 +829,7 @@ Acceptance: one scripted three-yes proposal executes; two yes votes do not pass;
 
 ### M1. Build the contracts
 
-`FleetFactory`, `FleetRegistry`, `FleetVotes`, `FleetGovernor`, `TaskLedger`. Unit, integration, invariant, and negative tests before any model is connected. Deploy and verify scripts.
+`FleetRegistry`, `FleetVotes`, `FleetHook`, `TaskLedger`, the deployment script with hook salt mining, and the verifier. Unit, integration, invariant, and negative tests before any model is connected.
 
 Acceptance: one command deploys a fleet on Anvil, opens a task, runs a scripted `GRANT_EXCEPTION` proposal to execution, shows the exception recorded, rejects a non-member proposer and voter, rejects a direct ledger write, rejects a proposal targeting the governor, records an `AMEND_CHARTER` that invalidates a pending proposal on the old version, and demonstrates pause plus cancel. Gas report published.
 
@@ -824,11 +863,12 @@ A written review of contract security, key custody, guardian controls, timelock 
 
 | Area | Required cases |
 | --- | --- |
-| Factory | Full deployment, role wiring, admin renounced, event correctness, duplicate deploy independence, gas report |
+| Deployment | Script deploys all six contracts, role wiring, deployer admin renounced, hook address mask exactly `0x22C0`, `hook.governor()` and `governor.hooks()` agree, manifest correctness, gas report |
+| Hook | Non-governor callers of state-changing hooks revert; `initialize` succeeds once and only for the deployer; wrong-mask deployment reverts in the constructor |
 | Registry | N members, duplicates and zero rejected, bounds, no mutation path, `NotMember` on unknown lookups |
 | Token | Supply `N * 1e18`; transfers, approvals, zero-value attempts, and alternate internal paths revert; self-delegation idempotent; member delegation moves power; non-member and zero delegatee revert; `delegateBySig` cannot bypass |
 | Clock | Past checkpoints valid; same-timepoint lookups rejected; governor and token clocks agree |
-| Proposal admission | Non-member fails; single ledger action only; other target, selector, value, malformed or trailing calldata fail; version mismatch fails; paused fails; insufficient remaining time fails; description bounds; one unsettled per member per task |
+| Proposal admission | Non-member fails; single ledger action only; other target (governor, timelock, token, registry, hook), selector, value, malformed or trailing calldata fail; version mismatch fails; paused fails; insufficient remaining time fails; description bounds; one unsettled per member per task |
 | Vote admission | Non-member, double vote, invalid support, empty and oversized reason, non-empty params, invalid and replayed signatures |
 | Thresholds | Every ballot profile for N equals 5 (`4^5 = 1,024` profiles) against the deployed contracts; expected result is `forVotes >= 3e18 && forVotes > againstVotes`; representative profiles for N equals 3, 7, and 10 including delegated concentrations |
 | Timelock | Unauthorized schedule, execute, and role change fail; guardian cancel works; governor queue and execute work |
@@ -893,7 +933,7 @@ Research gate: a measured difference in out-of-charter attempts or replay reject
 ### 16.2 Base Sepolia
 
 1. Configure an RPC provider with HTTP and WebSocket endpoints and a GCS bucket.
-2. Run the Runner with the Sepolia target. It deploys through the factory, verifies, writes the manifest under `deployments/84532/`, writes indexer configs with the deployment block, restarts DAO Node, and points Agora Next at the new deployment file.
+2. Run the Runner with the Sepolia target. It runs the deployment script, verifies, writes the manifest under `deployments/84532/`, writes indexer configs with the deployment block, restarts DAO Node, and points Agora Next at the new deployment file.
 3. Fund signers and the keeper with test ETH. Wait one block past deployment. Run the scripted smoke fixture before enabling model workers.
 4. Publish the manifest and the Agora Next URL.
 
@@ -903,7 +943,7 @@ On suspected signer compromise, unsafe pending decision, or integration bug: pau
 
 ### 16.4 Mainnet boundary
 
-This document authorizes local and Base Sepolia work only. Moving to Base mainnet is a manifest target, a tenant chain switch, and a bucket, technically. Organizationally it requires M5. Never assume an upstream audit covers our governor overrides, the token restrictions, the factory wiring, the ledger, the gateway, or our patches to Agora's services.
+This document authorizes local and Base Sepolia work only. Moving to Base mainnet is a manifest target, a tenant chain switch, and a bucket, technically. Organizationally it requires M5. Never assume an upstream audit covers our hook, the token restrictions, the deployment wiring, the ledger, the gateway, or our patches to Agora's services.
 
 ---
 
