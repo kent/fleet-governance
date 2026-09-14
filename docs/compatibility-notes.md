@@ -238,10 +238,9 @@ need the same `deployCode`-style workaround, or a structural fix to how the subm
 resolution context for its internal imports). Flagging this explicitly for whoever deploys the
 real governor.
 
-### Note for Task 8: hook revert data is not preserved through `Hooks.callHook`
+### Task 8: hook revert data is not preserved through `Hooks.callHook` (confirmed live)
 
-Read (not observed live; `test_BeforeVoteSucceededUsesForOnlyRule` does not exercise a revert
-path) directly from `lib/agora-governor/src/libraries/Hooks.sol`: both `callHook` (used for
+Read directly from `lib/agora-governor/src/libraries/Hooks.sol`: both `callHook` (used for
 `beforePropose`, `afterPropose`, `beforeVote`) and `staticCallHook` (used for
 `beforeVoteSucceeded`) do
 
@@ -261,6 +260,25 @@ are all discarded. Code that needs to distinguish *why* a proposal or vote was r
 `FleetHook` cannot do so by inspecting the governor call's revert data; it would need to
 simulate the hook call directly (e.g. `eth_call` against `FleetHook` with the same arguments) to
 recover the real error.
+
+**Confirmed live in Task 8's integration tests.** `AdmissionTest.test_ImpostorCannotPropose`
+(`contracts/test/integration/Admission.t.sol`), run with `-vvvv`, shows the trace directly:
+
+```
+├─ [..] FleetHook::beforePropose(outsider, ...)
+│   ├─ [..] FleetRegistry::isMember(outsider) [staticcall]
+│   │   └─ ← [Return] false
+│   └─ ← [Revert] NotMember(0x6AB133Ce3481A06313b4e0B1bb810BCD670853a4)
+└─ ← [Revert] HookCallFailed()
+```
+
+`FleetHook.beforePropose` reverts with `NotMember(address)`, carrying the impostor's address as
+data, but `AgoraGovernor.propose` (by way of `Hooks.callHook`) re-reverts with the bare,
+zero-argument `HookCallFailed()`. The inner selector and argument are fully discarded, not
+bubbled or wrapped as ERC-7751 `WrappedError` data, matching the source reading above. Because of
+this, Task 8's tests assert `Hooks.HookCallFailed.selector` (not the specific `FleetHook` error)
+for every rejection that originates inside the hook, and rely on the trace comment, not on
+`vm.expectRevert` data, to record which inner error actually fired.
 
 ### Fix round 1: `decodeAction` minimum-length guard
 
