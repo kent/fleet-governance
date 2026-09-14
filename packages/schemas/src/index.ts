@@ -7,3 +7,4 @@ export * from "./vote.js";
 export * from "./deploy.js";
 export * from "./manifest.js";
 export * from "./experiment.js";
+export * from "./fixture.js";
