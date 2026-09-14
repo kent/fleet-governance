@@ -22,6 +22,16 @@ services:
     environment:
       ANVIL_RPC_URL: http://anvil:8545
       BLOCK_TIME_SECONDS: "2"
+      # The fleet's governor (AgoraGovernor V2) is timestamp-clocked:
+      # `cast call $GOVERNOR "CLOCK_MODE()(string)"` returns
+      # "mode=timestamp", so DAO Node's start_block/end_block are unix
+      # timestamps and CPLS passes them to this shim as block numbers.
+      # Without this, every timestamp lookup extrapolated a date centuries
+      # out (CPLS then marked every unexecuted proposal PENDING) and every
+      # quorum/state call was evaluated at a block that does not exist. See
+      # infra/blockcache-shim/server.py's GOVERNOR_CLOCK_MODE section and
+      # docs/compatibility-notes.md, "Final review fixes".
+      GOVERNOR_CLOCK_MODE: ${GOVERNOR_CLOCK_MODE:-timestamp}
     depends_on:
       anvil:
         condition: service_healthy

@@ -1,11 +1,29 @@
 #!/usr/bin/env bash
 # scripted-proposal.sh: drive one real proposal through the real Agora
 # governor with `cast`, end to end: open a task, propose a GRANT_EXCEPTION
-# decision, cast five reasoned votes (For, For, Against, For, Against, per
-# the controller notes), queue, execute, and confirm the ledger recorded the
-# exception. After each governance stage it triggers a CPLS sync job and
-# waits for the resulting archive object, so by the time this script exits,
-# Agora Next has everything it needs to render the proposal.
+# decision, cast five reasoned votes, and take the proposal to its terminal
+# state. After each governance stage it triggers a CPLS sync job and waits
+# for the resulting archive object, so by the time this script exits, Agora
+# Next has everything it needs to render the proposal. It finishes by
+# asserting that the Agora Next proposal page's own status badge agrees
+# with the governor's `state()`.
+#
+# OUTCOME (env, default "succeed") picks which outcome to drive:
+#
+#   succeed  3 For / 2 Against (the controller notes' M0 lifecycle). Meets
+#            the 60% For-only quorum, so the governor reports Succeeded;
+#            the script queues, waits out the timelock, executes, and
+#            confirms the ledger recorded the exception. Agora Next must
+#            show EXECUTED.
+#   defeat   2 For / 3 Against on its own task. 2 of 5 votes is below the
+#            60% For-only quorum, so the governor reports Defeated; nothing
+#            is queued or executed and the ledger must record no exception.
+#            Agora Next must show DEFEATED, and specifically not SUCCEEDED:
+#            that is the case that diverged while CPLS archived quorum as
+#            '0' (see docs/compatibility-notes.md, "Final review fixes").
+#
+# The two outcomes use different task ids and different descriptions, so
+# they compute different proposal ids and both can run against one chain.
 #
 # Reads every contract address from deployments/31337/latest.json (written
 # by the contracts deploy step) rather than taking them as arguments, so it
@@ -51,6 +69,23 @@ AGORA_NEXT_URL=${AGORA_NEXT_URL:-http://localhost:$(read_env_value AGORA_NEXT_PO
 FAKE_GCS_URL=${FAKE_GCS_URL:-http://localhost:$(read_env_value FAKE_GCS_PORT 4443)}
 GCS_BUCKET_NAME=${GCS_BUCKET_NAME:-$(read_env_value GCS_BUCKET_NAME fleet-archive-dev)}
 CHAIN_ID=$(jq -r '.chainId' "$manifest")
+
+OUTCOME=${OUTCOME:-succeed}
+case "$OUTCOME" in
+  succeed|defeat) ;;
+  *)
+    echo "scripted-proposal: OUTCOME must be 'succeed' or 'defeat', got '$OUTCOME'" >&2
+    exit 2
+    ;;
+esac
+echo "scripted-proposal: driving the '$OUTCOME' outcome"
+
+# Optional: a path to write this run's machine-readable result to (ids,
+# outcome, final on-chain state, the tally, the Agora Next status badge).
+# bootstrap-local.sh passes one and folds it into
+# deployments/31337/bootstrap-status.json, so nothing has to scrape ids
+# back out of this script's log.
+PROPOSAL_RESULT_FILE=${PROPOSAL_RESULT_FILE:-}
 
 LEDGER=$(jq -r '.addresses.ledger' "$manifest")
 GOVERNOR=$(jq -r '.addresses.governor' "$manifest")
@@ -169,7 +204,14 @@ echo "scripted-proposal: TASK_ID=$TASK_ID"
 PAYLOAD_HASH=$(cast keccak "fetch examples.internal")
 CALLDATA=$(cast calldata "recordDecision(uint256,uint8,uint32,bytes32,string,string)" \
   "$TASK_ID" 1 1 "$PAYLOAD_HASH" "" "one-time fetch")
-DESCRIPTION=$'# Grant exception\n\nfetch examples.internal\n\n#proposalTypeId=0'
+# The trailing "#proposalTypeId=0" marker is required: DAO Node parses the
+# proposal type out of the description, and patch 0002 only tolerates its
+# absence, it does not invent a type. Both outcomes carry it.
+if [ "$OUTCOME" = "succeed" ]; then
+  DESCRIPTION=$'# Grant exception\n\nfetch examples.internal\n\n#proposalTypeId=0'
+else
+  DESCRIPTION=$'# Grant exception (negative case)\n\nfetch examples.internal\n\n#proposalTypeId=0'
+fi
 DESC_HASH=$(cast keccak "$DESCRIPTION")
 
 PID=$(cast call "$GOVERNOR" "getProposalId(address[],uint256[],bytes[],bytes32)(uint256)" \
@@ -227,12 +269,21 @@ cast_vote() {
   echo "scripted-proposal: member $member_idx voted (support=$support, weight=$weight) tx=$tx block=$block"
 }
 
-echo "== casting five votes: For, For, Against, For, Against =="
-cast_vote 1 1 "FOR. Needed to finish task $TASK_ID within budget; examples.internal is a controlled internal mirror with no evidence of exfiltration risk. [flags: scope; confidence: 0.88]"
-cast_vote 2 1 "FOR. I proposed this after exhausting repository-only options; the fetch is scoped to reference tests only and is time-boxed to this task. [flags: scope; confidence: 0.9]"
-cast_vote 3 0 "AGAINST. Charter forbids fetching from non-allowlisted hosts and the proposal offers no evidence the host is trustworthy; the task remains solvable from the repository. [flags: scope, provenance; confidence: 0.82]"
-cast_vote 4 1 "FOR. Cheap, reversible, and time-boxed to this one task; blocking it stalls the suite for no safety benefit. [flags: scope; confidence: 0.75]"
-cast_vote 5 0 "AGAINST. The examples.internal host has not been vetted through the fleet's allowlist review process and approving now sets precedent for ad hoc exceptions. [flags: provenance; confidence: 0.7]"
+if [ "$OUTCOME" = "succeed" ]; then
+  echo "== casting five votes: For, For, Against, For, Against =="
+  cast_vote 1 1 "FOR. Needed to finish task $TASK_ID within budget; examples.internal is a controlled internal mirror with no evidence of exfiltration risk. [flags: scope; confidence: 0.88]"
+  cast_vote 2 1 "FOR. I proposed this after exhausting repository-only options; the fetch is scoped to reference tests only and is time-boxed to this task. [flags: scope; confidence: 0.9]"
+  cast_vote 3 0 "AGAINST. Charter forbids fetching from non-allowlisted hosts and the proposal offers no evidence the host is trustworthy; the task remains solvable from the repository. [flags: scope, provenance; confidence: 0.82]"
+  cast_vote 4 1 "FOR. Cheap, reversible, and time-boxed to this one task; blocking it stalls the suite for no safety benefit. [flags: scope; confidence: 0.75]"
+  cast_vote 5 0 "AGAINST. The examples.internal host has not been vetted through the fleet's allowlist review process and approving now sets precedent for ad hoc exceptions. [flags: provenance; confidence: 0.7]"
+else
+  echo "== casting five votes: For, For, Against, Against, Against =="
+  cast_vote 1 1 "FOR. Needed to finish task $TASK_ID within budget; examples.internal is a controlled internal mirror with no evidence of exfiltration risk. [flags: scope; confidence: 0.84]"
+  cast_vote 2 1 "FOR. The fetch is scoped to reference tests only and is time-boxed to this task. [flags: scope; confidence: 0.71]"
+  cast_vote 3 0 "AGAINST. Charter forbids fetching from non-allowlisted hosts and the proposal offers no evidence the host is trustworthy; the task remains solvable from the repository. [flags: scope, provenance; confidence: 0.86]"
+  cast_vote 4 0 "AGAINST. The same exception was argued once already on this fleet; nothing in the charter or the evidence has changed since. [flags: provenance; confidence: 0.79]"
+  cast_vote 5 0 "AGAINST. The examples.internal host has not been vetted through the fleet's allowlist review process and approving now sets precedent for ad hoc exceptions. [flags: provenance; confidence: 0.7]"
+fi
 
 cast call "$GOVERNOR" "proposalVotes(uint256)(uint256,uint256,uint256)" "$PID" --rpc-url "$RPC_URL"
 
@@ -240,59 +291,182 @@ bash "$script_dir/wait-for.sh" "DAO Node to index all five votes for $PID" 60 \
   "curl -fsS '$DAO_NODE_URL/v1/vote_record/$PID' | jq -e '.vote_record | length == 5'"
 sync_stage "voted"
 
-# --- 5. Wait past the voting period, then queue ---------------------------
+# --- 5. Wait past the voting period ---------------------------------------
 
+# One state() call per iteration, reused by the loop condition, the timeout
+# message and the branch below: each one is a round trip to the chain, and
+# three separate calls could disagree with each other across a block
+# boundary.
 elapsed=0
-until [ "$(state)" = "4" ] || [ "$(state)" = "3" ]; do
+current_state=$(state)
+until [ "$current_state" = "4" ] || [ "$current_state" = "3" ]; do
   if [ "$elapsed" -ge 180 ]; then
-    echo "scripted-proposal: proposal $PID never reached Succeeded/Defeated (state=$(state))" >&2
+    echo "scripted-proposal: proposal $PID never reached Succeeded/Defeated (state=$current_state)" >&2
     exit 1
   fi
   sleep 5
   elapsed=$((elapsed + 5))
+  current_state=$(state)
 done
-echo "scripted-proposal: state after voting period: $(state) (4=Succeeded, 3=Defeated)"
-if [ "$(state)" != "4" ]; then
-  echo "scripted-proposal: proposal did not succeed; aborting before queue/execute" >&2
+echo "scripted-proposal: state after voting period: $current_state (4=Succeeded, 3=Defeated)"
+
+if [ "$OUTCOME" = "defeat" ]; then
+  # --- 5b. Negative case: assert Defeated, sync, and stop ------------------
+  if [ "$current_state" != "3" ]; then
+    echo "scripted-proposal: expected Defeated (3) for the negative case, got state=$current_state" >&2
+    exit 1
+  fi
+  echo "scripted-proposal: governor reports Defeated (state=3) for $PID, as expected"
+
+  # Nothing is queued or executed, so this proposal is the case that
+  # exercises Agora Next's vote-derived status (the archive's quorum and
+  # blocktimes) rather than a terminal event. This sync is safe for the
+  # same reason the "executed" sync is: refresh_list's unguarded
+  # `state(uint256)` call runs here, and the blockcache-shim answers it
+  # (GOVERNOR_CLOCK_MODE=timestamp; see that file's header).
+  sync_stage "defeated"
+
+  EXCEPTION_VERSION=$(cast call "$LEDGER" "exceptionVersion(uint256,bytes32)(uint32)" "$TASK_ID" "$PAYLOAD_HASH" --rpc-url "$RPC_URL" | awk '{print $1}')
+  echo "scripted-proposal: ledger.exceptionVersion($TASK_ID, $PAYLOAD_HASH) = $EXCEPTION_VERSION"
+  if [ "$EXCEPTION_VERSION" != "0" ]; then
+    echo "scripted-proposal: a defeated proposal must not have recorded an exception, got version $EXCEPTION_VERSION" >&2
+    exit 1
+  fi
+
+  EXPECTED_AGORA_STATUS=DEFEATED
+else
+  # --- 5a. Positive case: queue, wait out the timelock, execute -----------
+  if [ "$current_state" != "4" ]; then
+    echo "scripted-proposal: proposal did not succeed; aborting before queue/execute" >&2
+    exit 1
+  fi
+
+  echo "== queueing (operator; queue/execute are permissionless, any key works) =="
+  cast send "$GOVERNOR" "queue(address[],uint256[],bytes[],bytes32)" \
+    "[$LEDGER]" "[0]" "[$CALLDATA]" "$DESC_HASH" \
+    --private-key "$OPERATOR_KEY" --rpc-url "$RPC_URL" --json | jq -r '"tx=" + .transactionHash + " status=" + .status'
+  echo "scripted-proposal: state after queue: $(state)"
+  # No CPLS sync here on purpose: cpls/sync_daonode.py's refresh_list calls
+  # self.bc.contract_call_encoded(..., 'state(uint256)', ...) (BlockCacheClient,
+  # see infra/blockcache-shim) unguarded whenever a proposal's voting period
+  # has already ended but it is not yet archived (queue_event alone does not
+  # set liveness to 'archived', only execute_event/cancel_event do); the
+  # shim itself would actually handle this correctly (verified separately),
+  # but there is no need to exercise that path here. The "voted" sync above
+  # (while the voting period is still open) and the "executed" sync below
+  # (once execute_event makes the proposal archived, skipping that code
+  # path entirely) bracket this stage safely. See
+  # docs/compatibility-notes.md, Task 6, "CPLS's block-timestamp lookups
+  # need a working BlockCacheClient".
+
+  # --- 6. Wait past the timelock delay, then execute ------------------------
+
+  TIMELOCK_DELAY=$(jq -r '.params.timelockDelay' "$manifest")
+  echo "== sleeping past the timelock delay (${TIMELOCK_DELAY}s + 5s margin) =="
+  sleep "$((TIMELOCK_DELAY + 5))"
+
+  echo "== executing =="
+  cast send "$GOVERNOR" "execute(address[],uint256[],bytes[],bytes32)" \
+    "[$LEDGER]" "[0]" "[$CALLDATA]" "$DESC_HASH" \
+    --private-key "$OPERATOR_KEY" --rpc-url "$RPC_URL" --json | jq -r '"tx=" + .transactionHash + " status=" + .status'
+  echo "scripted-proposal: state after execute: $(state)"
+
+  bash "$script_dir/wait-for.sh" "DAO Node to index execution of $PID" 60 \
+    "curl -fsS '$DAO_NODE_URL/v1/proposal/$PID' | jq -e '.proposal.execute_event != null'"
+  sync_stage "executed"
+
+  EXCEPTION_VERSION=$(cast call "$LEDGER" "exceptionVersion(uint256,bytes32)(uint32)" "$TASK_ID" "$PAYLOAD_HASH" --rpc-url "$RPC_URL" | awk '{print $1}')
+  echo "scripted-proposal: ledger.exceptionVersion($TASK_ID, $PAYLOAD_HASH) = $EXCEPTION_VERSION"
+  if [ "$EXCEPTION_VERSION" = "0" ]; then
+    echo "scripted-proposal: the executed proposal recorded no exception on the ledger" >&2
+    exit 1
+  fi
+
+  EXPECTED_AGORA_STATUS=EXECUTED
+fi
+
+FINAL_STATE=$(state)
+
+# --- 7. Assert Agora Next agrees with the chain ---------------------------
+
+# Read the status out of the one element that carries it, not out of the
+# page. The proposal page renders its status through
+# vendor/agora-next/src/components/Proposals/ProposalStatus/ProposalStatusDetail.tsx,
+# which tags the badge `data-testid="proposal-status-badge"` and puts the
+# status word inside it. The words "queued", "succeeded" and "executed"
+# each occur several times elsewhere in the same HTML (the lifecycle
+# timeline, the vote panel, JSON in the RSC payload), so grepping the whole
+# page for a status word proves nothing about what a reader sees.
+agora_status_badge() {
+  curl -fsS --max-time 120 "$AGORA_NEXT_URL/proposals/$PID" \
+    | grep -o 'data-testid="proposal-status-badge"[^>]*>[^<]*' \
+    | head -n1 \
+    | sed 's/.*>//' \
+    | tr -d '[:space:]'
+}
+
+# `npm run dev` compiles this route on first request, and the dev server
+# restarts itself under Docker Desktop's VM memory pressure (see
+# docs/compatibility-notes.md, "npm run dev's memory footprint"), which
+# shows up as an empty reply mid-request. Poll rather than take one shot.
+AGORA_STATUS=""
+elapsed=0
+printf 'scripted-proposal: reading the Agora Next status badge for %s ' "$PID"
+while true; do
+  AGORA_STATUS=$(agora_status_badge 2>/dev/null || true)
+  if [ -n "$AGORA_STATUS" ]; then
+    break
+  fi
+  if [ "$elapsed" -ge 420 ]; then
+    echo "FAILED after ${elapsed}s"
+    echo "scripted-proposal: no proposal-status-badge element at $AGORA_NEXT_URL/proposals/$PID" >&2
+    exit 1
+  fi
+  printf '.'
+  sleep 5
+  elapsed=$((elapsed + 5))
+done
+echo "OK (${elapsed}s)"
+
+echo "scripted-proposal: Agora Next status badge = $AGORA_STATUS (expected $EXPECTED_AGORA_STATUS, chain state=$FINAL_STATE)"
+if [ "$AGORA_STATUS" != "$EXPECTED_AGORA_STATUS" ]; then
+  echo "scripted-proposal: Agora Next shows '$AGORA_STATUS' for $PID but the governor says '$EXPECTED_AGORA_STATUS'" >&2
+  exit 1
+fi
+if [ "$OUTCOME" = "defeat" ] && [ "$AGORA_STATUS" = "SUCCEEDED" ]; then
+  echo "scripted-proposal: a defeated proposal must never render as SUCCEEDED" >&2
   exit 1
 fi
 
-echo "== queueing (operator; queue/execute are permissionless, any key works) =="
-cast send "$GOVERNOR" "queue(address[],uint256[],bytes[],bytes32)" \
-  "[$LEDGER]" "[0]" "[$CALLDATA]" "$DESC_HASH" \
-  --private-key "$OPERATOR_KEY" --rpc-url "$RPC_URL" --json | jq -r '"tx=" + .transactionHash + " status=" + .status'
-echo "scripted-proposal: state after queue: $(state)"
-# No CPLS sync here on purpose: cpls/sync_daonode.py's refresh_list calls
-# self.bc.contract_call_encoded(..., 'state(uint256)', ...) (BlockCacheClient,
-# see infra/blockcache-shim) unguarded whenever a proposal's voting period
-# has already ended but it is not yet archived (queue_event alone does not
-# set liveness to 'archived', only execute_event/cancel_event do); the
-# shim itself would actually handle this correctly (verified separately),
-# but there is no need to exercise that path here. The "voted" sync above
-# (while the voting period is still open) and the "executed" sync below
-# (once execute_event makes the proposal archived, skipping that code
-# path entirely) bracket this stage safely. See
-# docs/compatibility-notes.md, Task 6, "CPLS's block-timestamp lookups
-# need a working BlockCacheClient".
+# --- 8. Report -------------------------------------------------------------
 
-# --- 6. Wait past the timelock delay, then execute ------------------------
+tally=$(cast call "$GOVERNOR" "proposalVotes(uint256)(uint256,uint256,uint256)" "$PID" --rpc-url "$RPC_URL" | awk '{print $1}')
+AGAINST_VOTES=$(echo "$tally" | sed -n '1p')
+FOR_VOTES=$(echo "$tally" | sed -n '2p')
+ABSTAIN_VOTES=$(echo "$tally" | sed -n '3p')
+ONCHAIN_QUORUM=$(cast call "$GOVERNOR" "quorum(uint256)(uint256)" "$PID" --rpc-url "$RPC_URL" | awk '{print $1}')
 
-TIMELOCK_DELAY=$(jq -r '.params.timelockDelay' "$manifest")
-echo "== sleeping past the timelock delay (${TIMELOCK_DELAY}s + 5s margin) =="
-sleep "$((TIMELOCK_DELAY + 5))"
-
-echo "== executing =="
-cast send "$GOVERNOR" "execute(address[],uint256[],bytes[],bytes32)" \
-  "[$LEDGER]" "[0]" "[$CALLDATA]" "$DESC_HASH" \
-  --private-key "$OPERATOR_KEY" --rpc-url "$RPC_URL" --json | jq -r '"tx=" + .transactionHash + " status=" + .status'
-echo "scripted-proposal: state after execute: $(state)"
-
-bash "$script_dir/wait-for.sh" "DAO Node to index execution of $PID" 60 \
-  "curl -fsS '$DAO_NODE_URL/v1/proposal/$PID' | jq -e '.proposal.execute_event != null'"
-sync_stage "executed"
-
-EXCEPTION_VERSION=$(cast call "$LEDGER" "exceptionVersion(uint256,bytes32)(uint32)" "$TASK_ID" "$PAYLOAD_HASH" --rpc-url "$RPC_URL" | awk '{print $1}')
-echo "scripted-proposal: ledger.exceptionVersion($TASK_ID, $PAYLOAD_HASH) = $EXCEPTION_VERSION"
+if [ -n "$PROPOSAL_RESULT_FILE" ]; then
+  jq -n \
+    --arg outcome "$OUTCOME" \
+    --arg task_id "$TASK_ID" \
+    --arg proposal_id "$PID" \
+    --arg state "$FINAL_STATE" \
+    --arg agora_status "$AGORA_STATUS" \
+    --arg for_votes "$FOR_VOTES" \
+    --arg against_votes "$AGAINST_VOTES" \
+    --arg abstain_votes "$ABSTAIN_VOTES" \
+    --arg quorum "$ONCHAIN_QUORUM" \
+    --arg exception_version "$EXCEPTION_VERSION" \
+    --arg url "$AGORA_NEXT_URL/proposals/$PID" \
+    '{outcome: $outcome, task_id: $task_id, proposal_id: $proposal_id,
+      onchain_state: ($state | tonumber), agora_next_status: $agora_status,
+      votes: {for: $for_votes, against: $against_votes, abstain: $abstain_votes},
+      onchain_quorum: $quorum,
+      ledger_exception_version: ($exception_version | tonumber),
+      agora_next_url: $url}' > "$PROPOSAL_RESULT_FILE"
+  echo "scripted-proposal: wrote $PROPOSAL_RESULT_FILE"
+fi
 
 echo "scripted-proposal: done."
 echo "PROPOSAL_ID=$PID"

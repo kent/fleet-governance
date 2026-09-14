@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # bootstrap-local.sh: the one command that takes an empty local Anvil to a
-# fully governed fleet with one executed proposal, visible end to end in
-# Agora Next. See infra/README.md for ports, prerequisites and what each
-# step produces.
+# fully governed fleet with one executed proposal and one defeated one,
+# both visible end to end in Agora Next. See infra/README.md for ports,
+# prerequisites and what each step produces.
 #
 # Order (matches the Part 2 spec's end-to-end lifecycle, section 9):
 #   0. Build every service's image once, up front (see the comment at that
@@ -16,9 +16,11 @@
 #      fake-gcs, offline only), no --build; wait for each service's own
 #      readiness endpoint.
 #   5. Create the fake GCS bucket (offline only).
-#   6. scripted-proposal.sh: drive one proposal through the real governor
-#      and sync CPLS after each safe stage.
-#   7. Print the proposal's Agora Next URL.
+#   6. scripted-proposal.sh twice: one proposal that meets quorum and is
+#      executed, one that does not and ends Defeated, each syncing CPLS
+#      after its safe stages and each asserting that Agora Next's own
+#      status badge agrees with the governor.
+#   7. Print both proposals' Agora Next URLs.
 #
 # Safe to re-run against an already-running stack (docker compose recreates
 # only what changed); NOT idempotent against contracts already deployed on
@@ -184,19 +186,39 @@ else
   echo "== [5/7] real GCS bucket in use; skipping fake-gcs bucket creation =="
 fi
 
-# --- 6. Drive the scripted proposal -----------------------------------------
+# --- 6. Drive the scripted proposals -----------------------------------------
 
-echo "== [6/7] driving the scripted proposal through the real governor =="
-proposal_output=$(bash "$script_dir/scripted-proposal.sh" 2>&1 | tee /dev/stderr)
-proposal_id=$(echo "$proposal_output" | grep '^PROPOSAL_ID=' | tail -n1 | cut -d= -f2)
+# Two proposals, on two tasks, through the same real governor: one that
+# meets the For-only quorum and is queued and executed, and one that does
+# not and ends Defeated. The negative case is the one that exercises Agora
+# Next's vote-derived status (the archive's quorum and blocktimes) instead
+# of a terminal on-chain event; see scripted-proposal.sh's header.
+results_dir=$(mktemp -d)
+trap 'rm -rf "$results_dir"' EXIT
 
-if [ -z "$proposal_id" ]; then
-  echo "bootstrap-local: scripted-proposal.sh did not report a PROPOSAL_ID; aborting" >&2
-  exit 1
-fi
+echo "== [6/7] driving the scripted proposals through the real governor =="
+echo "-- proposal 1 of 2: succeed (3 For / 2 Against, queued and executed) --"
+OUTCOME=succeed PROPOSAL_RESULT_FILE="$results_dir/succeed.json" \
+  bash "$script_dir/scripted-proposal.sh"
+echo "-- proposal 2 of 2: defeat (2 For / 3 Against, never queued) --"
+OUTCOME=defeat PROPOSAL_RESULT_FILE="$results_dir/defeat.json" \
+  bash "$script_dir/scripted-proposal.sh"
+
+for f in "$results_dir/succeed.json" "$results_dir/defeat.json"; do
+  if [ ! -s "$f" ]; then
+    echo "bootstrap-local: scripted-proposal.sh did not write $f; aborting" >&2
+    exit 1
+  fi
+done
+
+executed_id=$(jq -r '.proposal_id' "$results_dir/succeed.json")
+defeated_id=$(jq -r '.proposal_id' "$results_dir/defeat.json")
 
 # --- 7. Print the result ----------------------------------------------------
 
 echo "== [7/7] done =="
-echo "bootstrap-local: proposal $proposal_id executed."
-echo "bootstrap-local: Agora Next: http://localhost:$AGORA_NEXT_PORT/proposals/$proposal_id"
+jq -s '.' "$results_dir/succeed.json" "$results_dir/defeat.json"
+echo "bootstrap-local: executed proposal $executed_id"
+echo "bootstrap-local:   http://localhost:$AGORA_NEXT_PORT/proposals/$executed_id"
+echo "bootstrap-local: defeated proposal $defeated_id"
+echo "bootstrap-local:   http://localhost:$AGORA_NEXT_PORT/proposals/$defeated_id"

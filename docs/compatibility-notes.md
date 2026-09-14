@@ -1924,3 +1924,181 @@ members, `1 FLEET` each). DAO Node: `/v1/progress`, `/v1/proposals`,
 `/v1/proposal/<id>`, `/v1/vote_record/<id>`, `/v1/delegates`, `/v1/balance/<addr>`.
 CPLS: `/health`, `POST /jobs`, `GET /jobs/<id>`. Fake GCS:
 `/storage/v1/b/<bucket>/o` (list), `DELETE /storage/v1/b/<bucket>/o/<object>`.
+
+## Final review fixes
+
+Findings from the whole-branch review of `part2-agora-stack`, with the
+evidence gathered while fixing each.
+
+### CPLS archived `quorum` as `'0'` for every proposal
+
+`cpls/sync_daonode.py`'s `DaoNodeSync.read_quorum` dispatches on
+`infra_dao_slug`. Six of the seven branches that call `quorum(uint256)`
+pass `int(proposal_id)`; the `else` branch, which every DAO without a
+hand-written branch falls into (ours is `fleet`), passed the raw
+`proposal_id`. DAO Node returns proposal ids as JSON strings, and
+`eth_abi`'s encoder refuses a `str` for `uint256` before any RPC call
+happens. The call site catches every exception and falls back to `'0'`, so
+nothing failed: the archive was simply written with a quorum of zero.
+
+From `docker compose logs cpls`, before the fix:
+
+```
+Failed to read quorum for proposal 1075273859849237667676504636935045130289281750552847332526566291271267448405
+22 (cancelled=False): Value `'107527385984923766767650463693504513028928175055284733252656629127126744840...`
+of type <class 'str'> cannot be encoded by UnsignedIntegerEncoder
+Quorum set to 0
+```
+
+The archived record, before (`data/fleet/proposal_list.full.ndjson.gz`):
+
+```
+$ curl -s "http://localhost:4443/storage/v1/b/fleet-archive-dev/o/data%2Ffleet%2Fproposal_list.full.ndjson.gz?alt=media" \
+    | gunzip -c | jq -c '{id, quorum, total_voting_power_at_start}'
+{"id":"70719344765219781223949422325111121206638320504507403755309964502293377655188","quorum":"0","total_voting_power_at_start":null}
+{"id":"107527385984923766767650463693504513028928175055284733252656629127126744840522","quorum":"0","total_voting_power_at_start":null}
+```
+
+and after (`infra/cpls/patches/0001-read-quorum-encodes-proposal-id-as-int.patch`
+plus the timestamp-clock fix below):
+
+```
+{"id":"70719344765219781223949422325111121206638320504507403755309964502293377655188","quorum":"3000000000000000000","total_voting_power_at_start":"0"}
+{"id":"107527385984923766767650463693504513028928175055284733252656629127126744840522","quorum":"3000000000000000000","total_voting_power_at_start":"0"}
+```
+
+which matches the chain: `cast call $GOVERNOR "quorum(uint256)(uint256)" $PID`
+returns `3000000000000000000` (60% of a 5e18 votable supply, the deploy
+config's `quorumNumerator: 6000`).
+
+Why it matters: Agora Next reads that field as the real quorum.
+`src/lib/proposals/thresholds.ts`'s `resolveArchiveThresholds` returns
+`safeBigInt(proposal.quorum)` for a `dao_node`-sourced proposal, and
+`src/lib/proposals/status/standard.ts` then tests
+`quorumVotes >= thresholds.quorum`. With `'0'` archived, every proposal met
+quorum whatever the chain said.
+
+This is a bug for every DAO that takes that branch, not something specific
+to the fleet tenant. Recorded for a possible upstream pull request (the
+owner's decision, not this task's).
+
+### `total_voting_power_at_start` stays `'0'`, and nothing here depends on it
+
+`read_snapshot_votable_supply`'s default branch calls `votableSupply()` on
+the governor. AgoraGovernor has no such function:
+
+```
+$ cast call $GOVERNOR "votableSupply()(uint256)" --rpc-url http://127.0.0.1:8545
+Error: server returned an error response: error code 3: execution reverted, data: "0x"
+```
+
+so the call site's `except` sets `proposal['total_voting_power_at_start'] =
+'0'`. Left as is, deliberately. For the fleet tenant the field is not read
+by any status derivation: `deriveStandardStatus`'s `dao_node` arm
+(`src/lib/proposals/status/standard.ts`) uses only `proposal.totals` and
+`thresholds.quorum`; `resolveArchiveThresholds` does return it as
+`votableSupply`, but only `status/optimistic.ts` and the HYBRID arm consume
+that, and the fleet has no optimistic or hybrid proposals. Fleet proposals
+are `STANDARD`, `dao_node`-sourced, so the field is inert.
+
+### The fleet governor is timestamp-clocked; CPLS reads `start_block`/`end_block` as block numbers
+
+AgoraGovernor V2 implements EIP-6372 with a timestamp clock:
+
+```
+$ cast call $GOVERNOR "CLOCK_MODE()(string)" --rpc-url http://127.0.0.1:8545
+"mode=timestamp"
+$ cast call $GOVERNOR "proposalSnapshot(uint256)(uint256)" $PID --rpc-url http://127.0.0.1:8545
+1789376123
+$ cast block-number --rpc-url http://127.0.0.1:8545
+1593
+```
+
+so a proposal's `start_block`/`end_block`, which DAO Node reports verbatim
+from the governor, are unix timestamps. CPLS treats them as block numbers
+in two places, and both broke here:
+
+1. `get_timestamp(chain_id, start_block)` for `start_blocktime` and
+   `end_blocktime`. `/exact_blocktime` correctly 404s (no such block), CPLS
+   falls back to `/estimated_blocktime`, and the shim extrapolated
+   `latest_ts + (1789376123 - 1593) * 2` seconds: `5368128289`, a date in
+   2140. Every unexecuted proposal then failed `end_blocktime < curtime`
+   and `start_blocktime < curtime`, so `refresh_list` archived it as
+   `PENDING`; Agora Next's `deriveStatus` independently returned `PENDING`
+   from the same field (`startTime > now`). A proposal with an
+   `execute_event` never reached either check, which is why the M0
+   proposal looked correct and nothing else would have.
+2. `contract_call_encoded(chain_id, gov, start_block, 'quorum(uint256)', ...)`
+   and `contract_call_encoded(chain_id, gov, end_block + 1, 'state(uint256)', ...)`.
+   Evaluated at a block that does not exist, both come back `{"result": "0x"}`
+   from the shim. For quorum that is another silent `'0'`; for `state()`
+   it is worse, because `refresh_list` has no `else` for an unrecognised
+   stage and raises `Unhandled proposal lifecycle stage 0x for proposal_id:
+   ...`, failing the whole sync job. That is the code path a Defeated
+   proposal takes.
+
+Fixed in `infra/blockcache-shim` rather than in CPLS: the shim exists
+precisely because the real hosted blockcache service has no notion of this
+local chain, and this is the same class of knowledge. With
+`GOVERNOR_CLOCK_MODE=timestamp` (set in `infra/docker-compose.yml`,
+overridable through `infra/.env`), a position past the chain head is
+treated as what it is on a timestamp-clocked governor, a clock value:
+`/estimated_blocktime` returns it verbatim, and `/contract_call` evaluates
+at `latest`. Left at the default (`blocknumber`) the shim behaves exactly
+as before.
+
+Evaluating at `latest` is the same answer for the two calls CPLS makes
+here. `quorum(proposalId)` on this governor is
+`token.getPastTotalSupply(proposalSnapshot(id)) * numerator / denominator`,
+and once the snapshot has elapsed none of those can change (the numerator
+is only changeable by governance, which never happens on this chain).
+`state(proposalId)` is asked for only after the voting period has ended and
+the script has already confirmed the terminal state on-chain. Reproduced
+directly against the shim before the fix:
+
+```
+$ # POST /contract_call/31337/<gov> with quorum(uint256) and the proposal id
+start_block(timestamp) 1789376123 {'result': '0x'}
+latest                             {'result': '0x00000000000000000000000000000000000000000000000029a2241af62c0000'}
+```
+
+(`0x29a2241af62c0000` is 3e18.)
+
+### The negative case: a proposal the chain defeats
+
+Everything above only diverges for a proposal that is not Executed, so
+`infra/scripts/scripted-proposal.sh` now drives both outcomes (`OUTCOME=succeed`,
+the default, and `OUTCOME=defeat`) and `bootstrap-local.sh` runs it twice
+against two separate tasks. The negative case casts 2 For and 3 Against,
+which misses the 60% For-only quorum, and asserts:
+
+- `cast call $GOVERNOR "state(uint256)(uint8)" $PID` is `3` (Defeated);
+- `ledger.exceptionVersion(taskId, payloadHash)` is `0`, so nothing was
+  recorded;
+- Agora Next's own status badge reads `DEFEATED`, and specifically not
+  `SUCCEEDED`.
+
+That last assertion reads one element, not the page. The proposal page
+renders its status through
+`vendor/agora-next/src/components/Proposals/ProposalStatus/ProposalStatusDetail.tsx`,
+which tags the badge `data-testid="proposal-status-badge"`:
+
+```
+$ curl -s "http://localhost:3000/proposals/$PID" \
+    | grep -o 'data-testid="proposal-status-badge"[^>]*>[^<]*'
+data-testid="proposal-status-badge" class="text-red-600 bg-red-200 rounded-sm px-1 py-0.5 font-semibold">DEFEATED
+```
+
+Grepping the whole page for a status word proves nothing: "queued",
+"succeeded" and "executed" each appear several times in the same HTML (the
+lifecycle timeline, the vote panel, the RSC payload).
+
+### Agora Next's For-only status arm and `FleetHook.beforeVoteSucceeded` differ only at For equal to Against
+
+`FleetHook.beforeVoteSucceeded` is `forVotes >= governor.quorum(proposalId)
+&& forVotes > againstVotes`; Agora Next's `dao_node` arm is
+`forVotes + abstainVotes >= quorum` plus an explicit `if (forVotes <
+againstVotes) return "DEFEATED"`. With no abstain votes the two differ only
+where For equals Against, which this deployment cannot reach: quorum is
+6000/10000 of a 5e18 supply, so any proposal meeting quorum has at least
+3e18 For and therefore at most 2e18 Against.

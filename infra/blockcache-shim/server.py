@@ -30,6 +30,9 @@ these callers expects back):
        -> {"ts": <unix seconds>}, always: the real block's timestamp if
           it exists, else an estimate extrapolated from the chain's fixed
           block time. This is the only endpoint that may extrapolate.
+          With GOVERNOR_CLOCK_MODE=timestamp (see below), a position past
+          the chain head is returned verbatim instead of extrapolated,
+          because it is already a timestamp.
   POST /contract_call/<chain_id>/<address>                -> {"result": "0x..."}
                      body: {block_number, data, method_signature}; data is
                      only the ABI-encoded arguments (blockcache.py's own
@@ -41,6 +44,39 @@ Anything else: 404.
 
 Every response CPLS's caller can't use gracefully is still wrapped so this
 shim never itself hangs or 500s: an eth_call revert becomes {"result": "0x"}.
+
+GOVERNOR_CLOCK_MODE
+-------------------
+CPLS assumes a governor whose clock (EIP-6372) counts block numbers: it
+takes a proposal's `start_block`/`end_block` straight from DAO Node and
+hands them to this service as block numbers, both to look up a timestamp
+and as the block to evaluate `quorum(uint256)`/`state(uint256)` at. The
+fleet's governor (AgoraGovernor V2) reports `CLOCK_MODE() ==
+"mode=timestamp"`, so those values are unix timestamps, not block numbers,
+and no lookup keyed on them as a block can ever succeed: the "block"
+1789376123 does not exist on a chain 1600 blocks long.
+
+Set GOVERNOR_CLOCK_MODE=timestamp (infra/docker-compose.yml does) and this
+shim treats any position past the chain head as what it is on such a
+governor, a governor clock value:
+
+  * /estimated_blocktime returns it verbatim (the timestamp of a timestamp
+    is itself) instead of extrapolating block-time arithmetic from it,
+    which produced timestamps in the year 2140 and made CPLS mark every
+    unexecuted proposal PENDING.
+  * /contract_call evaluates the call at the latest block instead of at a
+    block that does not exist. `quorum(proposalId)` and `state(proposalId)`
+    are what CPLS asks for here; both are answered from the governor's
+    current state, and on this chain neither the quorum numerator nor the
+    token's past supply at an elapsed snapshot can change after the fact,
+    so the latest block's answer is the same answer.
+
+Left at the default (blocknumber) the shim behaves exactly as before: a
+position past the head is extrapolated, and a contract call at it fails
+and degrades to {"result": "0x"}.
+
+See docs/compatibility-notes.md, "Final review fixes", "The fleet governor
+is timestamp-clocked; CPLS reads start_block/end_block as block numbers".
 """
 import json
 import os
@@ -59,6 +95,9 @@ RPC_URL = os.environ.get("ANVIL_RPC_URL", "http://anvil:8545")
 PORT = int(os.environ.get("PORT", "8002"))
 # Matches infra/anvil/Dockerfile's --block-time.
 BLOCK_TIME_SECONDS = int(os.environ.get("BLOCK_TIME_SECONDS", "2"))
+# "timestamp" or "blocknumber"; see the module docstring. Defaults to
+# blocknumber, which is what CPLS itself assumes.
+GOVERNOR_CLOCK_MODE = os.environ.get("GOVERNOR_CLOCK_MODE", "blocknumber").strip().lower()
 
 
 def rpc(method, params):
@@ -90,6 +129,16 @@ def exact_blocktime(block_number):
     return int(block["timestamp"], 16)
 
 
+def is_governor_clock_value(position):
+    """True when `position` cannot be a block number on this chain and the
+    governor it came from is timestamp-clocked, i.e. it is a unix timestamp
+    CPLS lifted out of a proposal's start_block/end_block. See the module
+    docstring's GOVERNOR_CLOCK_MODE section."""
+    if GOVERNOR_CLOCK_MODE != "timestamp":
+        return False
+    return position > int(latest_block()["number"], 16)
+
+
 def estimated_blocktime(block_number):
     """The real block's timestamp if it exists, else an estimate
     extrapolated from the chain's fixed block time. Always returns a
@@ -97,6 +146,10 @@ def estimated_blocktime(block_number):
     block = get_block(block_number)
     if block is not None:
         return int(block["timestamp"], 16)
+    if is_governor_clock_value(block_number):
+        # Already a timestamp: extrapolating block-time arithmetic from it
+        # would return a date centuries away.
+        return block_number
     latest = latest_block()
     latest_number = int(latest["number"], 16)
     latest_ts = int(latest["timestamp"], 16)
@@ -176,7 +229,20 @@ class Handler(BaseHTTPRequestHandler):
             # shim does the same.
             params = (payload.get("data") or "").removeprefix("0x")
             call_data = "0x" + selector(method_signature) + params
-            block_tag = "latest" if block_number in (None, "latest") else hex(int(block_number))
+            if block_number in (None, "latest"):
+                block_tag = "latest"
+            elif is_governor_clock_value(int(block_number)):
+                # A timestamp, not a block: evaluate at the chain head. See
+                # the module docstring's GOVERNOR_CLOCK_MODE section for why
+                # that is the same answer for the calls CPLS makes here.
+                print(
+                    "blockcache-shim: %s at position %s is past the chain head; "
+                    "treating it as a governor clock value and calling at latest"
+                    % (method_signature, block_number)
+                )
+                block_tag = "latest"
+            else:
+                block_tag = hex(int(block_number))
             try:
                 result = rpc("eth_call", [{"to": m.group(2), "data": call_data}, block_tag])
                 self._send(200, {"result": result})
