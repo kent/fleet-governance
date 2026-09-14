@@ -1,4 +1,9 @@
 {
   "files": [],
-  "references": [{ "path": "packages/abi" }, { "path": "packages/schemas" }, { "path": "packages/sdk" }]
+  "references": [
+    { "path": "packages/abi" },
+    { "path": "packages/schemas" },
+    { "path": "packages/sdk" },
+    { "path": "packages/gateway" }
+  ]
 }

@@ -23,6 +23,18 @@ importers:
 
   packages/abi: {}
 
+  packages/gateway:
+    dependencies:
+      '@fleet/schemas':
+        specifier: workspace:*
+        version: link:../schemas
+      '@fleet/sdk':
+        specifier: workspace:*
+        version: link:../sdk
+      viem:
+        specifier: 2.56.5
+        version: 2.56.5(typescript@5.6.3)(zod@3.25.76)
+
   packages/schemas:
     dependencies:
       zod:
