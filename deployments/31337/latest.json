@@ -1,0 +1,43 @@
+{
+  "addresses": {
+    "governor": "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707",
+    "hook": "0xFE1Bf729317E6EAa74D91B3223964aA6EE0322C0",
+    "ledger": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
+    "registry": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+    "timelock": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+    "token": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+  },
+  "chainId": 31337,
+  "codeHashes": {
+    "governor": "0x313767f337ed7e36846a03bc9f1145b74c40e8cf7f483e8b86fd34ddb6667a6a",
+    "hook": "0xa6f08eacf7bc98c0f018f97951c5d373cc3a77487de3d80061a8244655d4cbb5",
+    "ledger": "0x3a662c7bc8254905f11949c5c971e01f8e5be11cc089619b05866ca584c7f7c2",
+    "registry": "0x2cb632e223fdcdd1efe1f145960d913217ad1e2108e1d6df210db48dcd027f5a",
+    "timelock": "0x3686ca9db922aa4712623aaa7a85ed360db18c466ddcdb3d05397cd74731d163",
+    "token": "0xc2ace618c2ca227f9d61f846bb106c3ac8785893affe4a9e6f1fc16ed8390a9b"
+  },
+  "compiler": {
+    "evm": "cancun",
+    "optimizerRuns": 200,
+    "solc": "0.8.29"
+  },
+  "configHash": "0xd16585304de9489e4a1397dac10907731261bbb589c19e9f4b6d3c5ff73be9bf",
+  "countingRule": "for-only-quorum",
+  "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "deploymentBlock": 3,
+  "hookPermissionMask": "0x22c0",
+  "hookSalt": "0x000000000000000000000000000000000000000000000000000000000001e9db",
+  "params": {
+    "maxTaskLifetime": 7200,
+    "proposalThreshold": 1000000000000000000,
+    "quorumNumerator": 6000,
+    "timelockDelay": 30,
+    "votingDelay": 15,
+    "votingPeriod": 120
+  },
+  "pins": {
+    "agoraGovernor": "11a11641ce1f4f691c300d530eae3c7203593b85",
+    "openzeppelin": "3d139e998b9843179d72b28a3264834b01baf160"
+  },
+  "schema": "fleet.manifest.v1"
+}

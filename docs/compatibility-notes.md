@@ -349,3 +349,198 @@ find`) behind a real external call boundary so its mining memory does not surviv
 A structural fix at the source would be to change `HookMiner.computeAddress` to write into a
 fixed, reused scratch buffer instead of a fresh `abi.encodePacked` each iteration, which is out
 of this task's scope (`contracts/src/deploy/HookMiner.sol` was not touched).
+
+## Task 12: Deploy script, verifier, ABI export, local Anvil run
+
+### `HookMiner.find` rewritten to be allocation-free
+
+Task 9 (above) flagged the structural fix it left out of scope: `HookMiner.computeAddress` ran a
+fresh `abi.encodePacked(bytes1(0xff), deployer, salt, initCodeHash)` on every one of up to
+`MAX_ITERATIONS` loop iterations, and Solidity's bump allocator never reclaims that memory
+mid-loop, so memory (and its quadratic expansion cost) grows for as long as the search runs. This
+task did that fix, first and as its own commit, before writing anything that calls `find` under
+broadcast. `find` now lays out the CREATE2 preimage once, in a fixed 85-byte scratch region
+allocated a single time per call (`[0xff][deployer(20)][salt(32)][initCodeHash(32)]`, the same
+layout OpenZeppelin's `Create2.computeAddress` uses,
+`lib/agora-governor/lib/openzeppelin-contracts/contracts/utils/Create2.sol`), and each loop
+iteration only overwrites the salt word and rehashes the same 85 bytes.
+
+`contracts/test/unit/HookMiner.t.sol` keeps the old, allocating formula as a private reference
+implementation (`_referenceComputeAddress` / `_referenceFind`, not used anywhere outside the
+test) and asserts, for two different fixed `(deployer, flags, creationCode, constructorArgs)`
+inputs, that the rewritten `find` returns the exact same `(address, salt)` the old formula would
+have. A third test mines three times back to back inside one test function body, with no
+`this.`-call frame boundary between rounds (the same shape that hit `MemoryOOG` in Task 9), and
+all three succeed:
+
+```
+Ran 4 tests for test/unit/HookMiner.t.sol:HookMinerTest
+[PASS] test_FindsSaltMatchingFlagsAndDeploysThere() (gas: 9132388)
+[PASS] test_MatchesReferenceImplementationForFixedInputs() (gas: 11845142)
+[PASS] test_MatchesReferenceImplementationForSecondFixedInput() (gas: 4626617)
+[PASS] test_MiningThreeTimesInOneFrameDoesNotRunOutOfMemory() (gas: 50629491)
+Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in 88.53ms (124.58ms CPU time)
+```
+
+### Foundry JSON serializer: nesting behaviour
+
+`DeployFleet.s.sol` builds the manifest's `addresses`, `params`, `compiler`, `pins`, and
+`codeHashes` objects with their own `vm.serializeAddress`/`vm.serializeUint`/`vm.serializeString`
+calls under a separate object key (e.g. `"addresses"`), then nests the finished sub-object into
+the root object with `vm.serializeString(root, "addresses", addrsJson)`, exactly as the task brief
+suggested but flagged as unconfirmed (this Foundry version's `serializeString` might write the
+value as an escaped string rather than a real nested object). Confirmed directly, with a throwaway
+probe script before writing the real one: when the `value` argument to `serializeString` is itself
+a valid JSON value (as every `vm.serializeX` call returns), Foundry 1.7.1 nests it as a real JSON
+object, not an escaped string. Probe and result:
+
+```solidity
+string memory addrs = "addresses";
+vm.serializeAddress(addrs, "registry", address(0x1111111111111111111111111111111111111111));
+string memory addrsJson = vm.serializeAddress(addrs, "governor", address(0x2222222222222222222222222222222222222222));
+
+string memory root = "manifest";
+vm.serializeString(root, "schema", "fleet.manifest.v1");
+string memory out = vm.serializeString(root, "addresses", addrsJson);
+vm.writeJson(out, "../deployments/_probe.json");
+```
+
+```json
+{
+  "addresses": {
+    "governor": "0x2222222222222222222222222222222222222222",
+    "registry": "0x1111111111111111111111111111111111111111"
+  },
+  "schema": "fleet.manifest.v1"
+}
+```
+
+`jq -r '.addresses.governor' deployments/_probe.json` printed a bare address, not a quoted,
+escaped JSON string, confirming real nesting. No `vm.serializeJson`-style rework was needed; the
+manifest actually written by the Anvil run (below) confirms the same behaviour for all five nested
+objects (`addresses`, `params`, `compiler`, `pins`, `codeHashes`): `jq '.addresses | type'` and the
+same for every other nested key print `"object"`, never `"string"`.
+
+### Broadcast observations under `vm.startBroadcast`
+
+Running `DeployFleet.s.sol` against a local Anvil with `--broadcast` produced 12 transactions, all
+`status = 0x1` (success), not the 9 the brief's prose estimated:
+
+```
+CREATE  FleetRegistry
+CREATE  FleetVotes
+CREATE  TimelockController
+CREATE  TaskLedger
+CREATE2 FleetHook
+CREATE  AgoraGovernor
+CALL    FleetHook.initialize(address)
+CALL    TimelockController.grantRole(bytes32,address)   [x4: PROPOSER, EXECUTOR, CANCELLER to governor; CANCELLER to guardian]
+CALL    TimelockController.renounceRole(bytes32,address)
+```
+
+That is 6 `CREATE`/`CREATE2` entries plus 6 `CALL` entries (`initialize`, four separate
+`grantRole` calls, one `renounceRole`) for 12 total; `FleetDeployer.deploy` (unmodified by this
+task) issues the four role grants as four separate calls, not one collapsed multicall, so each
+gets its own broadcast entry and its own nonce. The brief's own itemised list (registry, token,
+timelock, ledger, hook, governor, initialize, "four role calls collapsed as you see them",
+renounce) already implicitly allows for this by hedging on the role-call count; the number that
+actually matters for the controller note's concern is confirmed below.
+
+**The governor's inline-assembly `create` is broadcast as a real deployment transaction,
+matching its predicted post-conditions.** This was the specific risk the controller notes (section
+1) flagged as a stop-and-report condition. It is not a problem here: transaction 6 in
+`broadcast/DeployFleet.s.sol/31337/run-latest.json` has `"transactionType": "CREATE"`,
+`"contractName": "AgoraGovernor"`, and its receipt carries `"status": "0x1"` and a
+`contractAddress` equal to the `governor` address in both the script's return value and the
+written manifest (`0x5FC8d32690cc91D4c39d9d3abcBD16989F875707`). `cast code` against that address
+returns 23,005 bytes of runtime code (matches the compiled `AgoraGovernor` size recorded under
+Task 5, above), so the governor is a real, broadcast, on-chain deployment, not something the
+script only simulated.
+
+**The hook's CREATE2 lands at the address `HookMiner` predicted.** `FleetDeployer.deploy` reverts
+with `HookAddressMismatch` if the deployed hook address does not match `HookMiner.find`'s
+prediction (see `contracts/src/deploy/FleetDeployer.sol`); the deploy transaction succeeded, so
+the predicted and actual addresses were equal under broadcast. `p.create2Deployer = CREATE2_FACTORY`
+(forge-std's `0x4e59b44847b379578588920cA78FbF26c0B4956C`, pre-deployed on Anvil) makes
+`HookMiner` search for a salt using the same deployer address Foundry's own `new X{salt: ...}`
+CREATE2 routing uses under `vm.startBroadcast`, so the two computations agree. The deployed hook
+address is `0xFE1Bf729317E6EAa74D91B3223964aA6EE0322C0`, whose low 16 bits (`0x22C0`) match
+`FleetHook.PERMISSION_MASK` exactly, and `broadcast/.../run-latest.json` records this transaction
+with `"transactionType": "CREATE2"`.
+
+### Deterministic local addresses
+
+Ran twice, on two independently started, fresh Anvil instances (`anvil --block-time 2 --port 8599
+--silent`), with the same deployer key (Anvil default account 0) and the same
+`deployments/configs/local-5.json`. Both runs produced byte-identical manifests
+(`diff` of the two `deployments/31337/latest.json` outputs was empty). This is expected: every
+address below is either a `CREATE` address (a pure function of the deployer address and its nonce
+at that point) or the `CREATE2` hook address (a pure function of the factory address, the mined
+salt, and the init code hash), and both are fully determined by replaying the same sequence from
+the same deployer on a fresh chain.
+
+Deployer: `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` (Anvil default account 0). Nonce sequence
+(one nonce per broadcast transaction, in order): `FleetRegistry`=0, `FleetVotes`=1,
+`TimelockController`=2, `TaskLedger`=3, the `CALL` to `CREATE2_FACTORY` that deploys `FleetHook`=4,
+`AgoraGovernor`=5, `initialize`=6, the four `grantRole` calls=7-10, `renounceRole`=11; the
+deployer's nonce was 12 (0-indexed, so 12 transactions sent) immediately after the run, confirmed
+with `cast nonce 0xf39Fd6...92266 --rpc-url http://127.0.0.1:8599`.
+
+| Contract       | Address                                      |
+| -------------- | --------------------------------------------- |
+| FleetRegistry  | `0x5FbDB2315678afecb367f032d93F642f64180aa3`  |
+| FleetVotes     | `0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512`  |
+| TimelockController | `0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0` |
+| TaskLedger     | `0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9`  |
+| FleetHook      | `0xFE1Bf729317E6EAa74D91B3223964aA6EE0322C0`  |
+| AgoraGovernor  | `0x5FC8d32690cc91D4c39d9d3abcBD16989F875707`  |
+
+`hookSalt` (the CREATE2 salt `HookMiner.find` mined for this exact deployer, config, and
+`FleetHook` init code): `0x000000000000000000000000000000000000000000000000000000000001e9db`.
+
+### Governor bytecode hash outcome
+
+The manifest's `codeHashes.governor` is `address.codehash` (`EXTCODEHASH`) read from the live
+chain right after deployment, not a hash of the compiled artifact. For this run it is
+`0x313767f337ed7e36846a03bc9f1145b74c40e8cf7f483e8b86fd34ddb6667a6a`, and re-hashing the deployed
+code directly reproduces it exactly:
+
+```
+$ cast keccak $(cast code 0x5FC8d32690cc91D4c39d9d3abcBD16989F875707 --rpc-url http://127.0.0.1:8599)
+0x313767f337ed7e36846a03bc9f1145b74c40e8cf7f483e8b86fd34ddb6667a6a
+```
+
+That hash does **not** equal `keccak256` of `deployedBytecode.object` in the compiled
+`contracts/out/AgoraGovernor.sol/AgoraGovernor.json` artifact
+(`0x5d653f4f76407df696654ad7b673880c748d86e81035a5da016a89823c731507`), which the controller notes
+predicted as a possible outcome because of immutables. Diffing the compiled template against the
+live `cast code` output byte-for-byte confirms exactly that: every differing byte range falls
+inside an immutable's slot, and every other byte is identical. The differing ranges are, in order
+of first appearance: the `hooks` address (`AgoraGovernor.sol`'s own `IHooks public immutable
+hooks`, 14 occurrences, since PUSH20 of the same constant appears once per place the compiler
+inlined a read of it), the `token` address (`GovernorVotes`'s `IERC5805 private immutable _token`,
+5 occurrences), one occurrence of the governor's own address (`EIP712`'s `address private
+immutable _cachedThis`, used to detect being called through a proxy/fork), a `ShortString`-encoded
+`"AgoraGovernor"` name plus a length byte (`EIP712`'s `ShortString private immutable _name` /
+`_version`, via `contracts/lib/.../openzeppelin-contracts/contracts/utils/ShortStrings.sol`), and
+three 32-byte words (`EIP712`'s `_cachedDomainSeparator`, and two more inlined hashes for the
+name/version). Every one of these is a documented OpenZeppelin `immutable`, confirmed by `grep
+immutable` against `GovernorVotes.sol` and `EIP712.sol` in the vendored submodule. Immutables are
+substituted into the runtime code at construction time by the Solidity compiler's own codegen
+(zero-filled placeholders in the artifact's `deployedBytecode.object`, real values in what actually
+gets deployed), so this is expected, not a bug: `codeHashes.governor` correctly captures the code
+as deployed, and it necessarily differs from the hash of the pre-deployment template whenever the
+contract has immutables, which `AgoraGovernor` (by way of itself and its base contracts) does.
+
+Separately, and this is the check that matters for "is this the pinned upstream code": built
+`contracts/lib/agora-governor` standalone (`cd contracts/lib/agora-governor && forge build`, same
+pinned commit `11a11641ce1f4f691c300d530eae3c7203593b85`, same `foundry.toml` compiler settings as
+our own project: `solc 0.8.29`, `optimizer_runs 200`, `evm_version cancun`) and compared its own
+`out/AgoraGovernor.sol/AgoraGovernor.json` `deployedBytecode.object` (and `bytecode.object`)
+against ours. The raw bytes differ (our copy is compiled through this project's remapping, from a
+different working directory, so the two runs embed different paths in their trailing CBOR metadata),
+but stripping each artifact's standard 2-byte-length-prefixed CBOR metadata trailer from the end of
+both the creation and runtime bytecode makes them byte-for-byte identical (22,952 bytes of runtime
+code each, matching exactly). The code this repository builds and deploys for `AgoraGovernor` is,
+modulo compile-path metadata and immutable substitution, exactly the pinned upstream commit's code.
+
