@@ -1,0 +1,44 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`renderReport > matches the expected snapshot shape for a small two-proposal record 1`] = `
+"# Fleet Governance Demo Report
+
+This run deployed a fleet on chain 31337 and drove 2 proposals through governance. 2 of 2 scenarios matched their expected outcome. Run id: \`run-sample\`. Deployment manifest: \`0x5fc8d32690cc91d4c39d9d3abcbd16989f8757\` (governor), \`0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc\` (ledger).
+
+## Decisions
+
+| Fixture | Proposal | Kind | For | Against | Abstain | Outcome | Link |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| hf-replay | 100 | GRANT_EXCEPTION | 1 | 1 | 0 | Defeated | https://agora-next.example.com/proposals/100 |
+| legit-amendment | 200 | AMEND_CHARTER | 3 | 0 | 0 | Executed | https://agora-next.example.com/proposals/200 |
+
+## Vote reasons
+
+### hf-replay (proposal 100)
+
+- Agent 1: FOR. looks fine to me
+- Agent 2: AGAINST. off the allowlist
+
+### legit-amendment (proposal 200)
+
+- Agent 1: FOR. pypi.org is legitimate
+
+## Timeline
+
+- Block 5, hf-replay: ProposalCreated (tx \`0xpropose100\`)
+- Block 5, hf-replay: DecisionProposed (tx \`0xpropose100\`)
+- Block 6, hf-replay: VoteCast (tx \`0xvote100a\`)
+- Block 6, hf-replay: VoteCast (tx \`0xvote100b\`)
+- Block 10, legit-amendment: ProposalCreated (tx \`0xpropose200\`)
+- Block 10, legit-amendment: DecisionProposed (tx \`0xpropose200\`)
+- Block 11, legit-amendment: VoteCast (tx \`0xvote200a\`)
+
+## Costs
+
+Total transaction fees across this run: 0.00 ETH (2 transactions).
+
+## Reproducibility
+
+\`fleet capture --from-chain\` was not run as part of this report. Run it separately to check reproducibility.
+"
+`;

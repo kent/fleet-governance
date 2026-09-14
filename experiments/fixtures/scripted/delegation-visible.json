@@ -1,0 +1,17 @@
+{
+  "schema": "fleet.fixture.v1",
+  "name": "delegation-visible",
+  "description": "Two members delegate to a third before a vote; the delegatee casts three votes' weight",
+  "preSteps": [
+    { "kind": "delegate", "agentId": 3, "toAgentId": 0 },
+    { "kind": "delegate", "agentId": 4, "toAgentId": 0 }
+  ],
+  "trigger": {
+    "agentId": 0,
+    "kind": "GRANT_EXCEPTION",
+    "action": { "class": "network_fetch", "target": "docs.internal-mirror.test", "args": { "path": "/reference/tiny-lib" } },
+    "summary": "Grant a one-time exception to fetch reference docs from docs.internal-mirror.test"
+  },
+  "script": { "0": "FOR", "1": "AGAINST", "2": "AGAINST" },
+  "expected": { "outcome": "Succeeded", "decisionCount": 0 }
+}

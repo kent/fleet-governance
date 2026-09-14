@@ -1,0 +1,119 @@
+import type { RunRecordDocument } from "./record.js";
+
+function formatTokenAmount(weiDecimalString: string): string {
+  const wei = BigInt(weiDecimalString);
+  const whole = wei / 1_000_000_000_000_000_000n;
+  const remainder = wei % 1_000_000_000_000_000_000n;
+  if (remainder === 0n) return whole.toString();
+  const fraction = (remainder * 100n) / 1_000_000_000_000_000_000n;
+  return `${whole.toString()}.${fraction.toString().padStart(2, "0")}`;
+}
+
+type VoteTally = { forWei: bigint; againstWei: bigint; abstainWei: bigint };
+
+function tallyVotes(record: RunRecordDocument, proposalId: string): VoteTally {
+  const tally: VoteTally = { forWei: 0n, againstWei: 0n, abstainWei: 0n };
+  for (const event of record.events) {
+    if (event.type !== "VoteCast") continue;
+    if (String(event.proposalId) !== proposalId) continue;
+    const weight = BigInt(String(event.weight ?? "0"));
+    const support = Number(event.support);
+    if (support === 1) tally.forWei += weight;
+    else if (support === 0) tally.againstWei += weight;
+    else if (support === 2) tally.abstainWei += weight;
+  }
+  return tally;
+}
+
+function proposalLink(baseUrl: string | undefined, proposalId: string): string {
+  return baseUrl ? `${baseUrl.replace(/\/$/, "")}/proposals/${proposalId}` : "(no Agora Next link configured for this run)";
+}
+
+function findEvent(record: RunRecordDocument, proposalId: string, type: string): Record<string, unknown> | undefined {
+  return record.events.find((e) => e.type === type && String(e.proposalId) === proposalId);
+}
+
+/**
+ * Renders `report.md` (spec 12.4, task 8 brief): title, a one-paragraph summary, a decision table
+ * (proposal, kind, For/Against/Abstain, outcome, link), each vote's reason, a timeline, costs, and
+ * the reproducibility check result. No em dashes; split sentences instead.
+ */
+export function renderReport(
+  record: RunRecordDocument,
+  opts: { title: string; agoraNextBaseUrl?: string; reproducibility?: { checked: boolean; matched: boolean; note?: string } },
+): string {
+  const lines: string[] = [];
+
+  lines.push(`# ${opts.title}`, "");
+
+  const passCount = Number(record.metrics["passCount"] ?? 0);
+  const fixtureCount = Number(record.metrics["fixtureCount"] ?? record.proposals.length);
+  lines.push(
+    `This run deployed a fleet on chain ${record.manifest.chainId} and drove ${record.proposals.length} ` +
+      `proposal${record.proposals.length === 1 ? "" : "s"} through governance. ${passCount} of ${fixtureCount} scenarios ` +
+      `matched their expected outcome. Run id: \`${record.runId}\`. Deployment manifest: ` +
+      `\`${record.manifest.addresses.governor}\` (governor), \`${record.manifest.addresses.ledger}\` (ledger).`,
+    "",
+  );
+
+  lines.push("## Decisions", "");
+  lines.push("| Fixture | Proposal | Kind | For | Against | Abstain | Outcome | Link |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
+  for (const ref of record.proposals) {
+    const proposedEvent = findEvent(record, ref.proposalId, "DecisionProposed");
+    const decisionKind = proposedEvent ? String(proposedEvent["kind"] ?? "") : "";
+    const tally = tallyVotes(record, ref.proposalId);
+    lines.push(
+      `| ${ref.fixtureName} | ${ref.proposalId} | ${decisionKind} | ${formatTokenAmount(tally.forWei.toString())} | ` +
+        `${formatTokenAmount(tally.againstWei.toString())} | ${formatTokenAmount(tally.abstainWei.toString())} | ` +
+        `${ref.outcome} | ${proposalLink(opts.agoraNextBaseUrl, ref.proposalId)} |`,
+    );
+  }
+  lines.push("");
+
+  lines.push("## Vote reasons", "");
+  for (const ref of record.proposals) {
+    lines.push(`### ${ref.fixtureName} (proposal ${ref.proposalId})`, "");
+    const votesForProposal = record.votes.filter((v) => v.proposalId === ref.proposalId);
+    if (votesForProposal.length === 0) {
+      lines.push("No votes were cast.", "");
+      continue;
+    }
+    for (const v of votesForProposal) {
+      const reason = v.onchainReason ?? "(no vote cast; " + v.jobState + ")";
+      lines.push(`- Agent ${v.agentId}: ${reason}`);
+    }
+    lines.push("");
+  }
+
+  lines.push("## Timeline", "");
+  const byBlock = [...record.events].sort((a, b) => {
+    const ab = BigInt(String(a["blockNumber"] ?? "0"));
+    const bb = BigInt(String(b["blockNumber"] ?? "0"));
+    if (ab !== bb) return ab < bb ? -1 : 1;
+    return Number(a["logIndex"] ?? 0) - Number(b["logIndex"] ?? 0);
+  });
+  for (const event of byBlock) {
+    lines.push(`- Block ${String(event["blockNumber"])}, ${event["fixtureName"]}: ${event["type"]} (tx \`${String(event["txHash"])}\`)`);
+  }
+  lines.push("");
+
+  lines.push("## Costs", "");
+  let totalFeeWei = 0n;
+  for (const fee of record.fees) totalFeeWei += BigInt(fee.feeWei);
+  lines.push(`Total transaction fees across this run: ${formatTokenAmount(totalFeeWei.toString())} ETH (${record.fees.length} transactions).`, "");
+
+  lines.push("## Reproducibility", "");
+  if (opts.reproducibility?.checked) {
+    lines.push(
+      opts.reproducibility.matched
+        ? "`fleet capture --from-chain` reproduced the chain-derived record exactly (events and onchain vote reasons matched byte for byte)."
+        : `\`fleet capture --from-chain\` did NOT reproduce the chain-derived record exactly. ${opts.reproducibility.note ?? ""}`,
+    );
+  } else {
+    lines.push("`fleet capture --from-chain` was not run as part of this report. Run it separately to check reproducibility.");
+  }
+  lines.push("");
+
+  return lines.join("\n");
+}

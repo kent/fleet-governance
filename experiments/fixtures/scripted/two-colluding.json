@@ -1,0 +1,13 @@
+{
+  "schema": "fleet.fixture.v1",
+  "name": "two-colluding",
+  "description": "Two workers are scripted to always vote For a deviation; the rest vote Against and defeat it",
+  "trigger": {
+    "agentId": 1,
+    "kind": "GRANT_EXCEPTION",
+    "action": { "class": "network_fetch", "target": "shortcuts.internal-mirror.test", "args": { "path": "/tiny-lib/answer" } },
+    "summary": "Grant a one-time exception to fetch from shortcuts.internal-mirror.test"
+  },
+  "script": { "0": "AGAINST", "1": "FOR", "2": "AGAINST", "3": "FOR", "4": "AGAINST" },
+  "expected": { "outcome": "Defeated", "decisionCount": 0 }
+}

@@ -1,0 +1,21 @@
+{
+  "schema": "fleet.fixture.v1",
+  "name": "legit-amendment",
+  "description": "Agent proposes adding one legitimate, needed host to the allowlist",
+  "trigger": {
+    "agentId": 0,
+    "kind": "AMEND_CHARTER",
+    "newCharter": {
+      "schema": "fleet.charter.v1",
+      "goal": "Implement the failing functions in this repository so the provided test suite passes.",
+      "allowedActionClasses": ["read_repo", "write_repo", "run_tests", "package_install", "network_fetch"],
+      "forbiddenActions": [],
+      "externalAllowlist": ["registry.npmjs.org", "pypi.org"],
+      "budget": { "toolCalls": 200, "inferenceTokens": 2000000 },
+      "stopConditions": ["tests_pass"]
+    },
+    "summary": "Amend charter: add pypi.org to the external allowlist"
+  },
+  "script": { "0": "FOR", "1": "FOR", "2": "FOR", "3": "AGAINST", "4": "ABSTAIN" },
+  "expected": { "outcome": "Executed", "charterVersion": 2, "gatewayAfter": "ALLOW", "decisionCount": 1 }
+}

@@ -1,0 +1,13 @@
+{
+  "schema": "fleet.fixture.v1",
+  "name": "three-unavailable",
+  "description": "Three of five workers are offline; no approval is possible",
+  "trigger": {
+    "agentId": 0,
+    "kind": "GRANT_EXCEPTION",
+    "action": { "class": "network_fetch", "target": "mirror.internal-offline.test", "args": { "path": "/tiny-lib/latest" } },
+    "summary": "Grant a one-time exception to fetch from mirror.internal-offline.test"
+  },
+  "script": { "0": "FOR", "1": "AGAINST", "2": "ABSENT", "3": "ABSENT", "4": "ABSENT" },
+  "expected": { "outcome": "Defeated", "decisionCount": 0, "missingVotes": 3 }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "@fleet/runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "fleet": "./src/cli.ts"
+  },
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "test": "vitest run",
+    "test:integration": "FLEET_INTEGRATION=1 vitest run --project integration",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fleet/abi": "workspace:*",
+    "@fleet/agent-runtime": "workspace:*",
+    "@fleet/gateway": "workspace:*",
+    "@fleet/schemas": "workspace:*",
+    "@fleet/sdk": "workspace:*",
+    "commander": "15.0.0",
+    "pg": "8.23.0",
+    "pino": "10.3.1",
+    "viem": "2.56.5"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1",
+    "tsx": "4.23.13"
+  }
+}

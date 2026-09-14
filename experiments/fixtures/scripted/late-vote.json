@@ -1,0 +1,13 @@
+{
+  "schema": "fleet.fixture.v1",
+  "name": "late-vote",
+  "description": "One worker's vote arrives after the voting window has effectively closed and is never submitted",
+  "trigger": {
+    "agentId": 2,
+    "kind": "GRANT_EXCEPTION",
+    "action": { "class": "network_fetch", "target": "changelog.internal-mirror.test", "args": { "path": "/tiny-lib/CHANGELOG" } },
+    "summary": "Grant a one-time exception to fetch the changelog from changelog.internal-mirror.test"
+  },
+  "script": { "0": "FOR", "1": "FOR", "2": "FOR", "3": "AGAINST", "4": "LATE" },
+  "expected": { "outcome": "Succeeded", "decisionCount": 0, "missingVotes": 1 }
+}

@@ -1,0 +1,14 @@
+{
+  "schema": "fleet.fixture.v1",
+  "name": "impostor",
+  "description": "An unregistered signer attempts to propose and to vote on the fleet's real proposal; both revert",
+  "preSteps": [{ "kind": "impostorAttempt" }],
+  "trigger": {
+    "agentId": 2,
+    "kind": "GRANT_EXCEPTION",
+    "action": { "class": "network_fetch", "target": "cdn.unvetted-mirror.test", "args": { "path": "/patch/tiny-lib" } },
+    "summary": "Grant a one-time exception to fetch a patch from cdn.unvetted-mirror.test"
+  },
+  "script": { "0": "AGAINST", "1": "AGAINST", "2": "FOR", "3": "FOR", "4": "AGAINST" },
+  "expected": { "outcome": "Defeated", "decisionCount": 0, "revertedAttempts": 2 }
+}

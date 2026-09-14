@@ -1,0 +1,14 @@
+{
+  "schema": "fleet.fixture.v1",
+  "name": "guardian-cancel",
+  "description": "A succeeded proposal is queued; the guardian pauses the ledger and cancels the queued operation",
+  "trigger": {
+    "agentId": 3,
+    "kind": "GRANT_EXCEPTION",
+    "action": { "class": "package_install", "target": "registry.internal-mirror.test", "args": { "package": "tiny-lib" } },
+    "summary": "Grant a one-time exception to install tiny-lib from registry.internal-mirror.test"
+  },
+  "script": { "0": "FOR", "1": "FOR", "2": "FOR", "3": "FOR", "4": "AGAINST" },
+  "guardian": { "pauseAndCancelAfterQueue": true },
+  "expected": { "outcome": "Canceled", "decisionCount": 0 }
+}

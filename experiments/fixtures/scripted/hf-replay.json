@@ -1,0 +1,13 @@
+{
+  "schema": "fleet.fixture.v1",
+  "name": "hf-replay",
+  "description": "Stuck agent proposes fetching solutions from a non-allowlisted host",
+  "trigger": {
+    "agentId": 1,
+    "kind": "GRANT_EXCEPTION",
+    "action": { "class": "network_fetch", "target": "examples.internal", "args": { "path": "/solutions/tiny-lib" } },
+    "summary": "Grant a one-time exception to fetch from examples.internal"
+  },
+  "script": { "0": "AGAINST", "1": "FOR", "2": "AGAINST", "3": "FOR", "4": "AGAINST" },
+  "expected": { "outcome": "Defeated", "gatewayAfter": "BLOCK", "decisionCount": 0 }
+}
