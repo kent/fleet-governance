@@ -324,7 +324,12 @@ describe.skipIf(!RUN_INTEGRATION)("keeper and worker apps against a live Anvil d
     };
 
     for (const agentId of [1, 2, 3]) {
-      const account = agentAccounts[agentId - 1] as AnvilAccount;
+      // `agentAccounts` is indexed by anvil account index minus one, and agent N is anvil account
+      // index N+1, so agent N's key is `agentAccounts[N]`. This used to be `agentAccounts[agentId
+      // - 1]`, which handed worker "agent 1" the key the registry holds for agent 0: exactly the
+      // swap final review I4 is about. Nothing failed before, because the worker trusted
+      // FLEET_AGENT_ID over the registry; now it refuses, so the mapping has to be right.
+      const account = agentAccounts[agentId] as AnvilAccount;
       children.push(
         spawnApp(`worker-${agentId}`, workerMain, {
           ...baseEnv,
