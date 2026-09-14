@@ -105,6 +105,53 @@ function loadExperiment(experimentPath: string): ExperimentConfigV1Type {
   return result.data;
 }
 
+/**
+ * Rebuilds everything the finished stages had put in the context, from the checkpoint payload
+ * `toRunPayload` wrote (final review I1). A resumed `fleet run` is a fresh process: without this,
+ * `TASK_OPENED` found `ctx.manifest === null` and threw "manifest/keys missing (DEPLOYED did not
+ * run)", and `AGENTS_RUNNING` threw "missing prior stage output", so no checkpoint at or after
+ * `DEPLOYED` could ever be resumed and `findExistingProposal` was unreachable from `fleet run`.
+ *
+ * Nothing here is trusted from the payload beyond identifiers: the manifest is re-read from disk
+ * and re-validated, the addresses and client are rebuilt from it, and the keys are re-read from
+ * the environment. `taskId` is the one carried value, and `TASK_OPENED` verifies it exists on
+ * chain before using it.
+ */
+export function rehydrateRunCtx(
+  ctx: RunPipelineCtx,
+  payload: Record<string, unknown>,
+  env: NodeJS.ProcessEnv,
+): RunPipelineCtx {
+  const chainId = typeof payload["chainId"] === "number" ? payload["chainId"] : null;
+  const manifestOutPath =
+    typeof payload["manifestOutPath"] === "string"
+      ? payload["manifestOutPath"]
+      : chainId !== null
+        ? manifestPathsForRun(ctx.opts.deploymentsDir, chainId, ctx.opts.runId).latest
+        : null;
+
+  let manifest: ManifestV1Type | null = null;
+  if (manifestOutPath !== null && existsSync(manifestOutPath)) {
+    const parsed = ManifestV1.safeParse(JSON.parse(readFileSync(manifestOutPath, "utf8")));
+    if (parsed.success) manifest = parsed.data;
+  }
+
+  const addresses = manifest ? addressesFromManifest(manifest) : null;
+  const client = manifest && addresses
+    ? new FleetClient({ rpcUrl: ctx.experiment.target.rpcHttp, chainId: manifest.chainId, addresses })
+    : null;
+
+  const rawTaskId = payload["taskId"];
+  const taskId = typeof rawTaskId === "string" && rawTaskId.length > 0 ? BigInt(rawTaskId) : null;
+
+  // Keys never round trip through the checkpoint (a run record is written to Postgres or a file
+  // next to the report; no private key belongs in either), so they are always re-read from the
+  // environment, exactly as PREFLIGHT reads them.
+  const keys = loadRunKeysFromEnv(env, ctx.experiment.fleet.members.length);
+
+  return { ...ctx, chainId, manifestOutPath, manifest, addresses, client, keys, taskId };
+}
+
 function requireChainId(ctx: RunPipelineCtx, stage: StageName): number {
   if (ctx.chainId === null) throw new Error(`${stage}: chain id unknown (CHAIN_READY did not run)`);
   return ctx.chainId;
@@ -267,6 +314,20 @@ export function buildRunStages(env: NodeJS.ProcessEnv): readonly Stage<RunPipeli
       if (!ctx.manifest || !ctx.keys) throw new Error("TASK_OPENED: manifest/keys missing (DEPLOYED did not run)");
       const addresses = addressesFromManifest(ctx.manifest);
       const client = new FleetClient({ rpcUrl: ctx.experiment.target.rpcHttp, chainId: ctx.manifest.chainId, addresses });
+
+      // Spec 12.2: "Each stage is idempotent and resumable by run ID". `openTask` has no natural
+      // key on chain, so re-entering this stage with a task already opened for this run id would
+      // open a second one and leave every later stage driving the wrong task (final review I1).
+      // The run's own checkpoint is the record that it happened; the chain is what confirms it.
+      if (ctx.taskId !== null) {
+        const existingTask = await client.getTask(ctx.taskId);
+        if (existingTask.id !== ctx.taskId) {
+          throw new Error(`TASK_OPENED: run payload names task ${ctx.taskId.toString()}, which does not exist on chain`);
+        }
+        log(ctx, `task opened: ${ctx.taskId.toString()} already exists for this run, not opening another`);
+        return { ...ctx, addresses, client };
+      }
+
       const { taskId } = await openTask({
         client,
         addresses,
@@ -391,5 +452,12 @@ export async function runExperiment(opts: RunPipelineOptions, env: NodeJS.Proces
     recordPath: null,
     reportPath: null,
   };
-  return runStages({ runId: opts.runId, store: opts.store, stages, ctx: initialCtx, toPayload: toRunPayload });
+  return runStages({
+    runId: opts.runId,
+    store: opts.store,
+    stages,
+    ctx: initialCtx,
+    toPayload: toRunPayload,
+    rehydrate: (ctx, payload) => rehydrateRunCtx(ctx, payload, env),
+  });
 }

@@ -223,7 +223,9 @@ async function driveToQueued(ctx: FixtureRunContext, keeperWallet: WalletClient,
   const keeper = new Keeper({ client: ctx.client, wallet: keeperWallet, addresses: ctx.addresses });
   for (let i = 0; i < 200; i++) {
     const state = await ctx.client.getProposalState(proposalId);
-    if (state === ProposalState.Queued) return;
+    // `Executed` is past `Queued`, not a failure to reach it: a resumed fixture whose keeper work
+    // already finished has nothing left to queue (final review I1, stage idempotency).
+    if (state === ProposalState.Queued || state === ProposalState.Executed) return;
     if (state !== ProposalState.Succeeded) {
       throw new Error(`cannot queue proposal ${proposalId.toString()} from state ${ProposalState[state]}`);
     }
@@ -693,6 +695,19 @@ export async function runFixture(ctx: FixtureRunContext, fixture: FixtureV1, tas
   }
   if (ctx.onProposalKnown) await ctx.onProposalKnown(proposalId, proposeTxHash);
 
+  // A resumed fixture whose proposal has already left the voting window has nothing to wait for
+  // and nothing to drive: the crash happened after the governance cycle finished, and the whole
+  // stage's job now is to re-read chain state and assert against it (final review I1, spec 12.2's
+  // "each stage is idempotent and resumable by run ID"). `castVotes` below stays unconditional:
+  // every worker re-checks `hasVoted` and the submission window itself, so a vote already cast
+  // reads back as `already_voted` without sending anything.
+  const stateOnEntry = await ctx.client.getProposalState(proposalId);
+  const votingOver =
+    existing !== null && stateOnEntry !== ProposalState.Pending && stateOnEntry !== ProposalState.Active;
+  if (votingOver) {
+    log(`fixture ${fixture.name}: proposal ${proposalId.toString()} is already ${ProposalState[stateOnEntry]}; re-reading rather than re-driving`);
+  }
+
   if (ctx.readSideSync) {
     await syncReadSideStage(ctx, proposalId, "proposed", {
       url: `${ctx.readSideSync.daoNodeUrl}/v1/proposal/${proposalId.toString()}`,
@@ -701,7 +716,7 @@ export async function runFixture(ctx: FixtureRunContext, fixture: FixtureV1, tas
     });
   }
 
-  await waitForActive(ctx, proposalId);
+  if (!votingOver) await waitForActive(ctx, proposalId);
   const activeAt = new Date().toISOString();
 
   let impostor: ImpostorAttemptResult | null = null;
@@ -730,9 +745,15 @@ export async function runFixture(ctx: FixtureRunContext, fixture: FixtureV1, tas
 
   let guardian: GuardianActionResult | null = null;
   const wantsCancel = fixture.expected.outcome === "Canceled" || fixture.guardian?.pauseAndCancelAfterQueue === true;
+  const alreadyCanceled = (await ctx.client.getProposalState(proposalId)) === ProposalState.Canceled;
   if (fixture.expected.outcome === "Executed") {
     const keeperWallet = buildWallet(ctx, ctx.keys.keeperKey);
     await driveToExecuted(ctx, keeperWallet, proposalId);
+  } else if (wantsCancel && alreadyCanceled) {
+    // A resumed guardian fixture: the pause, cancel and unpause already happened, and re-running
+    // them would cancel an operation that no longer exists. `guardian` stays null; the assertions
+    // below read the outcome off chain, which is what they check.
+    log(`fixture ${fixture.name}: proposal ${proposalId.toString()} was already canceled; skipping the guardian pre-step`);
   } else if (wantsCancel) {
     const keeperWallet = buildWallet(ctx, ctx.keys.keeperKey);
     await driveToQueued(ctx, keeperWallet, proposalId);

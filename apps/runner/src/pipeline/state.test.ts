@@ -74,7 +74,60 @@ describe("runStages", () => {
     expect(calls).toEqual([]);
   });
 
-  it("calls onStage once per executed stage, with the updated ctx", async () => {
+  it("rehydrates the ctx from the persisted payload before the first resumed stage runs", async () => {
+    // Final review I1: without this hook `runStages` read only `existing.stage`, so every stage
+    // after a resume point ran against a fresh, empty context.
+    const store = new MemoryRunStore();
+    await store.save({
+      runId: "run-1",
+      stage: "TASK_OPENED",
+      updatedAt: new Date().toISOString(),
+      payload: { count: 6, restored: "from the checkpoint" },
+    });
+
+    const calls: string[] = [];
+    const seen: string[] = [];
+    const stages: Stage<FakeCtx & { restored?: string }>[] = STAGE_ORDER.map((name) => ({
+      name,
+      async run(ctx) {
+        calls.push(name);
+        seen.push(ctx.restored ?? "MISSING");
+        return { ...ctx, calls: [...ctx.calls, name], count: ctx.count + 1 };
+      },
+    }));
+
+    const result = await runStages({
+      runId: "run-1",
+      store,
+      stages,
+      ctx: { calls: [], count: 0 },
+      toPayload: (ctx) => ({ count: ctx.count, restored: ctx.restored }),
+      rehydrate: (ctx, payload) => ({ ...ctx, count: Number(payload["count"] ?? 0), restored: String(payload["restored"]) }),
+    });
+
+    expect(calls).toEqual(["AGENTS_RUNNING", "TASK_ENDED", "CAPTURED", "REPORTED"]);
+    expect(seen).toEqual(Array(4).fill("from the checkpoint"));
+    expect(result.count).toBe(10);
+  });
+
+  it("does not call rehydrate for a fresh run with no checkpoint", async () => {
+    const store = new MemoryRunStore();
+    let called = 0;
+    await runStages({
+      runId: "run-1",
+      store,
+      stages: buildStages([]),
+      ctx: { calls: [], count: 0 },
+      toPayload: (ctx) => ({ count: ctx.count }),
+      rehydrate: (ctx) => {
+        called += 1;
+        return ctx;
+      },
+    });
+    expect(called).toBe(0);
+  });
+
+  it("calls onStage once per executed stage, with the updated ctx", async () =>{
     const store = new MemoryRunStore();
     const calls: string[] = [];
     const stages = buildStages(calls);

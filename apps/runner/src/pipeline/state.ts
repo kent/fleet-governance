@@ -57,6 +57,12 @@ export type Stage<Ctx> = {
  * record's stage rather than from the top; stage functions are still expected to no-op quickly
  * when there is nothing left to do (`runStages` does not skip re-invoking a stage on faith alone
  * beyond this index-based resume).
+ *
+ * `rehydrate` is what makes a resume more than an index: the checkpoint carries the finished
+ * stages' own `toPayload` output, and a fresh process's `ctx` is empty, so without it every stage
+ * after the resume point runs against nulls. Final review I1: `runStages` read only
+ * `existing.stage` and never `existing.payload`, so any resume at or after `DEPLOYED` reached
+ * `TASK_OPENED` with no manifest and threw.
  */
 export async function runStages<Ctx>(opts: {
   runId: string;
@@ -65,8 +71,12 @@ export async function runStages<Ctx>(opts: {
   ctx: Ctx;
   toPayload: (ctx: Ctx) => Record<string, unknown>;
   onStage?: (name: StageName, ctx: Ctx) => void | Promise<void>;
+  /** Rebuilds whatever the finished stages put in the context from the persisted payload. Called
+   *  once, before the first resumed stage runs, and only when there is a checkpoint to resume
+   *  from. */
+  rehydrate?: (ctx: Ctx, payload: Record<string, unknown>) => Ctx | Promise<Ctx>;
 }): Promise<Ctx> {
-  const { runId, store, stages, toPayload, onStage } = opts;
+  const { runId, store, stages, toPayload, onStage, rehydrate } = opts;
   let ctx = opts.ctx;
 
   const existing = await store.get(runId);
@@ -75,6 +85,9 @@ export async function runStages<Ctx>(opts: {
     throw new Error(
       `run ${runId}: persisted stage "${existing.stage}" is not one of the stages this pipeline was given`,
     );
+  }
+  if (existing && rehydrate) {
+    ctx = await rehydrate(ctx, existing.payload);
   }
 
   for (let i = startIndex; i < stages.length; i++) {

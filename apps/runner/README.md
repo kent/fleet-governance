@@ -60,7 +60,19 @@ per-run copy at `deployments/<chainId>/run-<runId>.json` that no later run overw
 is known from `CHAIN_READY` onward, and `PREFLIGHT` refuses an RPC whose chain id is not the one
 `target.kind` names (or is not one of Anvil `31337` and Base Sepolia `84532` at all). Run state is
 persisted in Postgres (table `runs`) when `RUNNER_PG_URL` is set, otherwise in a JSON file under
-the run's own report directory. Since `fleet.experiment.v1` only references keys "by reference to
+the run's own report directory.
+
+`--run-id <id>` resumes a partially completed run. Each stage records its own checkpoint, and a
+resumed run rebuilds its context from that checkpoint before the first resumed stage runs: the
+manifest is re-read from `deployments/<chainId>/latest.json` and re-validated, the addresses and
+client are rebuilt from it, the keys are re-read from the environment (they never go into a
+checkpoint), and the task id comes from the payload. `TASK_OPENED` then returns early when the run
+already has a task, after confirming it exists on chain, and `AGENTS_RUNNING` finds the existing
+proposal instead of submitting a second one. `src/run-pipeline.integration.test.ts` drives exactly
+that: a full run on a fresh Anvil, then the same run resumed from a `TASK_OPENED` checkpoint and
+from an `INDEXERS_READY` checkpoint, asserting against the chain that no second task was opened
+and no second proposal was submitted. `experiments/examples/local-hf-replay.experiment.json` is a
+complete `fleet.experiment.v1` for local Anvil that both that test and a person can run. Since `fleet.experiment.v1` only references keys "by reference to
 the secret store" rather than carrying them inline, `fleet run` reads one environment variable per
 role: `FLEET_DEPLOYER_KEY`, `FLEET_OPERATOR_KEY`,
 `FLEET_GUARDIAN_KEY`, `FLEET_KEEPER_KEY`, and `FLEET_AGENT_KEY_<n>` for each fleet member `n`
@@ -121,7 +133,9 @@ each vote's reason, a timeline, costs, and the reproducibility check result.
 `pnpm --filter @fleet/runner test` runs the unit tests: fixture loading and validation, the stage
 state machine's resume behavior (fakes), record assembly from fake events, report rendering
 (snapshot), and `fleet readside` against temporary directories (no Docker). `FLEET_INTEGRATION=1
-pnpm --filter @fleet/runner test:integration` runs `src/demo.integration.test.ts`: a fresh Anvil,
-`fleet demo --fresh-anvil`, asserting exit 0, that `record.json` covers all eight fixtures, and that
-`fleet capture --from-chain` reproduces `events[]` and `votes[].onchainReason` exactly. Skipped
-automatically without `forge`/`anvil` on `PATH`.
+pnpm --filter @fleet/runner test:integration` runs two suites against their own fresh Anvil:
+`src/demo.integration.test.ts` (`fleet demo --fresh-anvil`, asserting exit 0, that `record.json`
+covers all eight fixtures, and that `fleet capture --from-chain` reproduces `events[]`,
+`votes[].onchainReason` and `fees[]` exactly) and `src/run-pipeline.integration.test.ts` (`fleet
+run` end to end on the example experiment, then resumed twice). Both are skipped automatically
+without `forge`/`anvil` on `PATH`.
