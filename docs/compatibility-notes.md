@@ -2142,6 +2142,78 @@ $ curl -fsI "https://storage.googleapis.com/<bucket>/data/fleet/votes/<id>.ndjso
 also exactly the bucket policy Agora Next needs (see "Switching to a real
 GCS bucket" in `infra/README.md`).
 
+### No restart policy, next to a documented OOM kill
+
+`agora-next` was OOM-killed again while this fix wave was being verified,
+mid-compile of `/proposals/[proposal_id]`:
+
+```
+$ docker inspect infra-agora-next-1 --format '{{.State.Status}} OOMKilled={{.State.OOMKilled}}'
+exited OOMKilled=true
+```
+
+With no `restart:` policy anywhere in either compose file it stayed dead,
+and the status check polled a socket nothing was listening on until it
+timed out. Every long-running service in both files now carries
+`restart: unless-stopped`, and `agora-next` also carries
+`mem_limit: ${AGORA_NEXT_MEM_LIMIT:-6g}`.
+
+The limit matters as much as the restart. Without it Node sizes its heap
+from the whole VM and grows until the VM's OOM killer picks a victim, which
+need not be agora-next. With it the kill is a cgroup kill inside that one
+container, the restart policy brings it back, and Node's own heap sizing
+comes from the cgroup: after the change the container booted at 2.4 GiB and
+peaked at 5.4 GiB of its 6 GiB while rendering the same page it had been
+killed compiling.
+
+```
+$ docker inspect infra-agora-next-1 --format 'RestartPolicy={{.HostConfig.RestartPolicy.Name}} Memory={{.HostConfig.Memory}}'
+RestartPolicy=unless-stopped Memory=6442450944
+```
+
+Note on `anvil`: it holds the whole chain in memory with no volume, so a
+restart there is a chain with no fleet on it. The policy is still correct
+(a restarted anvil answers RPC instead of the endpoint vanishing) but it
+does not make anvil crash-safe, and nothing in this stack should ever
+recreate it mid-run.
+
+Docker VM sizing is now documented in `infra/README.md` ("Docker VM
+sizing"): at least 8 GiB at the 6 GiB cap, since the rest of the stack
+totals under 500 MiB.
+
+### Base Sepolia: the gaps, and making the read side configurable without editing compose
+
+The Base Sepolia section named settings that lived only inside
+`docker-compose.yml`, so following it meant editing a tracked file. Those
+are now `${VAR:-local default}` in compose and listed in `.env.example`:
+`DAO_NODE_ARCHIVE_NODE_HTTP`, `DAO_NODE_REALTIME_NODE_WS`, `ANVIL_RPC_URL`,
+`NEXT_PUBLIC_FORK_NODE_URL`, `NUM_REALTIME_CLIENTS`, `NUM_POLLING_CLIENTS`,
+`DAO_NODE_ARCHIVE_NODE_HTTP_BLOCK_COUNT_SPAN`, `JWT_SECRET`,
+`GOVERNOR_CLOCK_MODE`, `AGORA_NEXT_MEM_LIMIT`. Local defaults are unchanged,
+so an untouched `.env` still boots the same stack.
+
+Four specific gaps the section had:
+
+- `NUM_POLLING_CLIENTS=1` belongs back on a real chain. It is 0 locally
+  only because the polling client blocks dao-node's event loop against
+  anvil's zero-latency chain (see "JsonRpcRtHttpClient.read()" above); on a
+  real chain it is the backstop for websocket events a provider drops, and
+  a hang now recovers because the service has a restart policy.
+- `DAO_NODE_ARCHIVE_NODE_HTTP_BLOCK_COUNT_SPAN=2000`.
+  `resolve_block_count_span()` (`app/clients_httpjson.py` line 18) returns
+  2000 for any chain not in its table, and 84532 is not in it, so this is
+  the value it already picks; setting it explicitly pins it against a
+  change to that table and against a provider with a lower `eth_getLogs`
+  cap.
+- `JWT_SECRET` must be rotated. The value in `.env.example` is published in
+  this repository.
+- `FLEET_MANIFEST_OUT` pointed somewhere `forge script` cannot write.
+  `contracts/foundry.toml`'s `fs_permissions` allow `./` and
+  `../deployments` only (relative to `contracts/`, which is on `main`), so
+  the section now says `FLEET_MANIFEST_OUT=../deployments/84532/latest.json`
+  and copy from there, which is the same constraint `bootstrap-local.sh`
+  already works around for the local chain.
+
 ### Agora Next's For-only status arm and `FleetHook.beforeVoteSucceeded` differ only at For equal to Against
 
 `FleetHook.beforeVoteSucceeded` is `forVotes >= governor.quorum(proposalId)

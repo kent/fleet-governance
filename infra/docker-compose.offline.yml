@@ -30,6 +30,7 @@ services:
   # once this is up.
   fake-gcs:
     image: fsouza/fake-gcs-server
+    restart: unless-stopped
     # -public-host must match the Host header the REQUESTER actually sends,
     # not where fake-gcs itself listens: fake-gcs-server 404s a path-style
     # object read (GET /<bucket>/<object>, the URL shape

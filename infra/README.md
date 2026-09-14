@@ -157,37 +157,126 @@ itself detects this the same way: it only layers
 `docker-compose.offline.yml` and creates the fake bucket when
 `GCS_CREDENTIALS_FILE` is unset.
 
+### The bucket must be publicly readable
+
+`GCS_CREDENTIALS_FILE` authenticates CPLS's **writes** only. Agora Next
+never authenticates: `src/lib/archiveUtils.ts` reads every archive object
+with a plain unauthenticated GET of
+`https://storage.googleapis.com/<bucket>/data/fleet/...`, and each call site
+catches a failure and returns an empty list. So a private bucket does not
+produce an error anywhere; it produces pages that render HTTP 200 with no
+proposals, no votes and no delegates on them. The same is true of
+`scripts/scripted-proposal.sh`'s archive wait in real-GCS mode, which polls
+that same public URL.
+
+Grant public read on the bucket (or, more narrowly, on the `data/` prefix):
+
+```bash
+gcloud storage buckets add-iam-policy-binding gs://<bucket> \
+  --member=allUsers --role=roles/storage.objectViewer
+```
+
+This archive is public data: it is a mirror of what the governor already
+emitted on a public chain (proposals, vote totals, per-vote reasons and
+voter addresses), rebuilt into gzipped NDJSON for the UI to read. There is
+nothing in it that is not already readable from the chain itself. Uniform
+bucket-level access must be on for the binding above to apply to objects;
+if the bucket predates that, either enable it or grant the equivalent with
+object ACLs.
+
 ## Pointing at Base Sepolia instead of local Anvil
 
 This stack's own contracts deploy is Anvil-only (`FLEET_DEPLOY_CONFIG=
 ../deployments/configs/local-5.json` uses Anvil's default accounts). To
 point the read side at a fleet already deployed on Base Sepolia:
 
+Every setting below is read from `infra/.env` (see `.env.example`, which
+lists each key with its local default), so none of this needs an edit to
+`docker-compose.yml`.
+
 1. Deploy there directly with `contracts/script/DeployFleet.s.sol` (see
    `contracts/README.md`), pointed at a Base Sepolia RPC URL and a real
-   deployer key, with `FLEET_MANIFEST_OUT` set to this worktree's
-   `deployments/31337/latest.json` (the filename is chain-id-named on
-   `main`, but every script here reads that fixed local path; rename the
-   directory to match if you want to keep multiple chains' manifests side
-   by side, and adjust the scripts accordingly).
+   deployer key. `forge script`'s `fs_permissions` only allow writes under
+   `contracts/` itself and `contracts/../deployments`, so set
+   `FLEET_MANIFEST_OUT=../deployments/84532/latest.json` (relative to
+   `contracts/`, which is where you run `forge script`); anything outside
+   those two roots is refused by the cheatcode, not by the filesystem.
+   Then copy that manifest to this worktree's
+   `deployments/31337/latest.json`, which is the fixed path every script
+   here reads, or rename the local directory to `84532` and adjust the
+   `manifest=` line in `scripts/bootstrap-local.sh`,
+   `scripts/scripted-proposal.sh`, `scripts/write-daonode-config.sh` and
+   `scripts/write-agora-next-deployment.sh`.
 2. Set `CHAIN_ID=84532` (Base Sepolia) in `infra/.env`.
 3. Run `write-daonode-config.sh` and `write-agora-next-deployment.sh`
    (unchanged; they only read the manifest and `CHAIN_ID`/
    `CONTRACT_DEPLOYMENT` from `infra/.env`).
-4. Point `DAO_NODE_ARCHIVE_NODE_HTTP`/`DAO_NODE_REALTIME_NODE_WS` (in
-   `docker-compose.yml`'s `dao-node` service) and `NEXT_PUBLIC_FORK_NODE_URL`
-   (`agora-next` service) at a real Base Sepolia RPC/WS URL instead of
-   `http://anvil:8545`/`ws://anvil:8545`.
-5. `infra/blockcache-shim` only proxies to `ANVIL_RPC_URL`; either repoint
-   that env var at the same Base Sepolia RPC URL too, or (simpler, and
+4. In `infra/.env`, point the chain endpoints at Base Sepolia:
+   `DAO_NODE_ARCHIVE_NODE_HTTP=https://...`,
+   `DAO_NODE_REALTIME_NODE_WS=wss://...`,
+   `NEXT_PUBLIC_FORK_NODE_URL=https://...`.
+5. `NUM_POLLING_CLIENTS=1`. It is 0 locally only because dao-node's polling
+   client blocks its event loop against anvil's zero-latency chain and
+   intermittently hangs it on cold boot (see
+   `../docs/compatibility-notes.md`); on a real chain it is the backstop
+   that catches websocket events a provider drops, and every service now
+   carries `restart: unless-stopped`, so a hang that does happen recovers
+   instead of leaving the stack half-dead.
+6. `DAO_NODE_ARCHIVE_NODE_HTTP_BLOCK_COUNT_SPAN=2000`. dao-node's
+   `resolve_block_count_span()` already returns 2000 for any chain not in
+   its own table, and 84532 is not in it; setting it explicitly pins the
+   value against a change to that table and against a provider that caps
+   `eth_getLogs` ranges.
+7. `JWT_SECRET`: replace the dev default. The literal in `.env.example` is
+   published in this repository, so any deployment anyone else can reach
+   needs a fresh one (`openssl rand -hex 32`).
+8. `infra/blockcache-shim` only proxies to `ANVIL_RPC_URL`; either set that
+   to the same Base Sepolia RPC URL in `infra/.env`, or (simpler, and
    correct for a real chain CPLS's upstream config already might know
    about) unset `BLOCKCACHE_URL` on `cpls` so it falls back to the real
-   hosted blockcache service.
-6. `scripts/scripted-proposal.sh` uses Anvil's well-known default account
+   hosted blockcache service. If you keep the shim, keep
+   `GOVERNOR_CLOCK_MODE=timestamp`: AgoraGovernor V2 is timestamp-clocked
+   on any chain, not just this one.
+9. `scripts/scripted-proposal.sh` uses Anvil's well-known default account
    keys; driving a real Base Sepolia proposal needs real funded keys
    instead, passed the same way (`--private-key`), and the fixed sleeps
    (voting delay/period, timelock) replaced with whatever that
    deployment's real parameters are.
+
+## Docker VM sizing
+
+`agora-next` runs `npm run dev`, which was measured at 5.5-5.6 GiB resident
+with this tenant and has been OOM-killed outright by the Linux OOM killer
+inside Docker Desktop's VM (see `../docs/compatibility-notes.md`,
+"`npm run dev`'s memory footprint"). The compose file caps it with
+`mem_limit: ${AGORA_NEXT_MEM_LIMIT:-6g}`, which changes what happens when
+it runs out: the kill lands on that container alone rather than on whatever
+the VM picks, `restart: unless-stopped` brings it back, and Node sizes its
+own heap from the cgroup limit instead of from the whole VM, so it tends to
+self-restart gracefully rather than die.
+
+Give the Docker VM **at least 8 GiB** at this setting. The rest of the
+stack (anvil, postgres, dao-node, cpls, blockcache-shim, fake-gcs) totals
+well under 500 MiB. On a larger VM, raise `AGORA_NEXT_MEM_LIMIT` in
+`infra/.env`. A follow-up worth considering, not done here: building
+agora-next once (`next build`) and serving it with `next start` would cut
+this footprint by most of it, at the cost of a rebuild whenever the overlay
+or a patch changes.
+
+## Restart matrix: what to do after a redeploy
+
+`bootstrap-local.sh` always deploys a fresh fleet, so the addresses change.
+What each service needs afterwards differs, because they read those
+addresses at different times:
+
+| Service | Where it reads the addresses | After a redeploy |
+| --- | --- | --- |
+| dao-node | `TOKEN_ADDRESS`/`GOVERNOR_ADDRESS`/`DAO_NODE_START_BLOCK` env, baked in at container start, plus `abis/<lowercase address>.json` | `docker compose up -d --force-recreate dao-node` (Compose recreates it on its own when `infra/.env` changes the rendered environment, but `--force-recreate` is the reliable form) |
+| cpls | `TOKEN_ADDRESS`/`GOVERNOR_ADDRESS` env, rendered into `/tenants/fleet.yaml` by its entrypoint at container start | same: `--force-recreate` |
+| blockcache-shim | nothing deployment-specific (it only proxies to the chain) | nothing |
+| agora-next | `FLEET_DEPLOYMENT_FILE`, a JSON file re-read on every call (`configs/contracts/fleet.ts`) | nothing, once `write-agora-next-deployment.sh` has rewritten the file; a restart is only needed for env changes |
+| anvil | holds the chain itself, in memory, with no volume | recreating it destroys the fleet: never recreate it mid-run (this is why `bootstrap-local.sh` builds every image before starting anything and never passes `--build` to `up`) |
+| postgres | nothing deployment-specific; `fleet.votes` rows carry the governor address in `contract` | nothing. `down -v` is only needed when a `postgres/init/*.sql` file changes, since Compose runs those against a fresh volume only |
 
 ## Verified commands and outputs
 

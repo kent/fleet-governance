@@ -3,6 +3,17 @@ services:
     build:
       context: ..
       dockerfile: infra/anvil/Dockerfile
+    # Every long-running service in this stack restarts unless it was
+    # stopped deliberately: `docker compose down`/`stop` still stop them,
+    # but a crash or an OOM kill comes back on its own. agora-next in
+    # particular was observed OOM-killed by the Linux OOM killer under
+    # Docker Desktop's default VM (see docs/compatibility-notes.md,
+    # "npm run dev's memory footprint"), and with no restart policy it
+    # simply stayed dead, which read as "the UI hangs". NOTE: anvil holds
+    # its whole chain in memory with no volume, so a restart here means a
+    # chain with no fleet on it; the restart keeps the RPC endpoint
+    # answering rather than pretending the deployment survived.
+    restart: unless-stopped
     ports:
       - "${ANVIL_PORT:-8545}:8545"
     healthcheck:
@@ -19,9 +30,13 @@ services:
     build:
       context: ..
       dockerfile: infra/blockcache-shim/Dockerfile
+    restart: unless-stopped
     environment:
-      ANVIL_RPC_URL: http://anvil:8545
-      BLOCK_TIME_SECONDS: "2"
+      # Overridable so the shim can be pointed at a real chain's RPC
+      # endpoint alongside dao-node (see infra/README.md, "Pointing at Base
+      # Sepolia instead of local Anvil").
+      ANVIL_RPC_URL: ${ANVIL_RPC_URL:-http://anvil:8545}
+      BLOCK_TIME_SECONDS: ${BLOCK_TIME_SECONDS:-2}
       # The fleet's governor (AgoraGovernor V2) is timestamp-clocked:
       # `cast call $GOVERNOR "CLOCK_MODE()(string)"` returns
       # "mode=timestamp", so DAO Node's start_block/end_block are unix
@@ -43,6 +58,7 @@ services:
 
   postgres:
     image: postgres:16
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-agora}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agora}
@@ -65,6 +81,7 @@ services:
     build:
       context: ..
       dockerfile: infra/dao-node/Dockerfile
+    restart: unless-stopped
     ports:
       - "${DAO_NODE_PORT:-8000}:8000"
     environment:
@@ -76,8 +93,17 @@ services:
       # omitting it; the shell default here just makes that explicit.
       # Patch 0003 treats blank/whitespace as unset too, on top of this.
       DAO_NODE_START_BLOCK: ${DAO_NODE_START_BLOCK:-}
-      DAO_NODE_ARCHIVE_NODE_HTTP: http://anvil:8545
-      DAO_NODE_REALTIME_NODE_WS: ws://anvil:8545
+      # Overridable so the read side can be pointed at a real chain
+      # without editing this file; see infra/README.md, "Pointing at Base
+      # Sepolia instead of local Anvil".
+      DAO_NODE_ARCHIVE_NODE_HTTP: ${DAO_NODE_ARCHIVE_NODE_HTTP:-http://anvil:8545}
+      DAO_NODE_REALTIME_NODE_WS: ${DAO_NODE_REALTIME_NODE_WS:-ws://anvil:8545}
+      # eth_getLogs range per archive request. Left empty, dao-node's
+      # resolve_block_count_span() picks a per-chain default (2000 for any
+      # chain not in its table, which includes Base Sepolia). Set it on a
+      # real chain whose RPC provider caps the range lower, or to pin the
+      # value against a change in that table.
+      DAO_NODE_ARCHIVE_NODE_HTTP_BLOCK_COUNT_SPAN: ${DAO_NODE_ARCHIVE_NODE_HTTP_BLOCK_COUNT_SPAN:-}
       ABI_DIR: /abis
       # Upstream defaults (2 realtime WS clients + 1 polling client) race
       # against anvil's fast, low-latency local chain and intermittently
@@ -85,8 +111,13 @@ services:
       # One realtime client is enough to track new blocks locally; the
       # polling client is only a backup for missed websocket events, so
       # it's safe to disable for this local stack.
-      NUM_REALTIME_CLIENTS: "1"
-      NUM_POLLING_CLIENTS: "0"
+      # Both overridable through infra/.env: a real chain wants
+      # NUM_POLLING_CLIENTS=1 back (it is the backstop for websocket events
+      # a flaky provider drops), which is safe there because the cold-boot
+      # hang below is an artefact of anvil's zero-latency local chain, and
+      # because this service now has a restart policy.
+      NUM_REALTIME_CLIENTS: ${NUM_REALTIME_CLIENTS:-1}
+      NUM_POLLING_CLIENTS: ${NUM_POLLING_CLIENTS:-0}
       # app/server.py's NUM_ARCHIVE_CLIENTS defaults to 2 (a CSV archive
       # slot plus the HTTP one), assuming a deployment that configures
       # DAO_NODE_DATA_PATH for a CSV archive. This stack never does (the
@@ -122,6 +153,7 @@ services:
     build:
       context: ..
       dockerfile: infra/cpls/Dockerfile
+    restart: unless-stopped
     ports:
       - "${CPLS_PORT:-8001}:8001"
     environment:
@@ -208,6 +240,20 @@ services:
     build:
       context: ..
       dockerfile: infra/agora-next/Dockerfile
+    restart: unless-stopped
+    # `npm run dev` was measured at 5.5-5.6 GiB resident and was OOM-killed
+    # outright once (docs/compatibility-notes.md, "npm run dev's memory
+    # footprint under Docker Desktop's default VM"). Capping the container
+    # rather than letting it take the whole VM changes what happens when it
+    # runs out: the kill lands on this container alone (postgres, anvil and
+    # dao-node keep running) and the restart policy above brings it back,
+    # and Node sizes its own heap from the cgroup limit instead of from the
+    # VM, so it self-restarts gracefully more often than it dies. 6 GiB
+    # leaves headroom over the observed footprint and fits a Docker VM of
+    # 8 GiB with the rest of this stack (which totals well under 500 MiB).
+    # Raise AGORA_NEXT_MEM_LIMIT on a larger VM; see infra/README.md,
+    # "Docker VM sizing".
+    mem_limit: ${AGORA_NEXT_MEM_LIMIT:-6g}
     ports:
       - "${AGORA_NEXT_PORT:-3000}:3000"
     environment:
@@ -226,7 +272,7 @@ services:
       # client-side chain read instead, and does not get it from this
       # setting. See docs/compatibility-notes.md, Task 5,
       # "NEXT_PUBLIC_FORK_NODE_URL: one value, two audiences".
-      NEXT_PUBLIC_FORK_NODE_URL: http://anvil:8545
+      NEXT_PUBLIC_FORK_NODE_URL: ${NEXT_PUBLIC_FORK_NODE_URL:-http://anvil:8545}
       # src/app/lib/prisma.ts reads only DATABASE_URL; prismaWeb2Client and
       # prismaWeb3Client are the same PrismaClient instance (see
       # docs/compatibility-notes.md's "Agora Next Prisma web2/web3 split").
@@ -253,8 +299,12 @@ services:
       # a real fleet is deployed. configs/contracts/fleet.ts re-reads this
       # file on every call, so swapping it only needs a container restart.
       FLEET_DEPLOYMENT_FILE: /deployments/agora-next-deployment.json
-      # Dev-only value; README.md recommends 32+ characters.
-      JWT_SECRET: dev-only-32-character-secret-key-fleet
+      # Dev-only value; README.md recommends 32+ characters. Overridable
+      # through infra/.env, and it MUST be replaced with a fresh random
+      # secret for any deployment reachable by anyone else: this literal is
+      # published in this repository. See infra/README.md, "Pointing at Base
+      # Sepolia instead of local Anvil".
+      JWT_SECRET: ${JWT_SECRET:-dev-only-32-character-secret-key-fleet}
     volumes:
       - ../deployments:/deployments:ro
     depends_on:
