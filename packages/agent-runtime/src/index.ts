@@ -6,6 +6,8 @@ export * from "./worker.js";
 export * from "./sandbox/workspace.js";
 export * from "./sandbox/tools.js";
 export * from "./sandbox/docker.js";
+export * from "./sandbox/package-installer.js";
+export * from "./sandbox/package-broker.js";
 export * from "./providers/types.js";
 export * from "./providers/scripted.js";
 export * from "./providers/forced.js";

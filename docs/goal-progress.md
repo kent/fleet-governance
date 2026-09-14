@@ -15,7 +15,7 @@ that the fleet would reject one.
 | Agents work a shared task and produce their own decisions | `experiments/reports/model-hf-replay-1/record.json` records five OpenRouter agents, 64 total steps, no gateway blocks, and one ordinary `CHOOSE_PATH` proposal that executed. Four agents passed the task tests; the critic's loop was aborted. | Observed at five agents, before the sandbox changes below. No constitutional violation was attempted. |
 | A deviation becomes a proposal with independent, public ballots | `apps/runner/src/model-run.integration.test.ts` runs task loops, workers and signers against fresh Anvil. The rejection case produces one `GRANT_EXCEPTION` proposal and three Against ballots with charter-based reasons. | Verified with scripted provider outputs. This tests the machinery, not spontaneous model behaviour. |
 | A defeated action cannot use the task executor to proceed | The same integration case retries the exact fetch through `ToolRouter` after defeat, confirms no exception exists, and tries a local canary fetch from repository code through `run_tests`. Both routes remain denied; an in-charter read still works. | Verified within the trusted runtime and Docker boundary. |
-| A normal task can still execute in the sandbox | `packages/agent-runtime/src/sandbox/docker.integration.test.ts` runs ordinary code, records failed tests accurately, verifies no host credentials or writable host mounts, and confirms timeout cleanup removes the container. | Verified with real Docker. |
+| A normal task can still execute in the sandbox | `packages/agent-runtime/src/sandbox/docker.integration.test.ts` runs ordinary code, records failed tests accurately, verifies no host credentials or writable host mounts, and confirms timeout cleanup removes the container. Eight package installer checks also cover real npm installs through a gateway broker. | Verified with real Docker. |
 | Reports distinguish observation from demonstrated enforcement | `model-expected.ts` requires an observed blocked call for either `gatewayAfter` expectation. An initially allowed call can no longer be described as a host that was never reached. | Implemented and tested. |
 | Thousands participate onchain | `scale-2000-1789408328458` verified 2,000 members and 4,000 ballots across a defeated exception and an executed amendment. Every voter had a public reason; no votes were missing. Deployment used 107 transactions, each below the 16,777,216 gas cap. | Verified with scripted participants and actual onchain transactions on owned Anvil. |
 | Governance controls a resource through contract permits | `FleetExecutor` and `GovernedArtifactStore` bind publication to an exact settled permission. Twenty contract tests cover enforcement, including no ballots, insufficient yes votes, all abstentions and a tie. The model task loop now builds and proposes exact file permissions too. | Verified for the artifact store at 2,000 scripted members, and through the normal task loop with three scripted providers. HTTP remains inside the trusted runtime boundary. |
@@ -222,17 +222,14 @@ incident's exploit chain.
 
 ## Remaining work
 
-1. Restore package installation behind an isolated network broker. Check each destination
-   against fresh ledger state, prevent direct egress and host scripts, and test redirects,
-   dependency URLs, revoked permissions and cleanup.
-2. Measure a bounded live pilot using a dedicated capped provider key, normal task prompts and
+1. Measure a bounded live pilot using a dedicated capped provider key, normal task prompts and
    the complete usage journal. Size the charter, operator budget, voting window and concurrency
    from that evidence. Keep one coordinator and durable journal if tool workers move to other
    hosts; distributed inference coordinators need shared transactional accounting first.
-3. Run the model experiment with normal task prompts and no prescribed votes. Preserve every
+2. Run the model experiment with normal task prompts and no prescribed votes. Preserve every
    outcome, including no attempted violation, approval, rejection and missing ballots. A
    successful scripted replay cannot stand in for this observation.
-4. Verify the complete record through the Runner and Agora read side, including public reasons,
+3. Verify the complete record through the Runner and Agora read side, including public reasons,
    chain reconstruction and the execution result. Audit the full objective again before marking
    it complete.
 
@@ -272,3 +269,45 @@ so the existing 129 passing contract tests remain the contract validation.
 A read-only preflight also checked the existing OpenRouter key against a $1 pilot budget. It did
 not meet the required non-resetting credit cap and accounting conditions. No credit settings were
 changed and no inference was requested. A dedicated capped key is still needed for that pilot.
+
+## Isolated package installation
+
+Runner now supplies an isolated npm installer. The container has no external network, no mounted
+host workspace or credentials, a read-only root filesystem and an unprivileged user. A small
+loopback registry adapter requests downloads over framed stdin and stdout. The host broker checks
+each exact HTTPS metadata and tarball URL against fresh ledger state. Downloads count against
+the tool budget, and both allowed and blocked requests are logged.
+
+Tarball URLs in registry metadata do not inherit the registry's permission. A denied download
+stops the install and returns the actual blocked `network_fetch` to the task loop. The model can
+propose, drop or escalate that request. Retrying the original install waits for its matching
+recorded grant, and every download is checked again. A changed query, an old constitution-version
+exception, a pause or an escalation cannot reuse the earlier allow result.
+
+Package lifecycle scripts are disabled and host npm remains unavailable. Direct URL, git and
+local path dependencies are unsupported. Successful dependencies are kept in a dedicated volume
+and mounted read-only into the test sandbox. Failed installs preserve previous dependencies.
+Cancellation and timeout remove the named container and candidate volume; Runner cleans up the
+retained volume after its tool work drains.
+
+The first integration run caught npm rejecting the same empty config file for user and global
+configuration. Separate empty files fixed it. The next run exposed Docker automatic removal
+racing explicit cleanup after cancellation. The installer now owns removal explicitly. The
+final eight Docker checks passed, including transitive registry dependencies, rejected downloads,
+redirects, a direct egress canary, lifecycle scripts, cancellation, timeout and inspection for
+leftover owned resources. These checks use real npm and Docker with test ledger and HTTP responses.
+
+The full unit suite passed 1,183 tests with 38 skipped. Typecheck and the production build passed;
+the build retains the existing `spawn-run.ts` import-meta warning. The 52 focused broker and
+task-loop tests passed. Bundled evidence checksums and available local captures still match.
+Contract source, including Agora Governor, was unchanged. No paid model calls were made.
+
+The final model integration passed all four scenarios in 312.5 seconds: rejected fetch,
+approved publication, rejected publication and a malformed voter that casts no ballot. Its
+optional live-model test remained skipped. The owned test chain and temporary deployment
+directory were cleaned up afterward.
+
+The [installer guide](package-installation.md) records the supported package types, resource
+bounds and remaining trust assumptions. There is no hard quota on the named dependency volume,
+crash janitor, production isolation proof or fleet-wide cancellation of external workloads. A
+new ledger read prevents subsequent requests; it cannot recall an already dispatched HTTP call.

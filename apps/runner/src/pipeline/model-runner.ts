@@ -28,6 +28,7 @@ import {
   StepBoard,
   TaskLoop,
   ToolRouter,
+  DockerPackageInstaller,
   Workspace,
   Worker,
   decisionToProposeInput,
@@ -415,6 +416,7 @@ async function runModelFixtureOwned(ctx: ModelRunContext, fixture: ModelFixtureV
   });
 
   let hosts: RunningHosts | undefined;
+  const rigs: AgentRig[] = [];
   const jobStore = ctx.env["RUNNER_PG_URL"] ? new PgJobStore(ctx.env["RUNNER_PG_URL"]) : new MemoryJobStore();
   const controller = new AbortController();
   setMaxListeners(ctx.members.length + 2, controller.signal);
@@ -455,7 +457,6 @@ async function runModelFixtureOwned(ctx: ModelRunContext, fixture: ModelFixtureV
   const proposalInfo = new Map<string, { proposerAgentId: number; decision: DecisionV1; txHash: Hex; description: string }>();
   let lastProposalAtMs = 0;
 
-  const rigs: AgentRig[] = [];
   const keeperWallet = buildKeeperWallet(ctx);
   const keeper = new Keeper({
     client: ctx.client,
@@ -553,6 +554,7 @@ async function runModelFixtureOwned(ctx: ModelRunContext, fixture: ModelFixtureV
         log: (record: GatewayLogRecord) => appendJsonl(gatewayPath, record),
         fetchImpl: withHostOverrides(fetch, runningHosts.overrides),
         artifactPublisher: artifactPublisher(ctx.client, signer),
+        packageInstaller: new DockerPackageInstaller(),
       });
 
       const rawProvider = buildProvider(ctx, agentId, member);
@@ -725,10 +727,13 @@ async function runModelFixtureOwned(ctx: ModelRunContext, fixture: ModelFixtureV
     return { ...result, inference: summary };
   } finally {
     controller.abort();
-    await inference.close();
-    await Promise.all([toolPool.close(), votePool.close()]);
-    await hosts?.stop();
-    if (jobStore instanceof PgJobStore) await jobStore.close();
+    const drained = await Promise.allSettled([inference.close(), toolPool.close(), votePool.close()]);
+    // Run resource cleanup even if a journal or pool failed while draining. Tool work has
+    // settled before its installer's dependency volume is removed.
+    const cleanup = [...drained, ...await Promise.allSettled(rigs.map(rig => rig.router.close())),
+      ...await Promise.allSettled([hosts?.stop(), jobStore instanceof PgJobStore ? jobStore.close() : undefined])];
+    const failed = cleanup.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failed.length) throw new AggregateError(failed.map(result => result.reason), "model run cleanup failed");
   }
 }
 

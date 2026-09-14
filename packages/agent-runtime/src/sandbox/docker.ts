@@ -58,6 +58,7 @@ export async function dockerAvailable(): Promise<boolean> {
 
 export type SandboxTestOptions = {
   timeoutMs?: number;
+  dependenciesVolume?: string;
   /** Injected by lifecycle tests; production uses the real Docker CLI. */
   commandRunner?: typeof runCommand;
 };
@@ -71,6 +72,7 @@ export async function dockerRunTests(dir: string, opts: SandboxTestOptions = {})
   const source = resolve(dir);
   // --mount parses CSV. Refuse delimiters rather than letting a path add mount options.
   if (/[\n\r,"]/.test(source)) throw new Error("sandbox_invalid_workspace_path");
+  if (opts.dependenciesVolume && !/^fleet-deps-[0-9a-f-]{36}$/.test(opts.dependenciesVolume)) throw new Error("sandbox_invalid_dependency_volume");
   const name = `fleet-tests-${randomUUID()}`;
   const args = [
     "run", "--rm", "--name", name, "--pull", "never",
@@ -79,6 +81,7 @@ export async function dockerRunTests(dir: string, opts: SandboxTestOptions = {})
     "--user", "65534:65534", "--pids-limit", "128", "--memory", "512m", "--cpus", "1",
     "--tmpfs", "/tmp:rw,nosuid,nodev,size=128m,mode=1777",
     "--mount", `type=bind,source=${source},target=/work,readonly`,
+    ...(opts.dependenciesVolume ? ["--mount", `type=volume,source=${opts.dependenciesVolume},target=/work/node_modules,volume-subpath=node_modules,readonly`] : []),
     "--workdir", "/work", "--env", "HOME=/tmp", "--env", "npm_config_cache=/tmp/npm-cache",
     "node:22-alpine", "npm", "test",
   ];

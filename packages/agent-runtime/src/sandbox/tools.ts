@@ -6,12 +6,14 @@ import type { DraftProposal, GatewayLogRecord, GatewayVerdict, LedgerSnapshot, L
 import { payloadHashForAction } from "@fleet/sdk";
 import type { Workspace } from "./workspace.js";
 import { dockerRunTests as realDockerRunTests } from "./docker.js";
+import { packageFetch, PackageRequestBlocked } from "./package-broker.js";
+import type { PackageInstaller } from "./package-installer.js";
 
 export type ToolCall = { class: ActionClass; target: string; args: Record<string, unknown> };
 
 export type ToolResult =
   | { ok: true; output: string }
-  | { ok: false; blocked: GatewayVerdict & { verdict: "BLOCK" } }
+  | { ok: false; blocked: GatewayVerdict & { verdict: "BLOCK" }; blockedTool?: ToolCall }
   | { ok: false; error: string };
 
 /** A successful sandbox invocation. Infrastructure failures return ToolResult.error. */
@@ -39,10 +41,10 @@ export type ToolRouterOpts = {
   log: (r: GatewayLogRecord) => void;
   fetchImpl?: typeof fetch;
   dockerRunTests?: (dir: string) => Promise<{ passed: boolean; output: string }>;
-  /** Test injection only. Production refuses installation until an installer can mediate all
-   *  dependency traffic through the gateway. Host npm can execute scripts and contact hosts
-   *  other than --registry, bypassing the fleet's decision. */
+  /** Test injection only. Production supplies the isolated packageInstaller below. Never wire
+   * this to host npm: scripts and dependency URLs would bypass the fleet's decision. */
   packageInstallRunner?: CommandRunner;
+  packageInstaller?: PackageInstaller;
   artifactPublisher?: ArtifactPublisher | undefined;
 };
 
@@ -128,6 +130,7 @@ export class ToolRouter {
   private readonly runDockerTests: (dir: string) => Promise<{ passed: boolean; output: string }>;
   private readonly packageInstallRunner: CommandRunner | undefined;
   private readonly artifactPublisher: ArtifactPublisher | undefined;
+  private readonly packageInstaller: PackageInstaller | undefined;
 
   constructor(opts: ToolRouterOpts) {
     this.workspace = opts.workspace;
@@ -136,14 +139,21 @@ export class ToolRouter {
     this.usageState = { toolCalls: opts.budget.toolCalls };
     this.logSink = opts.log;
     this.fetchImpl = opts.fetchImpl ?? fetch;
-    this.runDockerTests = opts.dockerRunTests ?? realDockerRunTests;
+    this.runDockerTests = opts.dockerRunTests ?? (async dir => {
+      const volume = this.packageInstaller?.volume;
+      if (volume) await this.workspace.prepareDependencyMount();
+      return realDockerRunTests(dir, volume ? { dependenciesVolume: volume } : {});
+    });
     this.packageInstallRunner = opts.packageInstallRunner;
     this.artifactPublisher = opts.artifactPublisher;
+    this.packageInstaller = opts.packageInstaller;
   }
 
   usage(): { toolCalls: number } {
     return { toolCalls: this.usageState.toolCalls };
   }
+
+  async close(): Promise<void> { await this.packageInstaller?.close(); }
 
   async call(tc: ToolCall, signal?: AbortSignal): Promise<ToolResult> {
     if (signal?.aborted) return { ok: false, error: "aborted" };
@@ -194,9 +204,10 @@ export class ToolRouter {
     try {
       if (signal?.aborted) return { ok: false, error: "aborted" };
       const output = execution && this.artifactPublisher
-        ? await this.artifactPublisher.execute(execution) : await this.execute(tc);
+        ? await this.artifactPublisher.execute(execution) : await this.execute(tc, signal);
       return { ok: true, output };
     } catch (err) {
+      if (err instanceof PackageRequestBlocked) return { ok: false, blocked: err.blocked, blockedTool: err.tool };
       return { ok: false, error: errorMessage(err) };
     }
   }
@@ -230,7 +241,7 @@ export class ToolRouter {
     };
   }
 
-  private async execute(tc: ToolCall): Promise<string> {
+  private async execute(tc: ToolCall, signal?: AbortSignal): Promise<string> {
     switch (tc.class) {
       case "read_repo":
         return this.readRepo(tc);
@@ -239,7 +250,7 @@ export class ToolRouter {
       case "run_tests":
         return this.runTests();
       case "package_install":
-        return this.packageInstall(tc);
+        return this.packageInstall(tc, signal);
       case "network_fetch":
         return this.networkFetch(tc);
       case "publish_artifact":
@@ -267,7 +278,7 @@ export class ToolRouter {
     return JSON.stringify(payload);
   }
 
-  private async packageInstall(tc: ToolCall): Promise<string> {
+  private async packageInstall(tc: ToolCall, signal?: AbortSignal): Promise<string> {
     // Gateway already confirmed tc.target is on charter.externalAllowlist (package_install is a
     // host-allowlisted class, evaluate.ts's isTargetAllowed) before this handler ever runs.
     const pkg = typeof tc.args.pkg === "string" ? tc.args.pkg : "";
@@ -275,6 +286,10 @@ export class ToolRouter {
       // F4: rejected before any subprocess, argument-injection attempts included ("-g", "foo
       // bar", "foo;rm" are all invalid specs, not commands that ever reach npm).
       throw new Error("invalid_package_name");
+    }
+    if (this.packageInstaller) {
+      return this.packageInstaller.install(tc.target, pkg, packageFetch({ watcher: this.watcher,
+        agentId: this.agentId, usage: this.usageState, log: this.logSink, fetchImpl: this.fetchImpl }), signal);
     }
     if (!this.packageInstallRunner) {
       throw new Error("package_install_unavailable: a gateway-mediated installer is required; host execution is disabled");

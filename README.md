@@ -80,6 +80,7 @@ git clone --recurse-submodules git@github.com:kent/fleet-governance.git
 cd fleet-governance
 pnpm install --frozen-lockfile
 pnpm typecheck
+pnpm --filter @fleet/agent-runtime build
 node apps/runner/dist/cli.js execution-demo --members 5 --concurrency 4
 ```
 
@@ -141,11 +142,11 @@ cd contracts
 forge test
 ```
 
-Latest validation: **1,170 unit tests passed** with 30 skipped, and **129 contract tests passed**.
+Latest validation: **1,183 unit tests passed** with 38 skipped, and **129 contract tests passed**.
 Twenty contract tests cover execution permissions, including no ballots, all abstentions,
 insufficient yes votes, ties, pending approvals, revocation and replay. The model integration
 suite passed four scenarios, including approved and rejected task-loop publication. Its optional
-live-model test was skipped.
+live-model test was skipped. Eight real Docker installer checks also passed.
 
 Docker is required for the sandbox integration tests. Prepare `node:22-alpine`, then run:
 
@@ -153,6 +154,7 @@ Docker is required for the sandbox integration tests. Prepare `node:22-alpine`, 
 docker pull node:22-alpine
 FLEET_INTEGRATION=1 pnpm exec vitest run --project integration \
   packages/agent-runtime/src/sandbox/docker.integration.test.ts \
+  packages/agent-runtime/src/sandbox/package-installer.integration.test.ts \
   apps/runner/src/model-run.integration.test.ts
 ```
 
@@ -170,8 +172,11 @@ Model task loops can request publication with `publish_artifact`: name a file, c
 permission, and retry after settled approval. The new `artifact-publication` fixture asks for
 review without prescribing a vote. [Run it and inspect the boundary](docs/execution-permits.md#publication-in-the-model-task-loop).
 
-Host package installation is disabled until an isolated installer can mediate its dependency traffic. The
-current gateway checks new actions; terminating already running external jobs needs a supervisor
+Package installation runs in a container with no external network. Its broker checks every metadata
+and tarball download against fresh ledger state, and lifecycle scripts are disabled. A failed or
+rejected download stops the install. [Installer details and eight Docker checks](docs/package-installation.md).
+
+The current gateway checks new actions; terminating already running external jobs needs a supervisor
 and credential revocation. Neither demo proves containment against the full Hugging Face exploit
 chain. [Current progress and remaining work](docs/goal-progress.md)
 

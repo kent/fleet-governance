@@ -145,6 +145,11 @@ export class Workspace {
     await writeFile(resolved, content, "utf8");
   }
 
+  /** The test container mounts only the installer's node_modules subdirectory here, read-only. */
+  async prepareDependencyMount(): Promise<void> {
+    await mkdir(await this.resolvePath("node_modules"), { recursive: true });
+  }
+
   /** Every file under the workspace, as paths relative to `dir` with forward slashes, sorted.
    *  `node_modules` and `.git` are skipped: they are build/VCS noise an agent's tools never need
    *  to enumerate and can be large enough to make a full walk expensive for no benefit. */

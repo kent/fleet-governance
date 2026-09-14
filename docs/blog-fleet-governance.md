@@ -26,6 +26,8 @@
 
 - A list of allowed websites would not have been enough. Hugging Face reports that its URL checks blocked remote fetches, so the agent switched to local file reads and code execution through dataset processing. We have to control what an interface can do, including the operations hidden behind an allowed request. [Hugging Face’s timeline](https://huggingface.co/blog/agent-intrusion-technical-timeline)
 
+- The sample now checks package downloads too. npm runs in a container with no external network. Every registry request and tarball download goes through the gateway. Package scripts are disabled. If a package points at a host the task cannot access, the install stops before that download. A registry's permission cannot quietly become permission for another host. We tested that boundary with actual npm installs, including dependencies of dependencies, blocked downloads and cleanup. [Package installation](package-installation.md)
+
 - With that boundary in place, a failed vote could have stopped a disputed action before it left the environment. That is the claim I want to test. If the agent can exploit its way around the boundary, the guarantee is gone. The blockchain does not fix a broken sandbox.
 
 - A majority can also be wrong. Two thousand agents can share the same blind spot. Some restrictions need to remain fixed regardless of a vote, and a human needs independent authority to pause access. If a job is already running, the infrastructure has to terminate it and revoke its access. A later vote cannot unsend a request.

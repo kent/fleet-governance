@@ -15,7 +15,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc && mkdir -p dist/migrations && cp src/migrations/*.sql dist/migrations/ && mkdir -p dist/providers/prompts && cp src/providers/prompts/*.md dist/providers/prompts/",
+    "build": "tsc && mkdir -p dist/migrations && cp src/migrations/*.sql dist/migrations/ && mkdir -p dist/providers/prompts && cp src/providers/prompts/*.md dist/providers/prompts/ && cp src/sandbox/*.mjs dist/sandbox/",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

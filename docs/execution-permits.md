@@ -108,7 +108,7 @@ resource or egress path outside the agent's writable environment.
 | --- | --- | --- |
 | External tool call | The gateway checks the ledger before dispatch. The rejected exception test sends zero requests to its local canary. | A separate broker must own all relevant egress and credentials. No alternative network or cloud path may bypass it. |
 | Code running inside the workspace | Test containers have no network, ambient host credentials or writable host mounts. A canary probe verifies direct egress fails. | Isolation and host security need adversarial testing against the actual infrastructure. |
-| Package tooling | Host installation is disabled. There is no fallback when isolation is unavailable. | An isolated installer must mediate dependency requests and avoid a vulnerable proxy becoming an escape route. |
+| Package tooling | An isolated npm container uses a broker that checks every metadata and tarball request against fresh ledger state. Scripts and direct egress are unavailable. [Eight Docker checks](package-installation.md). | Harden the broker, image, host and egress controls against exploits. Bound persistent disk use and recover resources after host failures. |
 | Canonical publication | The immutable artifact store accepts only exact calls from its executor after settled approval. Direct operator writes revert. | The system consuming the artifact must use this store as its sole publication authority. |
 
 Stopping a forbidden action before dispatch is the guarantee demonstrated here. A running HTTP

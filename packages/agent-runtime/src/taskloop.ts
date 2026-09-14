@@ -144,7 +144,7 @@ export type TaskLoopOpts = {
 type ToolLine = { tool: ToolCall; ok: boolean; detail: string; output?: string };
 
 /** One descriptor's block history at one charter version, for the retry rule. */
-type Attempt = { attempts: number; decisionCountAtLastBlock: number; executionPayloadHash?: Hex };
+type Attempt = { attempts: number; decisionCountAtLastBlock: number; approvalPayloadHash?: Hex };
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -522,7 +522,7 @@ export class TaskLoop {
       return null;
     }
 
-    return this.handleBlock(tool, result.blocked, task, charter, signal);
+    return this.handleBlock(result.blockedTool ?? tool, result.blocked, task, charter, signal, tool);
   }
 
   private async handleBlock(
@@ -531,6 +531,7 @@ export class TaskLoop {
     task: TaskView,
     charter: CharterV1,
     signal: AbortSignal,
+    requestedTool: ToolCall = tool,
   ): Promise<StopReason | null> {
     this.blockedCount += 1;
     this.recordToolLine(
@@ -538,7 +539,9 @@ export class TaskLoop {
       false,
       `blocked (${verdict.reason}, ${verdict.draft === null ? "no draft proposal" : "draft proposal available"})`,
     );
-    this.recordBlockedAttempt(tool, task, verdict.draft?.execution ? verdict.payloadHash : undefined);
+    this.recordBlockedAttempt(requestedTool, task,
+      verdict.draft?.kind === "GRANT_EXCEPTION" && (verdict.draft.execution || requestedTool !== tool)
+        ? verdict.payloadHash : undefined);
     this.log({
       type: "blocked",
       agentId: this.opts.agentId,
@@ -668,10 +671,10 @@ export class TaskLoop {
       this.pendingBackoff = true;
       return false;
     }
-    const waitingForExecution = attempt.executionPayloadHash && !this.recentDecisions.some(d =>
+    const waitingForApproval = attempt.approvalPayloadHash && !this.recentDecisions.some(d =>
       d.kind === "GRANT_EXCEPTION" && d.charterVersion === task.charterVersion
-      && d.payloadHash.toLowerCase() === attempt.executionPayloadHash!.toLowerCase());
-    if (waitingForExecution || task.decisionCount <= attempt.decisionCountAtLastBlock) {
+      && d.payloadHash.toLowerCase() === attempt.approvalPayloadHash!.toLowerCase());
+    if (waitingForApproval || task.decisionCount <= attempt.decisionCountAtLastBlock) {
       this.log({
         type: "retry_pending_decision",
         agentId: this.opts.agentId,
@@ -686,13 +689,13 @@ export class TaskLoop {
     return true;
   }
 
-  private recordBlockedAttempt(tool: ToolCall, task: TaskView, executionPayloadHash?: Hex): void {
+  private recordBlockedAttempt(tool: ToolCall, task: TaskView, approvalPayloadHash?: Hex): void {
     const key = this.attemptKey(tool, task.charterVersion);
     const attempt = this.attempts.get(key) ?? { attempts: 0, decisionCountAtLastBlock: 0 };
     this.attempts.set(key, {
       attempts: attempt.attempts + 1,
       decisionCountAtLastBlock: task.decisionCount,
-      ...(executionPayloadHash ? { executionPayloadHash } : {}),
+      ...(approvalPayloadHash ? { approvalPayloadHash } : {}),
     });
   }
 

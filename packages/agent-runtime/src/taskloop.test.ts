@@ -177,6 +177,33 @@ function eventTypes(events: TaskLoopEvent[]): string[] {
 }
 
 describe("TaskLoop, coordinator, gateway blocks", () => {
+  it.each([true, false])("holds a nested package download until its exact grant is recorded (grant=%s)", async grant => {
+    const install: ToolCall = { class: "package_install", target: "registry.example", args: { pkg: "fixture@1.0.0" } };
+    const download: ToolCall = { class: "network_fetch", target: "outside.example", args: { path: "/fixture.tgz", scheme: "https" } };
+    const hash = payloadHashForAction(describeAction(download));
+    const tools = new FakeTools((_tc, n) => n === 1
+      ? { ...blockedResult(download), blockedTool: download } : { ok: true, output: "installed" });
+    const sink = collector();
+    const { provider, users } = scripted({ step: [{ tool: install, why: "the project needs this package" }],
+      block: [{ choice: "propose", rationale: "request permission for its tarball" }] });
+    let taskReads = 0; let decisionReads = 0;
+    const loop = new TaskLoop({ agentId: 1, role: "planner", provider, tools, board: new StepBoard(), isCoordinator: true,
+      task: async () => taskView({ decisionCount: taskReads++ }), propose: sink.propose, objections: sink.objections,
+      maxSteps: 4, blockedBackoffMs: 0, log: sink.log, decisions: async () => {
+        decisionReads++;
+        if (decisionReads === 1) return [];
+        if (decisionReads === 2) return [{ kind: "GRANT_EXCEPTION", payloadHash: payloadHashForAction(describeAction(install)), charterVersion: 1 }];
+        if (decisionReads === 3) return [{ kind: "GRANT_EXCEPTION", payloadHash: hash, charterVersion: 2 }];
+        return grant ? [{ kind: "GRANT_EXCEPTION", payloadHash: hash, charterVersion: 1 }] : [];
+      } });
+    await loop.run(new AbortController().signal);
+    expect(sink.proposals).toHaveLength(1);
+    expect(sink.proposals[0]).toMatchObject({ kind: "GRANT_EXCEPTION", payloadHash: hash, action: describeAction(download) });
+    expect(users.find(user => user.includes("# Choose how to respond")) ?? users.join("\n")).toContain("outside.example");
+    expect(tools.calls).toEqual(grant ? [install, install] : [install]);
+    expect(sink.events.filter(e => e.type === "retry_pending_decision")).toHaveLength(grant ? 2 : 3);
+  });
+
   it("proposes exactly once per charter version for the same blocked descriptor", async () => {
     const task = taskReader();
     const tools = new FakeTools((tc) => blockedResult(tc));
