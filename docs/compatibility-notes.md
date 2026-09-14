@@ -31,16 +31,22 @@ puts everything (the `fleet`-mapped `b3` views, plus the shared `agora` and
 so either connection string renders empty reads instead of failing on a
 missing table.
 
-## Local Postgres port conflict during verification
+## Postgres host port is 55432, not 5432
 
-This machine also runs a Homebrew-managed `postgresql@16` service bound to
-`127.0.0.1:5432` and `[::1]:5432`. That claims `localhost:5432` ahead of
-Docker's published port for `infra-postgres-1`, so `psql
-postgres://agora:agora@localhost:5432/...` from the host resolves to the
-Homebrew server (and fails with `role "agora" does not exist`) unless that
-service is stopped first (`brew services stop postgresql@16`) or the
-verification is run against the container directly
-(`docker exec infra-postgres-1 psql -U agora -d agora_web3 -c '\dt fleet.*'`).
-This is an environment quirk of this host, not a stack issue: the
-Homebrew service was stopped for the verification run in the Task 2 report
-and restarted afterward.
+This machine (and any dev machine that already runs a local Postgres) may
+have something bound to `127.0.0.1:5432`/`[::1]:5432` already: on this host
+that's a Homebrew-managed `postgresql@16` service. To let this stack run
+alongside that without touching it, `infra/docker-compose.yml` publishes the
+`postgres` service's container port 5432 on host port `${POSTGRES_PORT:-55432}`
+instead of 5432. The container's own Postgres still listens on 5432
+internally (that's what `01-roles.sql`/`02-agora-stub.sql`/
+`03-agora-web2-stub.sql` run against); only the host-side mapping moved.
+
+Connect from the host with:
+
+```
+psql postgres://agora:agora@localhost:55432/agora_web3 -c '\dt fleet.*'
+```
+
+No need to stop a local Postgres service to verify this stack; a host
+service already on 5432 is untouched and keeps running throughout.
