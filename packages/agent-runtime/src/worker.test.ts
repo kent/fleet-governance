@@ -140,6 +140,45 @@ function makeFakeClient(opts: FakeClientOpts = {}): FleetClient {
   return fake as unknown as FleetClient;
 }
 
+/**
+ * A fake client whose `timestamp()` tracks real wall-clock time (in milliseconds, not real chain
+ * seconds; the worker only ever compares this against `deadline` and a `BigInt`-converted
+ * `submissionMarginSec`, so any self-consistent unit works for a test), with a `deadline` fixed
+ * `deadlineOffsetMs` after construction. Lets a test demonstrate the controller notes' "LATE
+ * waits lateDelayMs then returns FOR, so the worker's margin check produces missed": the
+ * submission-window check that runs after ScriptedPolicy's real delay sees a "now" that has
+ * genuinely moved, unlike `makeFakeClient`'s fixed snapshot.
+ */
+function makeLiveClockClient(opts: { deadlineOffsetMs: bigint }): FleetClient {
+  const deadline = BigInt(Date.now()) + opts.deadlineOffsetMs;
+  const members = [
+    { agentId: AGENT_ID, account: AGENT_ACCOUNT, manifest: agentManifest("planner") },
+    { agentId: PROPOSER_AGENT_ID, account: PROPOSER_ACCOUNT, manifest: agentManifest("engineer") },
+  ];
+
+  const fake = {
+    chainId: 31337,
+    addresses: { governor: GOVERNOR, ledger: LEDGER },
+    publicClient: {
+      getBlock: async () => ({ number: 1234n, hash: BLOCK_HASH }),
+      waitForTransactionReceipt: async ({ hash }: { hash: Hex }) => ({
+        status: "success" as const,
+        blockNumber: 1235n,
+        transactionHash: hash,
+      }),
+    },
+    getProposalCreated: async () => makeProposal(),
+    getTask: async () => makeTask(),
+    listMembers: async () => members,
+    getProposalState: async () => ProposalState.Active,
+    getProposalTiming: async () => ({ snapshot: 0n, deadline, eta: 0n }),
+    timestamp: async () => BigInt(Date.now()),
+    hasVoted: async () => false,
+  };
+
+  return fake as unknown as FleetClient;
+}
+
 type FakeSignerOpts = {
   castVoteWithReason?: (input: { proposalId: bigint; support: 0 | 1 | 2; reason: string }) => Promise<{ txHash: Hex }>;
 };
@@ -212,6 +251,7 @@ describe("Worker: casting branches", () => {
     expect(job.txHash).toBe(TX_HASH);
     expect(job.publicReason).toContain("FOR. Scripted FOR from agent 3 (planner)");
     expect(signer.castVoteWithReason).toHaveBeenCalledTimes(1);
+    expect(job.attempts).toBe(1);
   });
 
   it("votes AGAINST when scripted AGAINST", async () => {
@@ -336,6 +376,25 @@ describe("Worker: missed submission margin", () => {
     expect(job.state).toBe("missed");
     expect(signer.castVoteWithReason).not.toHaveBeenCalled();
   });
+
+  it("scripted LATE waits, then a fresh deadline check finds the margin gone and records missed (controller notes)", async () => {
+    // deadline is 20ms out from "now" at the start of this test; lateDelayMs=100 guarantees the
+    // fresh timestamp() read after the delay is well past it, so the margin check fails no
+    // matter how much scheduling jitter the test runner adds.
+    const client = makeLiveClockClient({ deadlineOffsetMs: 20n });
+    const { worker, signer } = makeWorker({
+      script: { [AGENT_ID]: "LATE" },
+      lateDelayMs: 100,
+      client,
+      submissionMarginSec: 10,
+    });
+
+    const job = await worker.handleProposal(PROPOSAL_ID);
+
+    expect(job.state).toBe("missed");
+    expect(job.txHash).toBeNull();
+    expect(signer.castVoteWithReason).not.toHaveBeenCalled();
+  });
 });
 
 describe("Worker: restart resume", () => {
@@ -360,12 +419,14 @@ describe("Worker: restart resume", () => {
     expect(signer.castVoteWithReason).not.toHaveBeenCalled();
   });
 
-  it("resumes from a persisted REQUEST_SIGNATURE without a hash by reconciling nonces then retrying", async () => {
+  it("resumes from a persisted REQUEST_SIGNATURE without a hash by reconciling nonces then retrying, bumping attempts", async () => {
     const jobs = new MemoryJobStore();
     const key = keyFor();
     await jobs.claim(key);
     const vote = { schema: "fleet.vote.v1" as const, proposalId: PROPOSAL_ID.toString(), support: "FOR" as const, rationale: "r", assumptions: [], riskFlags: [] };
-    await jobs.update(key, { state: "REQUEST_SIGNATURE", vote });
+    // attempts: 1 represents the first, crashed attempt that got this job as far as
+    // REQUEST_SIGNATURE before the process died.
+    await jobs.update(key, { state: "REQUEST_SIGNATURE", vote, attempts: 1 });
 
     const client = makeFakeClient({ hasVoted: false });
     const signer = makeFakeSigner();
@@ -377,6 +438,7 @@ describe("Worker: restart resume", () => {
     expect(nonces.reconcile).toHaveBeenCalledWith(AGENT_ACCOUNT);
     expect(signer.castVoteWithReason).toHaveBeenCalledTimes(1);
     expect(job.state).toBe("voted");
+    expect(job.attempts).toBe(2);
   });
 
   it("resumes from a persisted REQUEST_SIGNATURE without a hash, finds hasVoted true, and never re-signs", async () => {

@@ -165,6 +165,10 @@ describe.skipIf(!RUN_PG)("PgJobStore (Postgres, RUNNER_PG_URL set)", () => {
     expect(await store.get(makeKey({ proposalId: "999" }))).toBeNull();
   });
 
+  it("update throws for a key that was never claimed", async () => {
+    await expect(store.update(makeKey({ proposalId: "998" }), { state: "EVALUATE" })).rejects.toThrow();
+  });
+
   it("list filters by state across rows", async () => {
     await store.claim(makeKey({ proposalId: "200" }));
     await store.claim(makeKey({ proposalId: "201" }));

@@ -276,8 +276,9 @@ export class Worker {
       });
     }
 
-    await this.persist(key, { state: "SIMULATE" });
-
+    // "Before SUBMIT: re-read state and deadline" (spec 10.6, controller notes): this is that
+    // fresh check. It is deliberately not persisted under a "SIMULATE" checkpoint (see
+    // requestSignatureAndBeyond's comment for where SIMULATE actually belongs).
     const hasVotedNow = await this.cfg.client.hasVoted(proposalId, this.cfg.signer.address);
     if (hasVotedNow) {
       return this.persist(key, { state: "already_voted" });
@@ -319,9 +320,27 @@ export class Worker {
     return this.requestSignatureAndBeyond(key, proposalId, job.vote);
   }
 
+  /**
+   * The one place that ever calls `signer.castVoteWithReason`: every entry into a signing
+   * attempt, fresh or a resumed retry, increments and persists `attempts` here.
+   *
+   * `FleetSigner.castVoteWithReason` simulates the call first (`checkPolicy`, then
+   * `publicClient.simulateContract`) before it reserves a nonce and sends (spec 10.7: "the signer
+   * decodes and checks it again"), all inside that one call. The boundary between "simulated OK"
+   * and "signing / reserving a nonce" is not observable from outside the signer, so this persists
+   * `SIMULATE` and then `REQUEST_SIGNATURE` back to back, both immediately before the call,
+   * rather than bracketing the simulate step on one side and the sign-and-send step on the
+   * other. `REQUEST_SIGNATURE` is the state a restart resumes from
+   * (`resumeFromRequestSignature`): it always carries the vote and the exact rendered reason this
+   * call is about to submit, so a resumed retry re-sends byte-identical content.
+   */
   private async requestSignatureAndBeyond(key: JobKey, proposalId: bigint, vote: VoteV1): Promise<JobRecord> {
+    const current = await this.cfg.jobs.get(key);
+    const attempts = (current?.attempts ?? 0) + 1;
     const reason = renderVoteReason(vote);
-    await this.persist(key, { state: "REQUEST_SIGNATURE", publicReason: reason, vote });
+
+    await this.persist(key, { state: "SIMULATE" });
+    await this.persist(key, { state: "REQUEST_SIGNATURE", publicReason: reason, vote, attempts });
 
     let txHash: Hex;
     try {

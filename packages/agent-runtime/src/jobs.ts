@@ -18,7 +18,16 @@ export type JobKey = {
   actionType: ActionType;
 };
 
-/** The worker state machine's own phases, spec 10.4, persisted after every transition. */
+/**
+ * The worker state machine's own phases, spec 10.4, persisted after every transition.
+ *
+ * `SIMULATE` and `REQUEST_SIGNATURE` are both persisted immediately before the single call to
+ * `FleetSigner.castVoteWithReason` (see `Worker.requestSignatureAndBeyond`'s doc comment): that
+ * call simulates internally before it signs and sends, but the boundary between those two steps
+ * is not observable from outside the signer, so there is no separate "simulated, about to sign"
+ * checkpoint between them on disk. `REQUEST_SIGNATURE` is the one of the two a restart resumes
+ * from.
+ */
 export type JobPipelineState =
   | "DISCOVER"
   | "READ_ANCHORED_STATE"
@@ -100,6 +109,13 @@ function jobKeyString(key: JobKey): string {
   );
 }
 
+/** The error every `JobStore.update` implementation throws for a key with no existing record
+ *  (the `JobStore` contract: "Throws if no record exists for `key`"), so callers see the same
+ *  failure shape regardless of which store backs them. */
+function noJobRecordError(key: JobKey): Error {
+  return new Error(`no job record for key ${jobKeyString(key)}`);
+}
+
 function freshRecord(key: JobKey, now: Date): JobRecord {
   return {
     chainId: key.chainId,
@@ -145,7 +161,7 @@ export class MemoryJobStore implements JobStore {
     const k = jobKeyString(key);
     const existing = this.records.get(k);
     if (!existing) {
-      throw new Error(`MemoryJobStore.update: no job record for key ${k}`);
+      throw noJobRecordError(key);
     }
     this.records.set(k, { ...existing, ...patch, updatedAt: new Date() });
   }
@@ -314,16 +330,21 @@ export class PgJobStore implements JobStore {
       i++;
     }
     sets.push("updated_at = now()");
-    if (sets.length === 1) return;
 
     const whereStart = i;
     values.push(key.chainId, key.governor.toLowerCase(), key.proposalId, key.agentAddress.toLowerCase(), key.actionType);
-    await this.pool.query(
+    // RETURNING (and the rowCount check below) is what makes this match the JobStore contract:
+    // an UPDATE whose WHERE clause matches no row otherwise succeeds silently in Postgres.
+    const res = await this.pool.query(
       `UPDATE jobs SET ${sets.join(", ")}
        WHERE chain_id = $${whereStart} AND governor = $${whereStart + 1} AND proposal_id = $${whereStart + 2}
-         AND agent_address = $${whereStart + 3} AND action_type = $${whereStart + 4}`,
+         AND agent_address = $${whereStart + 3} AND action_type = $${whereStart + 4}
+       RETURNING chain_id`,
       values,
     );
+    if (res.rowCount === 0) {
+      throw noJobRecordError(key);
+    }
   }
 
   async list(filter: JobFilter): Promise<JobRecord[]> {
