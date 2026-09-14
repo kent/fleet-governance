@@ -194,13 +194,15 @@ function makeLiveClockClient(opts: { deadlineOffsetMs: bigint }): FleetClient {
   return fake as unknown as FleetClient;
 }
 
+const SUBMITTED_NONCE = 11;
+
 type FakeSignerOpts = {
-  castVoteWithReason?: (input: { proposalId: bigint; support: 0 | 1 | 2; reason: string }) => Promise<{ txHash: Hex }>;
+  castVoteWithReason?: (input: { proposalId: bigint; support: 0 | 1 | 2; reason: string }) => Promise<{ txHash: Hex; nonce: number }>;
 };
 
 function makeFakeSigner(opts: FakeSignerOpts = {}): FleetSigner {
   const castVoteWithReason =
-    opts.castVoteWithReason ?? (async () => ({ txHash: TX_HASH }));
+    opts.castVoteWithReason ?? (async () => ({ txHash: TX_HASH, nonce: SUBMITTED_NONCE }));
   const fake = {
     address: AGENT_ACCOUNT,
     castVoteWithReason: vi.fn(castVoteWithReason),
@@ -264,6 +266,11 @@ describe("Worker: casting branches", () => {
     expect(job.state).toBe("voted");
     expect(job.vote?.support).toBe("FOR");
     expect(job.txHash).toBe(TX_HASH);
+    // Final review I6: spec 10.4 lists `nonce` among a job's fields and spec 10.8 says "persist
+    // intent, nonce, and hash before treating submission as complete". The signer is the only
+    // place that knows it, so it now comes back with the hash and is persisted with the SUBMIT
+    // patch; before this wave `nonce` was structurally always null.
+    expect(job.nonce).toBe(SUBMITTED_NONCE);
     expect(job.publicReason).toContain("FOR. Scripted FOR from agent 3 (planner)");
     expect(signer.castVoteWithReason).toHaveBeenCalledTimes(1);
     expect(job.attempts).toBe(1);

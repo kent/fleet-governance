@@ -221,6 +221,66 @@ function startFakeRpc(handlers: Record<string, Handler>): Promise<{ url: string;
   });
 }
 
+describe("checkPolicy: a propose call's inner batch (final review I5)", () => {
+  const TOKEN_TRANSFERISH: Hex = "0xa9059cbb";
+
+  it("rejects a propose whose inner target is the token rather than the ledger", () => {
+    const data = proposeCalldata([TOKEN], [0n], [RECORD_DECISION_CALLDATA], "# desc");
+    expect(() => checkPolicy(POLICY, { chainId: CHAIN_ID, target: GOVERNOR, value: 0n, data })).toThrow(PolicyViolation);
+    try {
+      checkPolicy(POLICY, { chainId: CHAIN_ID, target: GOVERNOR, value: 0n, data });
+    } catch (err) {
+      expect((err as PolicyViolation).code).toBe("TARGET");
+      expect((err as PolicyViolation).message).toContain("inner target");
+    }
+  });
+
+  it("rejects a propose carrying more than one action", () => {
+    const data = proposeCalldata(
+      [LEDGER, LEDGER],
+      [0n, 0n],
+      [RECORD_DECISION_CALLDATA, RECORD_DECISION_CALLDATA],
+      "# desc",
+    );
+    expect(() => checkPolicy(POLICY, { chainId: CHAIN_ID, target: GOVERNOR, value: 0n, data })).toThrow(
+      /exactly one action/,
+    );
+  });
+
+  it("rejects a propose carrying no action at all", () => {
+    const data = proposeCalldata([], [], [], "# desc");
+    expect(() => checkPolicy(POLICY, { chainId: CHAIN_ID, target: GOVERNOR, value: 0n, data })).toThrow(
+      /exactly one action/,
+    );
+  });
+
+  it("rejects a propose whose inner value is non-zero", () => {
+    const data = proposeCalldata([LEDGER], [1n], [RECORD_DECISION_CALLDATA], "# desc");
+    try {
+      checkPolicy(POLICY, { chainId: CHAIN_ID, target: GOVERNOR, value: 0n, data });
+      expect.unreachable();
+    } catch (err) {
+      expect((err as PolicyViolation).code).toBe("VALUE");
+    }
+  });
+
+  it("rejects a propose whose inner calldata is not a canonical recordDecision call", () => {
+    const data = proposeCalldata([LEDGER], [0n], [TOKEN_TRANSFERISH], "# desc");
+    try {
+      checkPolicy(POLICY, { chainId: CHAIN_ID, target: GOVERNOR, value: 0n, data });
+      expect.unreachable();
+    } catch (err) {
+      expect((err as PolicyViolation).code).toBe("RAW_CALLDATA");
+      expect((err as PolicyViolation).message).toContain("recordDecision");
+    }
+  });
+
+  it("still accepts the batch FleetSigner.propose itself builds", () => {
+    const data = proposeCalldata([LEDGER], [0n], [RECORD_DECISION_CALLDATA], "# desc\n\n#proposalTypeId=0");
+    expect(() => checkPolicy(POLICY, { chainId: CHAIN_ID, target: GOVERNOR, value: 0n, data })).not.toThrow();
+  });
+});
+
 describe("FleetSigner policy rejections against a fake transport", () => {
   let close: () => Promise<void>;
 
@@ -413,6 +473,10 @@ describe("FleetSigner end to end against a fake transport", () => {
 
     expect(result.proposalId).toBe(PROPOSAL_ID);
     expect(result.txHash).toBe(SENT_TX_HASH);
+    // Final review I6: the nonce the signer reserved and committed comes back with the hash, so
+    // the caller can record spec 10.4's `nonce` field. The fake RPC reports a transaction count of
+    // 0, so the first reservation is nonce 0.
+    expect(result.nonce).toBe(0);
     expect(fake.calls).toContain("eth_sendRawTransaction");
   });
 

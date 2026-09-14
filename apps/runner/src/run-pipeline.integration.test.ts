@@ -12,7 +12,7 @@ import type { Address } from "viem";
 import { agoraGovernorAbi, taskLedgerAbi } from "@fleet/abi";
 import { ExperimentConfigV1 } from "@fleet/schemas";
 import { anvilDevKey, DEMO_ACCOUNT_INDEX } from "./anvil-keys.js";
-import { manifestPathsForRun, runExperiment } from "./pipeline/run-pipeline.js";
+import { experimentConfigHash, manifestPathsForRun, runExperiment } from "./pipeline/run-pipeline.js";
 import type { RunRecordDocument } from "./pipeline/record.js";
 import { JsonFileRunStore } from "./pipeline/state.js";
 import type { RunRecord } from "./pipeline/state.js";
@@ -203,6 +203,8 @@ describe.skipIf(!RUN_INTEGRATION)("fleet run (end to end, then resumed, on a fre
       const record = JSON.parse(readFileSync(recordPath, "utf8")) as RunRecordDocument;
       expect(record.proposals.length).toBe(1);
       expect(record.proposals[0]?.fixtureName).toBe("hf-replay");
+      // Final review I3: the hash covers the config the record actually stores.
+      expect(record.configHash).toBe(experimentConfigHash(record.config));
 
       const ledger = record.manifest.addresses.ledger as Address;
       const governor = record.manifest.addresses.governor as Address;

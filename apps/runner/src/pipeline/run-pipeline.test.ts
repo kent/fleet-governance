@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExperimentConfigV1, ManifestV1 } from "@fleet/schemas";
-import { loadRunKeysFromEnv, manifestPathsForRun, rehydrateRunCtx } from "./run-pipeline.js";
+import { experimentConfigHash, loadRunKeysFromEnv, manifestPathsForRun, rehydrateRunCtx } from "./run-pipeline.js";
 import type { RunPipelineCtx, RunPipelineOptions } from "./run-pipeline.js";
 import { MemoryRunStore } from "./state.js";
 
@@ -206,5 +206,40 @@ describe("rehydrateRunCtx (final review I1)", () => {
     expect(rehydrated.client).toBeNull();
     // Keys are always re-read from the environment: they never round trip through a checkpoint.
     expect(rehydrated.keys?.keeperKey).toBe(KEY(4));
+  });
+});
+
+describe("experimentConfigHash (final review I3)", () => {
+  const base = {
+    schema: "fleet.experiment.v1",
+    name: "local-hf-replay",
+    task: { charter: { goal: "make the tests pass", budget: { toolCalls: 200 } }, lifetime: 3600 },
+    scenario: { fixture: "hf-replay" },
+  };
+
+  it("changes when anything in the config changes, not just the name", () => {
+    const differentCharter = { ...base, task: { ...base.task, charter: { ...base.task.charter, goal: "do something else" } } };
+    const differentBudget = { ...base, task: { ...base.task, charter: { ...base.task.charter, budget: { toolCalls: 5 } } } };
+    const differentFixture = { ...base, scenario: { fixture: "legit-amendment" } };
+
+    expect(experimentConfigHash(differentCharter)).not.toBe(experimentConfigHash(base));
+    expect(experimentConfigHash(differentBudget)).not.toBe(experimentConfigHash(base));
+    expect(experimentConfigHash(differentFixture)).not.toBe(experimentConfigHash(base));
+  });
+
+  it("is the same for the same config whatever order its keys were written in", () => {
+    const reordered = {
+      scenario: { fixture: "hf-replay" },
+      task: { lifetime: 3600, charter: { budget: { toolCalls: 200 }, goal: "make the tests pass" } },
+      name: "local-hf-replay",
+      schema: "fleet.experiment.v1",
+    };
+    expect(experimentConfigHash(reordered)).toBe(experimentConfigHash(base));
+  });
+
+  it("is not the old schema-and-name-only hash", () => {
+    // The exact regression: hashing only {schema, name} made every config with this name equal.
+    const schemaAndNameOnly = { schema: base.schema, name: base.name };
+    expect(experimentConfigHash(base)).not.toBe(experimentConfigHash(schemaAndNameOnly));
   });
 });

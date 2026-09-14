@@ -86,6 +86,17 @@ export function loadRunKeysFromEnv(env: NodeJS.ProcessEnv, memberCount: number):
   };
 }
 
+/**
+ * `record.json`'s `configHash`, spec 12.4's "config and its hash". The hash covers the whole
+ * config the record stores. Final review I3: it used to cover only `{schema, name}`, so two runs
+ * of the same experiment name with different charters, budgets, governance numbers or fixtures
+ * produced identical hashes, and a reader could not tell that the stored config had been edited.
+ * The parsed config is plain JSON, so `canonicalize` takes it as is.
+ */
+export function experimentConfigHash(config: unknown): Hex {
+  return keccak256(toHex(canonicalize(config)));
+}
+
 /** The two manifest paths a run writes, spec section 8's layout: `latest.json` is the pointer the
  *  next deployment overwrites, and `run-<runId>.json` is this run's own copy, so a later
  *  `fleet capture` or a report can still name the exact manifest a given run deployed against
@@ -386,12 +397,11 @@ export function buildRunStages(env: NodeJS.ProcessEnv): readonly Stage<RunPipeli
 
     CAPTURED: async (ctx) => {
       if (!ctx.client || !ctx.manifest || !ctx.result) throw new Error("CAPTURED: missing prior stage output");
-      const configForHash = { schema: "fleet.experiment.v1" as const, name: ctx.experiment.name };
       const record = await buildRecord({
         client: ctx.client,
         runId: ctx.opts.runId,
         config: ctx.experiment,
-        configHash: keccak256(toHex(canonicalize(configForHash))),
+        configHash: experimentConfigHash(ctx.experiment),
         manifest: ctx.manifest,
         results: [ctx.result],
         timings: {},

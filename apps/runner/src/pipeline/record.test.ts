@@ -206,7 +206,32 @@ const RECEIPTS: Record<string, FakeReceipt> = {
   "0xpropose": { blockHash: "0xblockA", gasUsed: 100_000n, effectiveGasPrice: 1_000_000_000n },
   "0xvote1": { blockHash: "0xblockB", gasUsed: 80_000n, effectiveGasPrice: 1_000_000_000n },
   "0xvote2": { blockHash: "0xblockB", gasUsed: 80_000n, effectiveGasPrice: 1_000_000_000n },
+  // The guardian's pause/cancel/unpause and the delegation pre-steps emit no proposal event, so
+  // they appear in `fees[]` and nowhere in a decision trace (final review I7).
+  "0xguardianpause": { blockHash: "0xblockC", gasUsed: 50_000n, effectiveGasPrice: 1_000_000_000n },
+  "0xguardiancancel": { blockHash: "0xblockC", gasUsed: 60_000n, effectiveGasPrice: 1_000_000_000n },
+  // The same logical events, re-fetched after the Runner's database was deleted and the chain
+  // re-read: different transaction hashes and block numbers, same shape (M10).
+  "0xpropose-refetched": { blockHash: "0xblockA2", gasUsed: 111_000n, effectiveGasPrice: 2_000_000_000n },
+  "0xvote1-refetched": { blockHash: "0xblockB2", gasUsed: 88_000n, effectiveGasPrice: 2_000_000_000n },
+  "0xvote2-refetched": { blockHash: "0xblockB2", gasUsed: 88_000n, effectiveGasPrice: 2_000_000_000n },
 };
+
+/** `fakeTrace()`'s logical events as a different node would report them after a re-org-free
+ *  re-read from a fresh archive: same proposal, same voters, same reasons, different transaction
+ *  hashes and block numbers. Used to prove `captureFromChain` really re-derives rather than
+ *  echoing the record it was handed (final review M10). */
+function refetchedTrace(): DecisionTrace {
+  const base = fakeTrace();
+  return {
+    ...base,
+    events: base.events.map((e) => ({
+      ...e,
+      blockNumber: (e as { blockNumber: bigint }).blockNumber + 100n,
+      txHash: `${(e as { txHash: string }).txHash}-refetched`,
+    })) as DecisionTrace["events"],
+  };
+}
 
 describe("buildRecord", () => {
   it("assembles events with attached block hashes, votes with onchain reasons, fees, and metrics from fake fixture results", async () => {
@@ -340,5 +365,81 @@ describe("captureFromChain", () => {
     const refetched = await captureFromChain(client, original, async () => fakeTrace());
     const absentRefetched = refetched.votes.find((v) => v.agentId === 3);
     expect(absentRefetched).toEqual(absentOriginal);
+  });
+});
+
+describe("captureFromChain: fees and re-derivation", () => {
+  it("keeps fee receipts for transactions no proposal event mentions (final review I7)", async () => {
+    // The guardian's pause and cancel are real, chain-derived fees on the live record, and they
+    // emit nothing a decision trace carries. Rebuilding `fees[]` from the trace alone dropped
+    // them, so `fleet capture --from-chain` did not reproduce the chain-derived record and the
+    // report's total transaction fees fell accordingly (spec 12.4).
+    const client = fakeClient(RECEIPTS);
+    const guardianFees = [
+      { txHash: "0xguardianpause" as const, gasUsed: "50000", effectiveGasPrice: "1000000000", feeWei: (50_000n * 1_000_000_000n).toString() },
+      { txHash: "0xguardiancancel" as const, gasUsed: "60000", effectiveGasPrice: "1000000000", feeWei: (60_000n * 1_000_000_000n).toString() },
+    ];
+    const resultWithGuardian: FixtureRunResult = {
+      ...fakeFixtureRunResult(),
+      fees: [...fakeFixtureRunResult().fees, ...guardianFees] as FixtureRunResult["fees"],
+    };
+    const original = await buildRecord({
+      client,
+      runId: "run-1",
+      config: {},
+      configHash: `0x${"66".repeat(32)}`,
+      manifest,
+      results: [resultWithGuardian],
+      timings: {},
+      versions: {},
+    });
+    expect(original.fees.length).toBe(5);
+
+    const refetched = await captureFromChain(client, original, async () => fakeTrace());
+
+    const sortHashes = (arr: typeof original.fees) => arr.map((f) => f.txHash).sort();
+    expect(sortHashes(refetched.fees)).toEqual(sortHashes(original.fees));
+    const guardianFee = refetched.fees.find((f) => f.txHash === "0xguardiancancel");
+    expect(guardianFee?.feeWei).toBe((60_000n * 1_000_000_000n).toString());
+  });
+
+  it("re-derives events, votes and fees from the trace it is given, never echoing the record", async () => {
+    // Final review M10: both sides of the old assertion came from the same `fakeTrace()` factory,
+    // so an implementation that copied `existing` verbatim would have passed. This one hands the
+    // re-capture the same logical events with different transaction hashes and block numbers.
+    const client = fakeClient(RECEIPTS);
+    const original = await buildRecord({
+      client,
+      runId: "run-1",
+      config: {},
+      configHash: `0x${"66".repeat(32)}`,
+      manifest,
+      results: [fakeFixtureRunResult()],
+      timings: {},
+      versions: {},
+    });
+
+    const refetched = await captureFromChain(client, original, async () => refetchedTrace());
+
+    expect(refetched.events.map((e) => e["txHash"]).sort()).toEqual(
+      ["0xpropose-refetched", "0xvote1-refetched", "0xvote2-refetched"].sort(),
+    );
+    expect(refetched.events.map((e) => String(e["blockNumber"])).sort()).toEqual(["105", "106", "106"].sort());
+    expect(refetched.events.find((e) => e["type"] === "ProposalCreated")?.blockHash).toBe("0xblockA2");
+
+    // Votes are re-keyed by voter, so the onchain reasons survive while the tx hashes move.
+    const vote1 = refetched.votes.find((v) => v.voterAddress === "0xagent1voter");
+    expect(vote1?.txHash).toBe("0xvote1-refetched");
+    expect(vote1?.onchainReason).toBe("FOR. because reasons");
+    expect(vote1?.agentId).toBe(1);
+
+    // Fees come from the re-fetched receipts, not from the record's own numbers.
+    const refetchedFee = refetched.fees.find((f) => f.txHash === "0xvote1-refetched");
+    expect(refetchedFee?.effectiveGasPrice).toBe("2000000000");
+    expect(refetchedFee?.feeWei).toBe((88_000n * 2_000_000_000n).toString());
+    // The original three transactions are still represented: their hashes are in `existing.fees`.
+    expect(refetched.fees.map((f) => f.txHash).sort()).toEqual(
+      ["0xpropose", "0xpropose-refetched", "0xvote1", "0xvote1-refetched", "0xvote2", "0xvote2-refetched"].sort(),
+    );
   });
 });

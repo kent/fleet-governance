@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { keccak256, toHex } from "viem";
 import type { CharterV1 } from "@fleet/schemas";
@@ -96,6 +96,15 @@ export async function runDemo(opts: DemoOptions): Promise<DemoOutcome> {
   const start = Date.now();
   const log = opts.log ?? (() => {});
   const runId = `demo-${start}`;
+
+  // `--fresh-anvil` asserts the target chain has no prior deployment worth preserving, so a
+  // manifest left at the output path by an earlier demo describes contracts that no longer exist:
+  // `deployFleet` is idempotent on a matching configHash and would reuse it, and every later stage
+  // would then call into empty addresses. Removing it first is what the flag already means.
+  if (opts.freshAnvil && existsSync(opts.manifestOutPath)) {
+    log(`demo: --fresh-anvil, discarding the stale manifest at ${opts.manifestOutPath}`);
+    rmSync(opts.manifestOutPath, { force: true });
+  }
 
   const { manifest } = await deployFleet({
     contractsDir: opts.contractsDir,

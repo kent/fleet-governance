@@ -343,6 +343,7 @@ export class Worker {
     await this.persist(key, { state: "REQUEST_SIGNATURE", publicReason: reason, vote, attempts });
 
     let txHash: Hex;
+    let nonce: number;
     try {
       const result = await this.cfg.signer.castVoteWithReason({
         proposalId,
@@ -350,11 +351,15 @@ export class Worker {
         reason,
       });
       txHash = result.txHash;
+      nonce = result.nonce;
     } catch (err) {
       return this.persist(key, { state: "worker_failed", lastError: errorMessage(err) });
     }
 
-    const submitted = await this.persist(key, { state: "SUBMIT", txHash });
+    // Spec 10.4 lists `nonce` among a job's fields and spec 10.8 says "persist intent, nonce, and
+    // hash before treating submission as complete". `FleetSigner` reserves and commits the nonce
+    // inside itself, so this is the only moment the worker can learn it (final review I6).
+    const submitted = await this.persist(key, { state: "SUBMIT", txHash, nonce });
     return this.confirmAndReconcile(submitted);
   }
 

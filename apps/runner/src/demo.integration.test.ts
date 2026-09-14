@@ -125,6 +125,13 @@ function sortVotesForComparison(votes: RunRecordDocument["votes"]): RunRecordDoc
   return [...votes].sort((a, b) => `${a.proposalId}:${a.voterAddress}`.localeCompare(`${b.proposalId}:${b.voterAddress}`));
 }
 
+/** Fee receipts are chain-derived (spec 12.4), so a re-capture has to reproduce them exactly,
+ *  including the ones for transactions no proposal event mentions: the delegation pre-steps and
+ *  the guardian's pause, cancel and unpause (final review I7). */
+function sortFeesForComparison(fees: RunRecordDocument["fees"]): RunRecordDocument["fees"] {
+  return [...fees].sort((a, b) => a.txHash.localeCompare(b.txHash));
+}
+
 describe.skipIf(!RUN_INTEGRATION)("fleet demo (end to end, fresh Anvil)", () => {
   let anvil: AnvilHandle;
   let reportDir: string;
@@ -192,6 +199,18 @@ describe.skipIf(!RUN_INTEGRATION)("fleet demo (end to end, fresh Anvil)", () => 
         onchainReason: v.onchainReason,
       }));
       expect(recapturedVotes).toEqual(liveVotes);
+
+      const liveFees = sortFeesForComparison(liveRecord.fees);
+      const recapturedFees = sortFeesForComparison(recapturedRecord.fees);
+      expect(recapturedFees).toEqual(liveFees);
+
+      // `guardian-cancel` contributes a pause, a cancel and an unpause and `delegation-visible`
+      // two delegations, none of which appear in any decision trace, so a re-capture driven by
+      // the traces alone would come back with strictly fewer fee entries than the live record.
+      expect(recapturedFees.length).toBe(liveFees.length);
+      expect(liveFees.length).toBeGreaterThan(
+        liveRecord.events.reduce((set, e) => set.add(String(e["txHash"]).toLowerCase()), new Set<string>()).size,
+      );
     },
     600_000,
   );

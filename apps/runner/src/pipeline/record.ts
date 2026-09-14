@@ -203,6 +203,19 @@ export async function buildRecord(opts: {
   };
 }
 
+/** Reads one transaction's receipt from chain and turns it into a `FeeEntry`. Every value is read
+ *  back from the chain, never copied from the record being re-captured. */
+async function feeFromChain(client: FleetClient, txHash: Hex): Promise<FeeEntry> {
+  const receipt = await client.publicClient.getTransactionReceipt({ hash: txHash });
+  const effectiveGasPrice = receipt.effectiveGasPrice ?? 0n;
+  return {
+    txHash,
+    gasUsed: receipt.gasUsed.toString(),
+    effectiveGasPrice: effectiveGasPrice.toString(),
+    feeWei: (receipt.gasUsed * effectiveGasPrice).toString(),
+  };
+}
+
 /**
  * `fleet capture --from-chain`: rebuilds only the chain-derived sections of an existing
  * `record.json` (`events[]`, `votes[]`'s `onchainReason`/`support`, and `fees[]`) purely from
@@ -210,6 +223,15 @@ export async function buildRecord(opts: {
  * never from `jobs[]` or any other locally-remembered bookkeeping. Everything else in the
  * document (`config`, `manifest`, `gatewayLog`, `jobs`, `timings`, `metrics`, `versions`) is kept
  * unchanged from `existing`.
+ *
+ * `fees[]` is the union of the transactions in the re-fetched traces and the transaction hashes
+ * the record already lists. Final review I7: rebuilding it from the trace alone silently dropped
+ * every fee receipt for a transaction that emits no proposal event, which is the delegation
+ * pre-steps and the guardian's pause, cancel and unpause, so a `guardian-cancel` re-capture lost
+ * three receipts and a `delegation-visible` re-capture lost two, and spec 12.4 requires the
+ * re-capture to "reproduce the chain-derived parts of the record exactly". Only the hashes come
+ * from the record; every value is re-read from the chain, so a fee entry is still chain-derived
+ * rather than copied.
  */
 export async function captureFromChain(
   client: FleetClient,
@@ -260,18 +282,20 @@ export async function captureFromChain(
     }
 
     for (const event of trace.events) {
-      const txHash = (event as { txHash: Hex }).txHash.toLowerCase();
-      if (feeCache.has(txHash)) continue;
-      feeCache.add(txHash);
-      const receipt = await client.publicClient.getTransactionReceipt({ hash: event.txHash });
-      const effectiveGasPrice = receipt.effectiveGasPrice ?? 0n;
-      fees.push({
-        txHash: event.txHash,
-        gasUsed: receipt.gasUsed.toString(),
-        effectiveGasPrice: effectiveGasPrice.toString(),
-        feeWei: (receipt.gasUsed * effectiveGasPrice).toString(),
-      });
+      const key = event.txHash.toLowerCase();
+      if (feeCache.has(key)) continue;
+      feeCache.add(key);
+      fees.push(await feeFromChain(client, event.txHash));
     }
+  }
+
+  // The transactions the record already knows about but no proposal event mentions: the delegation
+  // pre-steps and the guardian's pause, cancel and unpause (final review I7).
+  for (const existingFee of existing.fees) {
+    const key = existingFee.txHash.toLowerCase();
+    if (feeCache.has(key)) continue;
+    feeCache.add(key);
+    fees.push(await feeFromChain(client, existingFee.txHash));
   }
 
   return { ...existing, events, votes, fees };

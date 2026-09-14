@@ -80,6 +80,11 @@ function sameAddress(a: Address, b: Address): boolean {
   return a.toLowerCase() === b.toLowerCase();
 }
 
+/** What every `FleetSigner` write returns: the transaction hash, and the account nonce the signer
+ *  reserved and committed for it. Spec 10.4 and 10.8 both name `nonce` as something a job records
+ *  (`JobRecord.nonce`, `migrations/001_jobs.sql`), and the signer is the only place that knows it. */
+export type SubmittedTx = { txHash: Hex; nonce: number };
+
 /** A single planned contract call, described the same way regardless of which of `propose`,
  *  `castVoteWithReason`, or `delegate` built it. */
 export type PlannedCall = {
@@ -129,16 +134,67 @@ export function checkPolicy(policy: SignerPolicy, call: PlannedCall): void {
     throw new PolicyViolation("VALUE", `value ${call.value.toString()} is non-zero; FleetSigner never sends value`);
   }
 
+  let decodedArgs: readonly unknown[] | undefined;
   try {
     const decoded = decodeFunctionData({ abi: rule.abi, data: call.data });
     const reencoded = encodeFunctionData({ abi: rule.abi, functionName: decoded.functionName, args: decoded.args });
     if (reencoded.toLowerCase() !== call.data.toLowerCase()) {
       throw new Error("re-encoded calldata does not match the original bytes");
     }
+    decodedArgs = decoded.args;
   } catch (err) {
     throw new PolicyViolation(
       "RAW_CALLDATA",
       `calldata for ${rule.functionName} does not decode canonically: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  if (rule.functionName === "propose") {
+    checkProposeBatch(policy, decodedArgs);
+  }
+}
+
+/**
+ * The inner batch of a `propose` call. Final review I5: `checkPolicy` decoded and re-encoded the
+ * outer call, which for `propose` accepts any `(targets[], values[], calldatas[], description)`
+ * that round trips, while this type's own doc comment claimed a caller of `propose` "can never
+ * redirect a proposal at some other contract". That was true only because `FleetSigner.propose`
+ * builds `targets` itself, not because the gate checked it, so a future signing path that hands
+ * `checkPolicy` externally built calldata would have inherited no protection.
+ *
+ * Spec 15.1's proposal-admission row and `FleetHook` enforce the same rule onchain: exactly one
+ * action, targeting the ledger, zero value, canonical `recordDecision` calldata.
+ */
+function checkProposeBatch(policy: SignerPolicy, args: readonly unknown[] | undefined): void {
+  const targets = args?.[0] as readonly Address[] | undefined;
+  const values = args?.[1] as readonly bigint[] | undefined;
+  const calldatas = args?.[2] as readonly Hex[] | undefined;
+
+  if (!targets || !values || !calldatas || targets.length !== 1 || values.length !== 1 || calldatas.length !== 1) {
+    throw new PolicyViolation(
+      "RAW_CALLDATA",
+      `propose must carry exactly one action, got ${targets?.length ?? 0} targets, ${values?.length ?? 0} values, ${calldatas?.length ?? 0} calldatas`,
+    );
+  }
+
+  const target = targets[0]!;
+  if (!sameAddress(target, policy.ledger)) {
+    throw new PolicyViolation(
+      "TARGET",
+      `propose's inner target ${target} is not the policy's ledger (expected ${policy.ledger})`,
+    );
+  }
+
+  if (values[0] !== 0n) {
+    throw new PolicyViolation("VALUE", `propose's inner value ${values[0]!.toString()} is non-zero; FleetSigner never sends value`);
+  }
+
+  try {
+    decodeRecordDecision(calldatas[0]!);
+  } catch (err) {
+    throw new PolicyViolation(
+      "RAW_CALLDATA",
+      `propose's inner calldata is not a canonical TaskLedger.recordDecision call: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
@@ -189,8 +245,12 @@ export class FleetSigner {
   }
 
   /** Runs `checkPolicy`, simulates, reserves a nonce, sends, and commits/releases it. Shared by
-   *  all three public writes; each supplies its own already-encoded, already-size-checked call. */
-  private async simulateAndSend(call: { target: Address; abi: Abi; functionName: string; args: readonly unknown[]; data: Hex }): Promise<Hex> {
+   *  all three public writes; each supplies its own already-encoded, already-size-checked call.
+   *  Returns the reservation's nonce alongside the hash: spec 10.4 lists `nonce` among a job's
+   *  fields and spec 10.8 says "persist intent, nonce, and hash before treating submission as
+   *  complete", and until this wave the signer reserved and committed the nonce inside itself and
+   *  returned only the hash, so `JobRecord.nonce` was structurally always null (final review I6). */
+  private async simulateAndSend(call: { target: Address; abi: Abi; functionName: string; args: readonly unknown[]; data: Hex }): Promise<SubmittedTx> {
     checkPolicy(this.policy, { chainId: this.policy.chainId, target: call.target, value: 0n, data: call.data });
 
     let request: Record<string, unknown>;
@@ -217,7 +277,7 @@ export class FleetSigner {
         ...(this.policy.maxGas !== undefined ? { gas: this.policy.maxGas } : {}),
       } as never);
       await reservation.commit(txHash);
-      return txHash;
+      return { txHash, nonce: reservation.nonce };
     } catch (err) {
       reservation.release();
       throw err;
@@ -235,7 +295,7 @@ export class FleetSigner {
     newCharterText: string;
     summary: string;
     description: string;
-  }): Promise<{ txHash: Hex; proposalId: bigint }> {
+  }): Promise<SubmittedTx & { proposalId: bigint }> {
     assertSize("description", input.description, 1, 4096);
     assertSize("newCharterText", input.newCharterText, 0, 8192);
     // TaskLedger (and the spec) only bound summary from above ("at most 1,024 bytes"); an empty
@@ -277,7 +337,7 @@ export class FleetSigner {
       functionName: "propose",
       args: [targets, values, calldatas, input.description],
     });
-    const txHash = await this.simulateAndSend({
+    const submitted = await this.simulateAndSend({
       target: this.policy.governor,
       abi: agoraGovernorAbi as Abi,
       functionName: "propose",
@@ -285,10 +345,10 @@ export class FleetSigner {
       data,
     });
 
-    return { txHash, proposalId };
+    return { ...submitted, proposalId };
   }
 
-  async castVoteWithReason(input: { proposalId: bigint; support: 0 | 1 | 2; reason: string }): Promise<{ txHash: Hex }> {
+  async castVoteWithReason(input: { proposalId: bigint; support: 0 | 1 | 2; reason: string }): Promise<SubmittedTx> {
     assertSize("reason", input.reason, 1, 1024);
     await this.assertChain();
 
@@ -297,27 +357,25 @@ export class FleetSigner {
       functionName: "castVoteWithReason",
       args: [input.proposalId, input.support, input.reason],
     });
-    const txHash = await this.simulateAndSend({
+    return this.simulateAndSend({
       target: this.policy.governor,
       abi: agoraGovernorAbi as Abi,
       functionName: "castVoteWithReason",
       args: [input.proposalId, input.support, input.reason],
       data,
     });
-    return { txHash };
   }
 
-  async delegate(delegatee: Address): Promise<{ txHash: Hex }> {
+  async delegate(delegatee: Address): Promise<SubmittedTx> {
     await this.assertChain();
 
     const data = encodeFunctionData({ abi: fleetVotesAbi, functionName: "delegate", args: [delegatee] });
-    const txHash = await this.simulateAndSend({
+    return this.simulateAndSend({
       target: this.policy.token,
       abi: fleetVotesAbi as Abi,
       functionName: "delegate",
       args: [delegatee],
       data,
     });
-    return { txHash };
   }
 }
