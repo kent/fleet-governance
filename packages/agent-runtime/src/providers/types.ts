@@ -94,7 +94,7 @@ function repairedUserPrompt(originalUser: string, raw: string, schema: z.ZodType
  * failure on the first attempt is returned as-is; those are not schema problems, so a repair
  * prompt cannot help with them.
  */
-export async function withOneRepair<T>(p: Provider, req: CompleteRequest<T>): ReturnType<Provider["complete"]> {
+export async function withOneRepair<T>(p: Provider, req: CompleteRequest<T>): Promise<CompleteResult<T>> {
   const first = await p.complete(req);
   if (first.ok || first.error !== "malformed") {
     return first;

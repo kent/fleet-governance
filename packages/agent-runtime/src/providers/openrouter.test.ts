@@ -307,7 +307,8 @@ describe("OpenRouterProvider (against a local fake HTTP server)", () => {
     const jsonSchema = (responseFormat.json_schema as Record<string, unknown>).schema as Record<string, unknown>;
     expect((jsonSchema.required as string[]).sort()).toEqual(["confidenceBps", "rationale", "schema", "support"]);
     const confidenceBpsSchema = (jsonSchema.properties as Record<string, Record<string, unknown>>).confidenceBps;
-    expect(confidenceBpsSchema.type).toEqual(["integer", "null"]);
+    expect(confidenceBpsSchema).toBeDefined();
+    expect(confidenceBpsSchema?.type).toEqual(["integer", "null"]);
 
     expect(result.ok).toBe(true);
     if (result.ok) {

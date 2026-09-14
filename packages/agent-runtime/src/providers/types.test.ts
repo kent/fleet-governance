@@ -17,8 +17,18 @@ function baseReq(overrides: Partial<CompleteRequest<Schema>> = {}): CompleteRequ
   };
 }
 
-function fakeProvider(complete: Provider["complete"]): Provider {
-  return { name: "scripted", complete };
+/**
+ * `Provider.complete` is a genuinely generic method (`<T>(req: CompleteRequest<T>) =>
+ * Promise<CompleteResult<T>>`, callable with any `T`); every mock in this file is monomorphic,
+ * bound to this file's one `Schema`, which is not structurally assignable to that fully generic
+ * signature (TypeScript correctly rejects it: the target must work for an arbitrary `T`, not only
+ * `Schema`). `fakeProvider` itself stays generic so each call site infers `T` from the mock it is
+ * given, and the one narrow cast back to `Provider["complete"]` is safe here because every test
+ * in this file only ever drives `withOneRepair` with a `CompleteRequest<Schema>` (`baseReq()`), so
+ * `complete` is in practice never invoked with any other `T`.
+ */
+function fakeProvider<T>(complete: (req: CompleteRequest<T>) => Promise<CompleteResult<T>>): Provider {
+  return { name: "scripted", complete: complete as Provider["complete"] };
 }
 
 describe("withOneRepair", () => {
