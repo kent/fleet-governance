@@ -13,9 +13,13 @@
 # missing "fleet" key is a type error (Next's dev server does not
 # type-check, which is why nothing surfaced), and at runtime
 # getParticipationSource() (src/lib/participation.ts line 12) falls back to
-# [] and returns "none", so delegate participation renders empty on
-# /delegates and on every delegate card. The fleet reads its proposals from
-# DAO Node like every other onchain-governor tenant here. See
+# [] and returns "none" instead of "dao-node", which is what gates the
+# DAO-node delegate-stats fetch behind DelegateCardHeader. Nothing visible
+# changes today, since that header also needs the "show-participation" UI
+# toggle the fleet tenant does not enable, but the entry is the correct
+# registration and turning that toggle on later would otherwise have shown
+# no participation with no error. The fleet reads its proposals from DAO
+# Node like every other onchain-governor tenant here. See
 # docs/compatibility-notes.md, "Final review fixes".
 #
 diff --git a/prisma/schema.prisma b/prisma/schema.prisma

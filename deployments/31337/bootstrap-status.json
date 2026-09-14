@@ -1,0 +1,96 @@
+{
+  "generated_at": "2026-09-14T10:44:08Z",
+  "manifest": "deployments/31337/latest.json",
+  "chain_id": 31337,
+  "deployment_block": 3,
+  "addresses": {
+    "governor": "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707",
+    "hook": "0xA8d43557A9D305D0B2F98BfEbe07dC0A8DB522c0",
+    "ledger": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
+    "registry": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+    "timelock": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+    "token": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+  },
+  "offline": true,
+  "compose_files": [
+    "infra/docker-compose.yml",
+    "infra/docker-compose.offline.yml"
+  ],
+  "endpoints": {
+    "anvil": "http://localhost:8545",
+    "postgres": "postgres://agora:agora@localhost:55432/agora_web3",
+    "dao_node": "http://localhost:8000",
+    "cpls": "http://localhost:8001",
+    "fake_gcs": "http://localhost:4443",
+    "agora_next": "http://localhost:3000"
+  },
+  "readiness_waited_on": [
+    "http://localhost:8545 (cast chain-id)",
+    "postgres (compose healthcheck)",
+    "http://localhost:8000/v1/progress",
+    "http://localhost:8001/health",
+    "http://localhost:3000/proposals"
+  ],
+  "cpls_job_payload": {
+    "type": "sync_daonode",
+    "payload": {
+      "infra_dao_slug": "fleet",
+      "logic": "refresh_list",
+      "sources": [
+        "dao_node"
+      ],
+      "reset": true,
+      "config": {
+        "schema": "fleet",
+        "dao_slug": "FLEET",
+        "index_tenant_prefix": "fleet",
+        "features": {
+          "oodao": false,
+          "snapshot_proposals": false,
+          "dao_node_proposals": true
+        },
+        "deployment": {
+          "chain_id": 31337,
+          "gov": {
+            "address": "0x5fc8d32690cc91d4c39d9d3abcbd16989f875707"
+          },
+          "token": {
+            "address": "0x5fc8d32690cc91d4c39d9d3abcbd16989f875707"
+          }
+        }
+      }
+    }
+  },
+  "proposals": [
+    {
+      "outcome": "succeed",
+      "task_id": "1",
+      "proposal_id": "107527385984923766767650463693504513028928175055284733252656629127126744840522",
+      "onchain_state": 7,
+      "agora_next_status": "EXECUTED",
+      "votes": {
+        "for": "3000000000000000000",
+        "against": "2000000000000000000",
+        "abstain": "0"
+      },
+      "onchain_quorum": "3000000000000000000",
+      "ledger_exception_version": 1,
+      "agora_next_url": "http://localhost:3000/proposals/107527385984923766767650463693504513028928175055284733252656629127126744840522"
+    },
+    {
+      "outcome": "defeat",
+      "task_id": "2",
+      "proposal_id": "1234815454210672144307935330386813030129481955449961394163445890448824135437",
+      "onchain_state": 3,
+      "agora_next_status": "DEFEATED",
+      "votes": {
+        "for": "2000000000000000000",
+        "against": "3000000000000000000",
+        "abstain": "0"
+      },
+      "onchain_quorum": "3000000000000000000",
+      "ledger_exception_version": 0,
+      "agora_next_url": "http://localhost:3000/proposals/1234815454210672144307935330386813030129481955449961394163445890448824135437"
+    }
+  ]
+}

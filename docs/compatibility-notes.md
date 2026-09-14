@@ -2273,11 +2273,19 @@ src/lib/constants.ts(253,14): error TS2741: Property 'fleet' is missing in type
 add a `fleet` entry to. Next.js's dev server does not type-check, so nothing
 surfaced. At runtime `getParticipationSource()`
 (`src/lib/participation.ts` line 12) reads
-`TENANT_PROPOSAL_SOURCES[namespace] ?? []`, so for fleet it fell through to
-`"none"`, and `/delegates` plus every delegate card rendered no
-participation data at all rather than the DAO-node-sourced figures.
-`fleet: ["dao-node"]` added to patch 0001, which also makes the tree
-type-clean.
+`TENANT_PROPOSAL_SOURCES[namespace] ?? []`, so for fleet it returned
+`"none"` instead of `"dao-node"`, which is what gates the DAO-node
+delegate-stats fetch behind `DelegateCardHeader`.
+
+Nothing visible changes today: that header also requires the
+`show-participation` UI toggle, which the fleet tenant config does not
+enable, so it renders nothing either way, and `fetchArchiveParticipation`
+returns null for any tenant that is not `archive-eas-oodao`. Checked
+directly after the fix: `/delegates` renders the five members with their
+voting power, the same as before. The entry is still the correct
+registration, it is the only type error in the tree, and turning
+`show-participation` on for fleet later would otherwise have shown no
+participation with no error. `fleet: ["dao-node"]` added to patch 0001.
 
 ### Machine-readable handoff: `deployments/31337/bootstrap-status.json`
 

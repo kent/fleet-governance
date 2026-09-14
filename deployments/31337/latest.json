@@ -26,7 +26,7 @@
   "countingRule": "for-only-quorum",
   "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
   "deploymentBlock": 3,
-  "deploymentTimestamp": 1789376045,
+  "deploymentTimestamp": 1789382197,
   "guardian": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
   "hookPermissionMask": "0x22C0",
   "hookSalt": "0x000000000000000000000000000000000000000000000000000000000003a07f",
