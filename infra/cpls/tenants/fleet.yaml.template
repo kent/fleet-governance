@@ -1,0 +1,24 @@
+# Rendered to $TENANT_CONFIG_PATH/fleet.yaml by infra/cpls/entrypoint.sh via
+# envsubst. Shape matches vendor/cpls/DOCUMENTATION.md's "Expected Tenant
+# Config Structure" and what cpls/config.py's load_tenant_configs() and
+# cpls/sync_daonode.py's DaoNodeSync.__init__ read: schema, dao_slug,
+# index_tenant_prefix, features, and deployments.<DEPLOYMENT>.{chain_id,
+# gov.address, token.address}. The file's stem ("fleet") is the tenant slug
+# CPLS keys everything by, and must match INFRA_DAO_SLUGS and this file's
+# own schema: value.
+schema: fleet
+dao_slug: FLEET
+index_tenant_prefix: fleet
+
+features:
+  oodao: false
+  snapshot_proposals: false
+  dao_node_proposals: true
+
+deployments:
+  ${CONTRACT_DEPLOYMENT}:
+    chain_id: ${CHAIN_ID}
+    gov:
+      address: '${GOVERNOR_ADDRESS}'
+    token:
+      address: '${TOKEN_ADDRESS}'

@@ -1,0 +1,50 @@
+# 0006: set voting_module_name for a plain agora v2 propose() proposal
+#
+# app/data_products.py's Proposals._handle_ProposalCreated only calls
+# proposal.set_voting_module_name(...) from two places: the
+# PROPOSAL_CREATED_MODULE branch (approval/optimistic voting modules) and,
+# for a non-agora governor, an unconditional 'standard' default. An agora
+# v2 governor's plain ProposalCreated event (the only kind Fleet Governance
+# v1 ever emits: it calls the base propose(), never a voting module) fell
+# through neither: it only got proposal.set_proposal_type(...) called, so
+# proposal.voting_module_name was never set at all, and to_dict() (which
+# just returns proposal.create_event) never carried a 'voting_module_name'
+# key for such a proposal's JSON response.
+#
+# This module's own downstream reads are defensive (hasattr() checks, see
+# the two sites right below this one), but cpls/sync_daonode.py's
+# refresh_list is not: it reads
+# `approval = proposal['voting_module_name'] == 'approval'` as a plain
+# dict lookup, which raised KeyError and aborted the whole sync for any
+# fleet proposal (this is upstream's own gap; fleet's plain propose()-only
+# usage is just the first thing in this repository's testing that actually
+# exercises the "agora v2, no voting module" combination). 'standard'
+# matches the non-agora else branch's own default for the same case.
+#
+# This patch's hunk is written against the file as it stands after patches
+# 0001-0005 are applied (not the pristine vendor file), so it applies
+# without a fuzzy-context offset.
+#
+--- a/app/data_products.py	2026-09-14 04:01:36
++++ b/app/data_products.py	2026-09-14 04:01:36
+@@ -876,6 +876,20 @@
+                         marker = '#proposalTypeId='
+                         proposal_type = int(description.split(marker)[1].split('#')[0]) if marker in description else 0
+                         proposal.set_proposal_type(proposal_type)
++                        # A plain propose() call (the only path Fleet Governance
++                        # v1 uses, and the only one upstream leaves untested
++                        # here) never goes through the PROPOSAL_CREATED_MODULE
++                        # branch above, which is the only other place that
++                        # calls set_voting_module_name for an agora v2
++                        # governor. Every downstream reader that keys off
++                        # 'voting_module_name' (CPLS's cpls/sync_daonode.py's
++                        # refresh_list unconditionally reads
++                        # proposal['voting_module_name'], not through
++                        # hasattr()/.get()) needs it set, not just this
++                        # module's own defensive hasattr() checks; 'standard'
++                        # matches the non-agora else branch below for the
++                        # same "no real voting module" case.
++                        proposal.set_voting_module_name('standard')
+                     elif self.gov_spec['name'] == 'agora':
+                         # Older PTC Contracts didn't fully describe themselves, so we 
+                         # this is a hack.

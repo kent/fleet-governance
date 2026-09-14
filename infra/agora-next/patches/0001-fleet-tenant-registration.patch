@@ -1,0 +1,339 @@
+# 0001: register "fleet" as a tenant
+#
+# One-line registration edits to existing upstream files: new `case` arms
+# keyed on the "fleet" namespace, the datasource schema list, and the
+# TENANT_NAMESPACES entry itself. Everything that can live in a new file
+# instead (the tenant's contracts/UI config, ABIs, Prisma views, assets)
+# is in infra/agora-next/overlay/ rather than here. See
+# docs/compatibility-notes.md, Task 5, for the exact edit points.
+#
+# TENANT_PROPOSAL_SOURCES (src/lib/constants.ts) was added in the final
+# review fix wave, not with the rest: it was the one registration point
+# missed. It is typed Record<TenantNamespace, readonly string[]>, so a
+# missing "fleet" key is a type error (Next's dev server does not
+# type-check, which is why nothing surfaced), and at runtime
+# getParticipationSource() (src/lib/participation.ts line 12) falls back to
+# [] and returns "none" instead of "dao-node", which is what gates the
+# DAO-node delegate-stats fetch behind DelegateCardHeader. Nothing visible
+# changes today, since that header also needs the "show-participation" UI
+# toggle the fleet tenant does not enable, but the entry is the correct
+# registration and turning that toggle on later would otherwise have shown
+# no participation with no error. The fleet reads its proposals from DAO
+# Node like every other onchain-governor tenant here. See
+# docs/compatibility-notes.md, "Final review fixes".
+#
+diff --git a/prisma/schema.prisma b/prisma/schema.prisma
+index 98f7ba1..d7c8110 100644
+--- a/prisma/schema.prisma
++++ b/prisma/schema.prisma
+@@ -7,7 +7,7 @@ generator client {
+ datasource db {
+   provider = "postgresql"
+   url      = env("DATABASE_URL")
+-  schemas = ["agora", "alltenant", "boost", "config", "cyber", "derive", "ens", "etherfi", "optimism", "pguild", "retro_funding", "snapshot", "scroll", "syndicate", "uniswap", "xai", "b3", "demo", "linea", "towns", "demo2", "demo4", "demo3"]
++  schemas = ["agora", "alltenant", "boost", "config", "cyber", "derive", "ens", "etherfi", "optimism", "pguild", "retro_funding", "snapshot", "scroll", "syndicate", "uniswap", "xai", "b3", "demo", "linea", "towns", "demo2", "demo4", "demo3", "fleet"]
+ }
+ 
+ enum stage_status {
+diff --git a/src/lib/constants.ts b/src/lib/constants.ts
+index be245cc..b1f0f65 100644
+--- a/src/lib/constants.ts
++++ b/src/lib/constants.ts
+@@ -63,6 +63,7 @@
+   DEMO4: "demo4",
+   DEMO3: "demo3",
+   SHAPE: "shape",
++  FLEET: "fleet",
+ } as const;
+ 
+ // SIWE localStorage keys
+@@ -273,6 +274,12 @@
+   demo4: ["dao-node"],
+   demo3: ["dao-node"],
+   shape: [],
++  // The fleet reads proposals from DAO Node (via CPLS's archive), like
++  // every other onchain-governor tenant here. Without this entry
++  // getParticipationSource() falls through to "none" and delegate
++  // participation renders empty; TENANT_PROPOSAL_SOURCES is typed
++  // Record<TenantNamespace, ...>, so omitting it is also a type error.
++  fleet: ["dao-node"],
+ };
+ 
+ // EAS Voting Types for governorless voting
+diff --git a/src/lib/prismaUtils.ts b/src/lib/prismaUtils.ts
+index e03793e..c0f84c1 100644
+--- a/src/lib/prismaUtils.ts
++++ b/src/lib/prismaUtils.ts
+@@ -41,6 +41,8 @@ export function findDelagatee({
+       return prismaWeb3Client.xaiDelegatees.findFirst(condition);
+     case TENANT_NAMESPACES.B3:
+       return prismaWeb3Client.b3Delegatees.findFirst(condition);
++    case TENANT_NAMESPACES.FLEET:
++      return prismaWeb3Client.fleetDelegatees.findFirst(condition);
+     case TENANT_NAMESPACES.DEMO:
+     case TENANT_NAMESPACES.SHAPE:
+     case TENANT_NAMESPACES.OG:
+@@ -103,6 +105,8 @@ export function findAdvancedDelegatee({
+       return prismaWeb3Client.xaiAdvancedDelegatees.findMany(condition);
+     case TENANT_NAMESPACES.B3:
+       return prismaWeb3Client.b3AdvancedDelegatees.findMany(condition);
++    case TENANT_NAMESPACES.FLEET:
++      return prismaWeb3Client.fleetAdvancedDelegatees.findMany(condition);
+     case TENANT_NAMESPACES.DEMO:
+     case TENANT_NAMESPACES.SHAPE:
+     case TENANT_NAMESPACES.OG:
+@@ -162,6 +166,8 @@ export function findVotableSupply({
+       return prismaWeb3Client.xaiVotableSupply.findFirst(condition);
+     case TENANT_NAMESPACES.B3:
+       return prismaWeb3Client.b3VotableSupply.findFirst({});
++    case TENANT_NAMESPACES.FLEET:
++      return prismaWeb3Client.fleetVotableSupply.findFirst({});
+     case TENANT_NAMESPACES.DEMO:
+     case TENANT_NAMESPACES.SHAPE:
+     case TENANT_NAMESPACES.OG:
+@@ -221,6 +227,8 @@ export function findSnapshotProposalsQueryFromDb({
+       return prismaWeb3Client.xaiProposals.findMany(condition);
+     case TENANT_NAMESPACES.B3:
+       return prismaWeb3Client.b3Proposals.findMany(condition);
++    case TENANT_NAMESPACES.FLEET:
++      return prismaWeb3Client.fleetProposals.findMany(condition);
+     case TENANT_NAMESPACES.DEMO:
+     case TENANT_NAMESPACES.SHAPE:
+     case TENANT_NAMESPACES.OG:
+@@ -329,6 +337,8 @@ export function findProposalsQueryFromDB({
+       return prismaWeb3Client.xaiProposals.findMany(condition);
+     case TENANT_NAMESPACES.B3:
+       return prismaWeb3Client.b3Proposals.findMany(condition);
++    case TENANT_NAMESPACES.FLEET:
++      return prismaWeb3Client.fleetProposals.findMany(condition);
+     case TENANT_NAMESPACES.DEMO:
+     case TENANT_NAMESPACES.SHAPE:
+     case TENANT_NAMESPACES.OG:
+@@ -387,6 +397,8 @@ export function findProposal({
+       return prismaWeb3Client.xaiProposals.findFirst(condition);
+     case TENANT_NAMESPACES.B3:
+       return prismaWeb3Client.b3Proposals.findFirst(condition);
++    case TENANT_NAMESPACES.FLEET:
++      return prismaWeb3Client.fleetProposals.findFirst(condition);
+     case TENANT_NAMESPACES.DEMO:
+     case TENANT_NAMESPACES.SHAPE:
+     case TENANT_NAMESPACES.OG:
+@@ -443,6 +455,8 @@ export function findProposalsByIds({
+       return prismaWeb3Client.xaiProposals.findMany(condition);
+     case TENANT_NAMESPACES.B3:
+       return prismaWeb3Client.b3Proposals.findMany(condition);
++    case TENANT_NAMESPACES.FLEET:
++      return prismaWeb3Client.fleetProposals.findMany(condition);
+     case TENANT_NAMESPACES.DEMO:
+     case TENANT_NAMESPACES.SHAPE:
+     case TENANT_NAMESPACES.OG:
+@@ -509,6 +523,8 @@ export function findOffchainProposal({
+       return prismaWeb3Client.xaiProposals.findFirst(condition);
+     case TENANT_NAMESPACES.B3:
+       return prismaWeb3Client.b3Proposals.findFirst(condition);
++    case TENANT_NAMESPACES.FLEET:
++      return prismaWeb3Client.fleetProposals.findFirst(condition);
+     case TENANT_NAMESPACES.DEMO:
+     case TENANT_NAMESPACES.SHAPE:
+     case TENANT_NAMESPACES.OG:
+@@ -568,6 +584,8 @@ export function findOffchainProposalsByOnchainIds({
+       return prismaWeb3Client.xaiProposals.findMany(condition);
+     case TENANT_NAMESPACES.B3:
+       return prismaWeb3Client.b3Proposals.findMany(condition);
++    case TENANT_NAMESPACES.FLEET:
++      return prismaWeb3Client.fleetProposals.findMany(condition);
+     case TENANT_NAMESPACES.DEMO:
+     case TENANT_NAMESPACES.SHAPE:
+     case TENANT_NAMESPACES.OG:
+@@ -620,6 +638,8 @@ export function findProposalType({
+       return prismaWeb3Client.xaiProposalTypes.findMany(condition);
+     case TENANT_NAMESPACES.B3:
+       return prismaWeb3Client.b3ProposalTypes.findMany(condition);
++    case TENANT_NAMESPACES.FLEET:
++      return prismaWeb3Client.fleetProposalTypes.findMany(condition);
+     case TENANT_NAMESPACES.DEMO:
+     case TENANT_NAMESPACES.SHAPE:
+     case TENANT_NAMESPACES.OG:
+@@ -678,6 +698,8 @@ export function findVotes({
+       return prismaWeb3Client.xaiVotes.findMany(condition);
+     case TENANT_NAMESPACES.B3:
+       return prismaWeb3Client.b3Votes.findMany(condition);
++    case TENANT_NAMESPACES.FLEET:
++      return prismaWeb3Client.fleetVotes.findMany(condition);
+     case TENANT_NAMESPACES.DEMO:
+     case TENANT_NAMESPACES.SHAPE:
+     case TENANT_NAMESPACES.OG:
+@@ -739,6 +761,8 @@ export function findVotingPower({
+       return prismaWeb3Client.xaiVotingPower.findFirst(condition);
+     case TENANT_NAMESPACES.B3:
+       return prismaWeb3Client.b3VotingPower.findFirst(condition);
++    case TENANT_NAMESPACES.FLEET:
++      return prismaWeb3Client.fleetVotingPower.findFirst(condition);
+     case TENANT_NAMESPACES.DEMO:
+     case TENANT_NAMESPACES.SHAPE:
+     case TENANT_NAMESPACES.OG:
+@@ -791,6 +815,8 @@ export function findAdvancedVotingPower({
+       return prismaWeb3Client.xaiAdvancedVotingPower.findFirst(condition);
+     case TENANT_NAMESPACES.B3:
+       return prismaWeb3Client.b3AdvancedVotingPower.findFirst(condition);
++    case TENANT_NAMESPACES.FLEET:
++      return prismaWeb3Client.fleetAdvancedVotingPower.findFirst(condition);
+     case TENANT_NAMESPACES.DEMO:
+     case TENANT_NAMESPACES.SHAPE:
+     case TENANT_NAMESPACES.OG:
+@@ -849,6 +875,8 @@ export async function findStakedDeposit({
+       return prismaWeb3Client.xaiStakedDeposits.findFirst(condition);
+     case TENANT_NAMESPACES.B3:
+       return prismaWeb3Client.b3StakedDeposits.findFirst(condition);
++    case TENANT_NAMESPACES.FLEET:
++      return prismaWeb3Client.fleetStakedDeposits.findFirst(condition);
+     case TENANT_NAMESPACES.DEMO:
+     case TENANT_NAMESPACES.SHAPE:
+     case TENANT_NAMESPACES.OG:
+@@ -910,6 +938,8 @@ export function findStakedDeposits({
+       return prismaWeb3Client.xaiStakedDeposits.findMany(condition);
+     case TENANT_NAMESPACES.B3:
+       return prismaWeb3Client.b3StakedDeposits.findMany(condition);
++    case TENANT_NAMESPACES.FLEET:
++      return prismaWeb3Client.fleetStakedDeposits.findMany(condition);
+     case TENANT_NAMESPACES.DEMO:
+     case TENANT_NAMESPACES.SHAPE:
+     case TENANT_NAMESPACES.OG:
+@@ -969,6 +999,8 @@ export function getProposalsCount({
+       return prismaWeb3Client.xaiProposals.count(condition);
+     case TENANT_NAMESPACES.B3:
+       return prismaWeb3Client.b3Proposals.count(condition);
++    case TENANT_NAMESPACES.FLEET:
++      return prismaWeb3Client.fleetProposals.count(condition);
+     case TENANT_NAMESPACES.DEMO:
+     case TENANT_NAMESPACES.SHAPE:
+     case TENANT_NAMESPACES.OG:
+diff --git a/src/lib/proposalUtils.ts b/src/lib/proposalUtils.ts
+index 7c351a9..bb7802a 100644
+--- a/src/lib/proposalUtils.ts
++++ b/src/lib/proposalUtils.ts
+@@ -1120,6 +1120,9 @@ export function getProposalCurrentQuorum(
+     case TENANT_NAMESPACES.UNISWAP:
+       return BigInt(proposalResults.for);
+ 
++    case TENANT_NAMESPACES.FLEET:
++      return BigInt(proposalResults.for);
++
+     case TENANT_NAMESPACES.SCROLL:
+       return (
+         BigInt(proposalResults.for) +
+diff --git a/src/lib/proposals/status/standard.ts b/src/lib/proposals/status/standard.ts
+index e9f85c0..1ebdaeb 100644
+--- a/src/lib/proposals/status/standard.ts
++++ b/src/lib/proposals/status/standard.ts
+@@ -77,6 +77,8 @@ function calculateQuorumNumber(
+   switch (namespace) {
+     case TENANT_NAMESPACES.UNISWAP:
+       return forVotes;
++    case TENANT_NAMESPACES.FLEET:
++      return forVotes;
+     case TENANT_NAMESPACES.SCROLL:
+       return forVotes + againstVotes + abstainVotes;
+     case TENANT_NAMESPACES.OPTIMISM:
+@@ -103,6 +105,8 @@ function calculateQuorumBigInt(
+   switch (namespace) {
+     case TENANT_NAMESPACES.UNISWAP:
+       return forVotes;
++    case TENANT_NAMESPACES.FLEET:
++      return forVotes;
+     case TENANT_NAMESPACES.SCROLL:
+       return forVotes + againstVotes + abstainVotes;
+     case TENANT_NAMESPACES.OPTIMISM:
+diff --git a/src/lib/tenant/tenant.ts b/src/lib/tenant/tenant.ts
+index 594af12..0156dd0 100644
+--- a/src/lib/tenant/tenant.ts
++++ b/src/lib/tenant/tenant.ts
+@@ -19,6 +19,7 @@ export const BRAND_NAME_MAPPINGS: Record<string, string> = {
+   demo: "Canopy",
+   towns: "Towns Lodge",
+   shape: "Structura",
++  fleet: "Fleet Governance",
+ };
+ 
+ export default class Tenant {
+diff --git a/src/lib/tenant/tenantContractFactory.ts b/src/lib/tenant/tenantContractFactory.ts
+index 00d08f3..3e5ffeb 100644
+--- a/src/lib/tenant/tenantContractFactory.ts
++++ b/src/lib/tenant/tenantContractFactory.ts
+@@ -20,6 +20,7 @@ import { demo2TenantConfig } from "./configs/contracts/demo2";
+ import { demo4TenantConfig } from "./configs/contracts/demo4";
+ import { demo3TenantConfig } from "./configs/contracts/demo3";
+ import { shapeTenantConfig } from "./configs/contracts/shape";
++import { fleetTenantContractConfig } from "./configs/contracts/fleet";
+ 
+ export default class TenantContractFactory {
+   public static create(
+@@ -68,6 +69,8 @@ export default class TenantContractFactory {
+         return demo3TenantConfig({ isProd, rpcSecret });
+       case TENANT_NAMESPACES.SHAPE:
+         return shapeTenantConfig({ isProd, rpcSecret });
++      case TENANT_NAMESPACES.FLEET:
++        return fleetTenantContractConfig({ isProd, rpcSecret });
+       default:
+         throw new Error(`Invalid namespace: ${namespace}`);
+     }
+diff --git a/src/lib/tenant/tenantSlugFactory.ts b/src/lib/tenant/tenantSlugFactory.ts
+index 26e362d..c046e97 100644
+--- a/src/lib/tenant/tenantSlugFactory.ts
++++ b/src/lib/tenant/tenantSlugFactory.ts
+@@ -45,6 +45,8 @@ export default class TenantSlugFactory {
+         return "DEMO3" as any;
+       case TENANT_NAMESPACES.SHAPE:
+         return "SHAPE" as any;
++      case TENANT_NAMESPACES.FLEET:
++        return "FLEET" as any;
+       default:
+         throw new Error(`Invalid namespace: ${namespace}`);
+     }
+diff --git a/src/lib/tenant/tenantTokenFactory.ts b/src/lib/tenant/tenantTokenFactory.ts
+index 63e8c98..1e595b9 100644
+--- a/src/lib/tenant/tenantTokenFactory.ts
++++ b/src/lib/tenant/tenantTokenFactory.ts
+@@ -1,5 +1,6 @@
+ import { type TenantNamespace, type TenantToken } from "@/lib/types";
+ import { TENANT_NAMESPACES, ZERO_ADDRESS } from "@/lib/constants";
++import { loadFleetDeployment } from "@/lib/tenant/configs/contracts/fleet";
+ 
+ const isProd = process.env.NEXT_PUBLIC_AGORA_ENV === "prod";
+ 
+@@ -177,6 +178,13 @@ export default class TenantTokenFactory {
+           decimals: 18,
+           address: "0x0000000000000000000000000000000000000000",
+         };
++      case TENANT_NAMESPACES.FLEET:
++        return {
++          name: "Fleet Vote",
++          symbol: "FLEET",
++          decimals: 18,
++          address: loadFleetDeployment().token,
++        };
+       default:
+         throw new Error(`Invalid namespace: ${namespace}`);
+     }
+diff --git a/src/lib/tenant/tenantUIFactory.ts b/src/lib/tenant/tenantUIFactory.ts
+index ef67b94..43f9fb1 100644
+--- a/src/lib/tenant/tenantUIFactory.ts
++++ b/src/lib/tenant/tenantUIFactory.ts
+@@ -20,6 +20,7 @@ import { demo2TenantUIConfig } from "@/lib/tenant/configs/ui/demo2";
+ import { demo4TenantUIConfig } from "@/lib/tenant/configs/ui/demo4";
+ import { demo3TenantUIConfig } from "@/lib/tenant/configs/ui/demo3";
+ import { shapeTenantUIConfig } from "@/lib/tenant/configs/ui/shape";
++import { fleetTenantUIConfig } from "@/lib/tenant/configs/ui/fleet";
+ 
+ export default class TenantUIFactory {
+   public static create(namespace: TenantNamespace): any {
+@@ -83,6 +84,9 @@ export default class TenantUIFactory {
+       case TENANT_NAMESPACES.SHAPE:
+         return shapeTenantUIConfig;
+ 
++      case TENANT_NAMESPACES.FLEET:
++        return fleetTenantUIConfig;
++
+       default:
+         throw new Error(`Invalid namespace: ${namespace}`);
+     }

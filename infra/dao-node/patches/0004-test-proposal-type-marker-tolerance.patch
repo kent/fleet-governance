@@ -1,0 +1,35 @@
+diff --git a/tests/test_data_products.py b/tests/test_data_products.py
+index 1a32a82..cac04fd 100644
+--- a/tests/test_data_products.py
++++ b/tests/test_data_products.py
+@@ -745,4 +745,28 @@ def test_VoteAggregation_weight_defaults_to_votes():
+     agg.tally(event)
+ 
+     assert agg.result['no-param'][1] == 2000
+-    assert agg.num_of_votes == 1
+\ No newline at end of file
++    assert agg.num_of_votes == 1
++
++def test_Proposals_agora_v2_missing_proposal_type_marker():
++    """
++    Regression test for patch 0002 (infra/dao-node/patches/0002-tolerate-missing-proposal-type-marker.patch).
++
++    Upstream at commit cb299a0 raises IndexError when an agora >= 2.0
++    proposal description has no '#proposalTypeId=' marker. The patched
++    code must tolerate that and default proposal_type to 0.
++    """
++    proposals = Proposals(governor_spec={'name': 'agora', 'version': 2.0})
++
++    event = {
++        'signature': PROPOSAL_CREATED_1,
++        'sighash': 'deadbeef',
++        'proposal_id': '999',
++        'block_number': 100,
++        'description': 'A proposal description with no type marker in it',
++    }
++
++    proposals.handle(event)
++
++    assert '999' in proposals.proposals
++    assert proposals.proposals['999'].proposal_type == 0
++    assert proposals.proposals['999'].create_event['proposal_type_id'] == 0

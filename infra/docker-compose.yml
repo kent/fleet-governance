@@ -1,0 +1,344 @@
+services:
+  anvil:
+    build:
+      context: ..
+      dockerfile: infra/anvil/Dockerfile
+    # Every long-running service in this stack restarts unless it was
+    # stopped deliberately: `docker compose down`/`stop` still stop them,
+    # but a crash or an OOM kill comes back on its own. agora-next in
+    # particular was observed OOM-killed by the Linux OOM killer under
+    # Docker Desktop's default VM (see docs/compatibility-notes.md,
+    # "npm run dev's memory footprint"), and with no restart policy it
+    # simply stayed dead, which read as "the UI hangs". NOTE: anvil holds
+    # its whole chain in memory with no volume, so a restart here means a
+    # chain with no fleet on it; the restart keeps the RPC endpoint
+    # answering rather than pretending the deployment survived.
+    restart: unless-stopped
+    ports:
+      - "${ANVIL_PORT:-8545}:8545"
+    healthcheck:
+      test: ["CMD", "cast", "chain-id", "--rpc-url", "http://127.0.0.1:8545"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # See infra/blockcache-shim/server.py's header comment: a minimal local
+  # stand-in for the real, hosted "blockcache" service CPLS's DAO-node sync
+  # needs for block timestamps (and, secondarily, quorum/votable-supply/
+  # transaction-hash lookups), backed by this stack's own Anvil.
+  blockcache-shim:
+    build:
+      context: ..
+      dockerfile: infra/blockcache-shim/Dockerfile
+    restart: unless-stopped
+    environment:
+      # Overridable so the shim can be pointed at a real chain's RPC
+      # endpoint alongside dao-node (see infra/README.md, "Pointing at Base
+      # Sepolia instead of local Anvil").
+      ANVIL_RPC_URL: ${ANVIL_RPC_URL:-http://anvil:8545}
+      BLOCK_TIME_SECONDS: ${BLOCK_TIME_SECONDS:-2}
+      # The fleet's governor (AgoraGovernor V2) is timestamp-clocked:
+      # `cast call $GOVERNOR "CLOCK_MODE()(string)"` returns
+      # "mode=timestamp", so DAO Node's start_block/end_block are unix
+      # timestamps and CPLS passes them to this shim as block numbers.
+      # Without this, every timestamp lookup extrapolated a date centuries
+      # out (CPLS then marked every unexecuted proposal PENDING) and every
+      # quorum/state call was evaluated at a block that does not exist. See
+      # infra/blockcache-shim/server.py's GOVERNOR_CLOCK_MODE section and
+      # docs/compatibility-notes.md, "Final review fixes".
+      GOVERNOR_CLOCK_MODE: ${GOVERNOR_CLOCK_MODE:-timestamp}
+      CHAIN_ID: ${CHAIN_ID:-31337}
+    depends_on:
+      anvil:
+        condition: service_healthy
+    healthcheck:
+      # Block 0 of this stack's own chain id, not a hardcoded 31337: the
+      # route is /exact_blocktime/<chain_id>/<block>, and on a chain that is
+      # not 31337 the hardcoded form still answered (the shim serves one
+      # chain and ignores the id in the path), so the healthcheck passed
+      # while naming a chain this stack was not on.
+      test: ["CMD-SHELL", "python3 -c \"import os, urllib.request; urllib.request.urlopen('http://localhost:8002/exact_blocktime/' + os.environ['CHAIN_ID'] + '/0', timeout=3)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agora}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agora}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    ports:
+      # Host port defaults to 55432 (not 5432) so this stack can run
+      # alongside a host Postgres already listening on 5432. The container
+      # always listens on 5432 internally.
+      - "${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # User and database from the same variables the container was created
+      # with, not hardcoded: with POSTGRES_USER changed in infra/.env, the
+      # hardcoded form checked a role that does not exist and the service
+      # never went healthy, which every depends_on in this file waits for.
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  dao-node:
+    build:
+      context: ..
+      dockerfile: infra/dao-node/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${DAO_NODE_PORT:-8000}:8000"
+    environment:
+      CONTRACT_DEPLOYMENT: ${CONTRACT_DEPLOYMENT:-local}
+      CHAIN_ID: ${CHAIN_ID:-31337}
+      TOKEN_ADDRESS: ${TOKEN_ADDRESS}
+      GOVERNOR_ADDRESS: ${GOVERNOR_ADDRESS}
+      # Compose renders an unset var as an empty string rather than
+      # omitting it; the shell default here just makes that explicit.
+      # Patch 0003 treats blank/whitespace as unset too, on top of this.
+      DAO_NODE_START_BLOCK: ${DAO_NODE_START_BLOCK:-}
+      # Overridable so the read side can be pointed at a real chain
+      # without editing this file; see infra/README.md, "Pointing at Base
+      # Sepolia instead of local Anvil".
+      DAO_NODE_ARCHIVE_NODE_HTTP: ${DAO_NODE_ARCHIVE_NODE_HTTP:-http://anvil:8545}
+      DAO_NODE_REALTIME_NODE_WS: ${DAO_NODE_REALTIME_NODE_WS:-ws://anvil:8545}
+      # eth_getLogs range per archive request. Left empty, dao-node's
+      # resolve_block_count_span() picks a per-chain default (2000 for any
+      # chain not in its table, which includes Base Sepolia). Set it on a
+      # real chain whose RPC provider caps the range lower, or to pin the
+      # value against a change in that table.
+      DAO_NODE_ARCHIVE_NODE_HTTP_BLOCK_COUNT_SPAN: ${DAO_NODE_ARCHIVE_NODE_HTTP_BLOCK_COUNT_SPAN:-}
+      ABI_DIR: /abis
+      # Upstream defaults (2 realtime WS clients + 1 polling client) race
+      # against anvil's fast, low-latency local chain and intermittently
+      # hang the event loop on cold boot (see docs/compatibility-notes.md).
+      # One realtime client is enough to track new blocks locally; the
+      # polling client is only a backup for missed websocket events, so
+      # it's safe to disable for this local stack.
+      # Both overridable through infra/.env: a real chain wants
+      # NUM_POLLING_CLIENTS=1 back (it is the backstop for websocket events
+      # a flaky provider drops), which is safe there because the cold-boot
+      # hang below is an artefact of anvil's zero-latency local chain, and
+      # because this service now has a restart policy.
+      NUM_REALTIME_CLIENTS: ${NUM_REALTIME_CLIENTS:-1}
+      NUM_POLLING_CLIENTS: ${NUM_POLLING_CLIENTS:-0}
+      # app/server.py's NUM_ARCHIVE_CLIENTS defaults to 2 (a CSV archive
+      # slot plus the HTTP one), assuming a deployment that configures
+      # DAO_NODE_DATA_PATH for a CSV archive. This stack never does (the
+      # CSV client logs "the path 'data' does not exist, this client is
+      # not valid" at boot and is excluded from the live client list), so
+      # exactly one archive client (HTTP) actually exists. Left at the
+      # default of 2, subscribe_feeds() computes the realtime client's
+      # position in that list as 1 + NUM_ARCHIVE_CLIENTS + i = 3, but the
+      # real list is only 2 long (1 archive + 1 realtime): the position
+      # never matches any client, so realtime_async_read()'s scan finds
+      # nothing, ends immediately, and the realtime task exits silently,
+      # with no error, ever tracking a single new block. Setting this to
+      # 1 fixes the count so the realtime client's computed position (2)
+      # is correct. See docs/compatibility-notes.md, Task 6, "DAO Node's
+      # realtime client silently never starts reading: NUM_ARCHIVE_CLIENTS
+      # off-by-one".
+      NUM_ARCHIVE_CLIENTS: "1"
+    volumes:
+      - ./dao-node/abis:/abis:ro
+    depends_on:
+      anvil:
+        condition: service_healthy
+    healthcheck:
+      # python:3.11-slim (Debian trixie) has no curl; the interpreter that
+      # is already in the image is the smallest reliable healthcheck tool.
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/progress', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  cpls:
+    build:
+      context: ..
+      dockerfile: infra/cpls/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${CPLS_PORT:-8001}:8001"
+    environment:
+      ENVIRONMENT: dev
+      GCS_BUCKET_NAME: ${GCS_BUCKET_NAME:-fleet-archive-dev}
+      DAO_NODE_URL_TEMPLATE: http://dao-node:8000
+      SCHEDULER_INTERVAL_MINUTES: "1"
+      # Only "fleet" is provisioned (infra/cpls/tenants/fleet.yaml.template);
+      # upstream's own default here is a list of unrelated production DAOs.
+      INFRA_DAO_SLUGS: fleet
+      # Points cpls/config.py's load_tenant_configs() at the directory
+      # infra/cpls/entrypoint.sh renders infra/cpls/tenants/*.yaml.template
+      # into, instead of the upstream default (a private repo checkout at
+      # /config/envs/prod that only exists if built with a GITHUB_TOKEN).
+      TENANT_CONFIG_PATH: /tenants
+      # Selects which key of fleet.yaml.template's `deployments:` map to
+      # use; kept equal to CONTRACT_DEPLOYMENT (dao-node's own deployment
+      # key) so both services agree on one deployment name.
+      CONTRACT_DEPLOYMENT: ${CONTRACT_DEPLOYMENT:-local}
+      DEPLOYMENT: ${CONTRACT_DEPLOYMENT:-local}
+      CHAIN_ID: ${CHAIN_ID:-31337}
+      TOKEN_ADDRESS: ${TOKEN_ADDRESS}
+      GOVERNOR_ADDRESS: ${GOVERNOR_ADDRESS}
+      # cpls/sync.py's read_votes_from_db() (DaoNodeSync's vote source)
+      # queries "{dao_slug}"."votes" directly, not DAO Node's API; in
+      # production a separate indexing pipeline populates that table. This
+      # local stack has no such pipeline, so infra/scripts/scripted-proposal.sh
+      # inserts one row per real on-chain vote into fleet.votes (already
+      # stubbed by infra/postgres/gen-stub.ts from b3's own Prisma view)
+      # itself, right after casting it. Same Postgres/database Agora Next
+      # reads (agora_web3), reached at the compose network's own hostname
+      # and port (5432), not the host-side 55432 mapping. See
+      # docs/compatibility-notes.md, Task 6, "CPLS reads votes from
+      # Postgres, not from DAO Node".
+      DATABASE_URL: postgres://agora:agora@postgres:5432/agora_web3
+      # cpls/blockcache.py's BlockCacheClient calls this service (a real,
+      # external, hosted RPC-proxy for other DAOs' mainnet/L2 chains) for
+      # block timestamps (unconditionally, for every proposal), quorum,
+      # votable-supply, and transaction-hash lookups; it has no notion of
+      # a local Anvil chain (31337). The block-timestamp lookup is not
+      # guarded by any try/except in cpls/sync_daonode.py's refresh_list
+      # (unlike the quorum/votable-supply ones, which fall back to '0'),
+      # so this cannot simply be pointed at an address nothing listens on:
+      # the whole sync would fail before ever writing a proposal's votes
+      # to the archive. infra/blockcache-shim implements the handful of
+      # blockcache.py endpoints DAO-node-sourced syncs actually use,
+      # backed by this stack's own Anvil, on the same port
+      # (:8002) blockcache.py's own __main__ block already uses as its
+      # local-dev convention. See docs/compatibility-notes.md, Task 6,
+      # "CPLS's block-timestamp lookups need a working BlockCacheClient".
+      BLOCKCACHE_URL: http://blockcache-shim:8002
+      # This base compose file describes the real-GCS configuration: no
+      # STORAGE_EMULATOR_HOST here, so google-cloud-storage's Client()
+      # resolves credentials the normal way, via GOOGLE_APPLICATION_CREDENTIALS
+      # below (or ADC). For local/offline use without real GCS credentials,
+      # layer infra/docker-compose.offline.yml on top (see that file and
+      # infra/scripts/create-fake-bucket.sh), which adds STORAGE_EMULATOR_HOST
+      # and a fake-gcs service:
+      #   docker compose -f infra/docker-compose.yml -f infra/docker-compose.offline.yml up -d
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcs.json
+    volumes:
+      # Real GCS credentials file (JSON), mounted read-only. Set
+      # GCS_CREDENTIALS_FILE in infra/.env to a real service-account key.
+      # Left unset (bind-mounts /dev/null, an empty placeholder), cpls will
+      # fail to boot against this base file alone since there's no emulator
+      # here to fall back on; that's expected; either provide real
+      # credentials or use the offline overlay described above.
+      - ${GCS_CREDENTIALS_FILE:-/dev/null}:/secrets/gcs.json:ro
+    depends_on:
+      dao-node:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      blockcache-shim:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  agora-next:
+    build:
+      context: ..
+      dockerfile: infra/agora-next/Dockerfile
+    restart: unless-stopped
+    # `npm run dev` was measured at 5.5-5.6 GiB resident and was OOM-killed
+    # outright once (docs/compatibility-notes.md, "npm run dev's memory
+    # footprint under Docker Desktop's default VM"). Capping the container
+    # rather than letting it take the whole VM changes what happens when it
+    # runs out: the kill lands on this container alone (postgres, anvil and
+    # dao-node keep running) and the restart policy above brings it back,
+    # and Node sizes its own heap from the cgroup limit instead of from the
+    # VM, so it self-restarts gracefully more often than it dies. 6 GiB
+    # leaves headroom over the observed footprint and fits a Docker VM of
+    # 8 GiB with the rest of this stack (which totals well under 500 MiB).
+    # Raise AGORA_NEXT_MEM_LIMIT on a larger VM; see infra/README.md,
+    # "Docker VM sizing".
+    mem_limit: ${AGORA_NEXT_MEM_LIMIT:-6g}
+    ports:
+      - "${AGORA_NEXT_PORT:-3000}:3000"
+    environment:
+      NEXT_PUBLIC_AGORA_INSTANCE_NAME: fleet
+      NEXT_PUBLIC_AGORA_INSTANCE_TOKEN: FLEET
+      NEXT_PUBLIC_AGORA_ENV: dev
+      NEXT_PUBLIC_AGORA_BASE_URL: http://localhost:${AGORA_NEXT_PORT:-3000}
+      NEXT_PUBLIC_AGORA_API_KEY: dev
+      # getRpcUrlForChain() (src/lib/rpcConfig.ts) returns this verbatim for
+      # every chain id when set, read with plain process.env in several
+      # places (server AND client-bundled code, never gated on
+      # typeof window). Next.js inlines one NEXT_PUBLIC_ value into both
+      # bundles, so this is the server-correct value (the agora-next
+      # container reaches Anvil at "anvil", not "localhost"); a real
+      # browser session would need "http://localhost:8545" for any
+      # client-side chain read instead, and does not get it from this
+      # setting. See docs/compatibility-notes.md, Task 5,
+      # "NEXT_PUBLIC_FORK_NODE_URL: one value, two audiences".
+      NEXT_PUBLIC_FORK_NODE_URL: ${NEXT_PUBLIC_FORK_NODE_URL:-http://anvil:8545}
+      # src/app/lib/prisma.ts reads only DATABASE_URL; prismaWeb2Client and
+      # prismaWeb3Client are the same PrismaClient instance (see
+      # docs/compatibility-notes.md's "Agora Next Prisma web2/web3 split").
+      # The two READ_*_DEV vars are set anyway since README.md documents
+      # them, in case a future upstream version starts reading them.
+      DATABASE_URL: postgres://agora:agora@postgres:5432/agora_web3
+      READ_WRITE_WEB2_DATABASE_URL_DEV: postgres://agora:agora@postgres:5432/agora_web2
+      READ_ONLY_WEB3_DATABASE_URL_DEV: postgres://agora:agora@postgres:5432/agora_web3
+      DAONODE_URL_TEMPLATE: http://dao-node:8000
+      # ARCHIVE_GCS_BUCKET_OVERRIDE is the ONLY env var
+      # src/lib/constants.ts's ARCHIVE_GCS_BUCKET reads; there is no plain
+      # bucket-name var. Left unset, it hardcodes a real, unrelated Agora
+      # production bucket, which would silently serve the wrong DAO's data
+      # instead of fleet's rather than failing loudly. So, unlike CPLS's
+      # STORAGE_EMULATOR_HOST (which only the offline overlay sets), this
+      # base file sets ARCHIVE_GCS_BUCKET_OVERRIDE too, pointed at the same
+      # real bucket CPLS's own GCS_BUCKET_NAME writes to; the offline
+      # overlay below only swaps which base URL it points at. See
+      # docs/compatibility-notes.md, Task 5, "ARCHIVE_GCS_BUCKET is not a
+      # real env var".
+      ARCHIVE_GCS_BUCKET_OVERRIDE: https://storage.googleapis.com/${GCS_BUCKET_NAME:-fleet-archive-dev}
+      # JSON written by Task 6's deployment script; the placeholder here
+      # (mounted from ../deployments below) lets this service boot before
+      # a real fleet is deployed. configs/contracts/fleet.ts re-reads this
+      # file on every call, so swapping it only needs a container restart.
+      FLEET_DEPLOYMENT_FILE: /deployments/agora-next-deployment.json
+      # Dev-only value; README.md recommends 32+ characters. Overridable
+      # through infra/.env, and it MUST be replaced with a fresh random
+      # secret for any deployment reachable by anyone else: this literal is
+      # published in this repository. See infra/README.md, "Pointing at Base
+      # Sepolia instead of local Anvil".
+      JWT_SECRET: ${JWT_SECRET:-dev-only-32-character-secret-key-fleet}
+    volumes:
+      - ../deployments:/deployments:ro
+    depends_on:
+      anvil:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      dao-node:
+        condition: service_healthy
+      cpls:
+        condition: service_healthy
+    healthcheck:
+      # node:20-bookworm-slim has no curl by default; node itself is
+      # already guaranteed present and is the smallest reliable
+      # healthcheck tool here (same reasoning as dao-node/cpls using
+      # python3 instead of adding a curl package there).
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/proposals', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      # `npm run dev` compiles each route on first request rather than
+      # ahead of time; the very first hit to /proposals took around 30s in
+      # verification, so this is generous headroom above that.
+      start_period: 90s
+
+volumes:
+  postgres-data:

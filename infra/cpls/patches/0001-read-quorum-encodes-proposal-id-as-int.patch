@@ -1,0 +1,40 @@
+# 0001: read_quorum's default branch must ABI-encode the proposal id as an int
+#
+# DaoNodeSync.read_quorum (cpls/sync_daonode.py) dispatches on
+# infra_dao_slug. Six of the seven branches that call `quorum(uint256)`
+# pass `int(proposal_id)`; the `else` branch every DAO without a
+# hand-written branch falls into (ours: "fleet") passes the raw
+# `proposal_id`, which DAO Node returns as a JSON string. eth_abi's
+# encoder refuses it before any RPC call is made:
+#
+#   Failed to read quorum for proposal 1075273859849237667676504636935045130
+#   28928175055284733252656629127126744840522 (cancelled=False): Value
+#   `'107527385984923766767650463693504513028928175055284733252656629127...'`
+#   of type <class 'str'> cannot be encoded by UnsignedIntegerEncoder
+#
+# The call site (refresh_list, around line 457) catches every exception and
+# falls back to `proposal['quorum'] = '0'`, so this is silent: the archive
+# is written with quorum '0' and nothing fails. Agora Next then reads that
+# '0' as the real quorum (src/lib/proposals/thresholds.ts's
+# resolveArchiveThresholds returns `safeBigInt(proposal.quorum)` for
+# dao_node-sourced proposals) and its derived status treats every proposal
+# as having met quorum, whatever the chain says.
+#
+# This makes the default branch match its six siblings. It is a bug fix for
+# every DAO that takes this branch, not something specific to the fleet
+# tenant.
+#
+# See docs/compatibility-notes.md, "Final review fixes", "CPLS archives
+# quorum as '0' for every proposal".
+#
+--- a/cpls/sync_daonode.py
++++ b/cpls/sync_daonode.py
+@@ -234,7 +234,7 @@
+         else:
+             quorum_result = await self.bc.contract_call_encoded(
+                 self.chain_id, self.gov_addr, start_block,
+-                'quorum(uint256)', [proposal_id]
++                'quorum(uint256)', [int(proposal_id)]
+             )
+             quorum = int(quorum_result['result'], 16)
+             return str(quorum)

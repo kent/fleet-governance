@@ -1,0 +1,3 @@
+CREATE DATABASE agora_web2;
+CREATE DATABASE agora_web3;
+CREATE DATABASE runner;
