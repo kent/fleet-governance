@@ -1,0 +1,5 @@
+agora-governor/=lib/agora-governor/
+@openzeppelin/contracts/=lib/agora-governor/lib/openzeppelin-contracts/contracts/
+forge-std/=lib/agora-governor/lib/forge-std/src/
+@solady/=lib/agora-governor/lib/solady/src/
+lib/agora-governor/:src/=lib/agora-governor/src/
