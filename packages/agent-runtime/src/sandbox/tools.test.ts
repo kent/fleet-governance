@@ -451,7 +451,7 @@ describe("ToolRouter: package_install", () => {
     expect(result.ok).toBe(true);
     expect(packageInstallRunner).toHaveBeenCalledWith(
       "npm",
-      ["install", "left-pad", "--registry", `https://${host}`],
+      ["install", "--registry", `https://${host}`, "--", "left-pad"],
       { cwd: workspace.dir },
     );
   });
@@ -515,5 +515,258 @@ describe("ToolRouter: log record shape", () => {
     expect(record.verdict).toBe("BLOCK");
     expect(record.reason).toBe("class_not_allowed");
     expect(record.basis).toBeUndefined();
+  });
+});
+
+describe("ToolRouter: network_fetch refuses redirects (F2)", () => {
+  it("refuses a redirect to a host the gateway never evaluated, and never fetches it", async () => {
+    const host = "allowed.example.com";
+    const { watcher } = makeWatcher(baseCharter({ externalAllowlist: [host] }));
+    const { log, records } = makeLog();
+    const fetchImpl = vi.fn(
+      async () => new Response(null, { status: 302, headers: { location: "https://evil.example.com/steal?token=abc" } }),
+    );
+    const router = new ToolRouter({ workspace, watcher, agentId: 1, budget: { toolCalls: 0 }, log, fetchImpl });
+
+    const result = await router.call({ class: "network_fetch", target: host, args: { path: "/x" } });
+    expect(result.ok).toBe(false);
+    if (result.ok || !("error" in result)) throw new Error("unreachable");
+    expect(result.error).toContain("redirect_refused");
+    expect(result.error).toContain("302");
+    expect(result.error).toContain("evil.example.com");
+    // Only the status and the redirect target's host, never the full URL (path, query, token).
+    expect(result.error).not.toContain("steal");
+    expect(result.error).not.toContain("token=abc");
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
+    expect(records).toHaveLength(1);
+    expect(records[0]?.verdict).toBe("ALLOW"); // the gateway allowed the call; execution refused the redirect
+  });
+
+  it("real fetch (no injected fetchImpl) also refuses a real redirect from a local server", async () => {
+    const target = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("should never be reached");
+    });
+    await new Promise<void>((resolvePromise) => target.listen(0, "127.0.0.1", () => resolvePromise()));
+    const targetPort = (target.address() as AddressInfo).port;
+
+    const redirector = createServer((_req, res) => {
+      res.writeHead(302, { location: `http://127.0.0.1:${targetPort}/elsewhere` });
+      res.end();
+    });
+    await new Promise<void>((resolvePromise) => redirector.listen(0, "127.0.0.1", () => resolvePromise()));
+    const redirectorPort = (redirector.address() as AddressInfo).port;
+    const host = `127.0.0.1:${redirectorPort}`;
+
+    try {
+      const { watcher } = makeWatcher(baseCharter({ externalAllowlist: [host] }));
+      const { log } = makeLog();
+      const router = new ToolRouter({ workspace, watcher, agentId: 1, budget: { toolCalls: 0 }, log });
+
+      const result = await router.call({ class: "network_fetch", target: host, args: { path: "/start", scheme: "http" } });
+      expect(result.ok).toBe(false);
+      if (result.ok || !("error" in result)) throw new Error("unreachable");
+      expect(result.error).toContain("redirect_refused");
+      expect(result.error).toContain("302");
+      expect(result.error).toContain(`127.0.0.1:${targetPort}`);
+    } finally {
+      await new Promise<void>((resolvePromise) => target.close(() => resolvePromise()));
+      await new Promise<void>((resolvePromise) => redirector.close(() => resolvePromise()));
+    }
+  });
+});
+
+describe("ToolRouter: modify_tests block honors a granted exception (F3)", () => {
+  it("blocks once, then allows the exact same call after the exception is granted", async () => {
+    const charter = baseCharter({ forbiddenActions: ["modify_tests"] });
+    const target = "test/index.test.ts";
+    const args = { content: "// tampered" };
+    const descriptor = describeAction({ class: "write_repo", target, args });
+    const expectedPayloadHash = payloadHashForAction(descriptor);
+
+    let granted = false;
+    const exceptionVersion = vi.fn(async (_taskId: bigint, payloadHash: Hex) =>
+      granted && payloadHash === expectedPayloadHash ? 1 : 0,
+    );
+    const { watcher } = makeWatcher(charter, { exceptionVersion });
+    const { log, records } = makeLog();
+    const router = new ToolRouter({ workspace, watcher, agentId: 1, budget: { toolCalls: 0 }, log });
+
+    const blocked = await router.call({ class: "write_repo", target, args });
+    expect(blocked.ok).toBe(false);
+    if (blocked.ok || !("blocked" in blocked)) throw new Error("unreachable");
+    expect(blocked.blocked.reason).toBe("forbidden_action");
+    expect(blocked.blocked.draft?.kind).toBe("GRANT_EXCEPTION");
+    expect(blocked.blocked.payloadHash).toBe(expectedPayloadHash);
+    expect(await workspace.readFile(target)).toBe("// placeholder test\n");
+
+    granted = true;
+
+    const allowed = await router.call({ class: "write_repo", target, args });
+    expect(allowed).toEqual({ ok: true, output: `wrote ${target}` });
+    expect(await workspace.readFile(target)).toBe("// tampered");
+
+    expect(records).toHaveLength(2);
+    expect(records[0]?.verdict).toBe("BLOCK");
+    expect(records[0]?.reason).toBe("forbidden_action");
+    expect(records[1]?.verdict).toBe("ALLOW");
+    expect(records[1]?.basis).toBe("exception");
+    expect(exceptionVersion).toHaveBeenCalled();
+  });
+});
+
+describe("ToolRouter: package_install validates pkg before any subprocess (F4)", () => {
+  const host = "registry.example.com";
+
+  it("rejects -g (would be read as an npm option flag)", async () => {
+    const charter = baseCharter({ externalAllowlist: [host] });
+    const { watcher } = makeWatcher(charter);
+    const { log } = makeLog();
+    const packageInstallRunner = vi.fn();
+    const router = new ToolRouter({ workspace, watcher, agentId: 1, budget: { toolCalls: 0 }, log, packageInstallRunner });
+
+    const result = await router.call({ class: "package_install", target: host, args: { pkg: "-g" } });
+    expect(result).toEqual({ ok: false, error: "invalid_package_name" });
+    expect(packageInstallRunner).not.toHaveBeenCalled();
+  });
+
+  it("rejects a name containing whitespace (foo bar)", async () => {
+    const charter = baseCharter({ externalAllowlist: [host] });
+    const { watcher } = makeWatcher(charter);
+    const { log } = makeLog();
+    const packageInstallRunner = vi.fn();
+    const router = new ToolRouter({ workspace, watcher, agentId: 1, budget: { toolCalls: 0 }, log, packageInstallRunner });
+
+    const result = await router.call({ class: "package_install", target: host, args: { pkg: "foo bar" } });
+    expect(result).toEqual({ ok: false, error: "invalid_package_name" });
+    expect(packageInstallRunner).not.toHaveBeenCalled();
+  });
+
+  it("rejects an argument-injection attempt (foo;rm)", async () => {
+    const charter = baseCharter({ externalAllowlist: [host] });
+    const { watcher } = makeWatcher(charter);
+    const { log } = makeLog();
+    const packageInstallRunner = vi.fn();
+    const router = new ToolRouter({ workspace, watcher, agentId: 1, budget: { toolCalls: 0 }, log, packageInstallRunner });
+
+    const result = await router.call({ class: "package_install", target: host, args: { pkg: "foo;rm" } });
+    expect(result).toEqual({ ok: false, error: "invalid_package_name" });
+    expect(packageInstallRunner).not.toHaveBeenCalled();
+  });
+
+  it("accepts a valid scoped name with a version range (@scope/name@^1.2.0)", async () => {
+    const charter = baseCharter({ externalAllowlist: [host] });
+    const { watcher } = makeWatcher(charter);
+    const { log } = makeLog();
+    const packageInstallRunner = vi.fn(async (cmd: string, args: string[]) => ({
+      code: 0,
+      output: `would run: ${cmd} ${args.join(" ")}`,
+    }));
+    const router = new ToolRouter({ workspace, watcher, agentId: 1, budget: { toolCalls: 0 }, log, packageInstallRunner });
+
+    const result = await router.call({ class: "package_install", target: host, args: { pkg: "@scope/name@^1.2.0" } });
+    expect(result.ok).toBe(true);
+    expect(packageInstallRunner).toHaveBeenCalledWith(
+      "npm",
+      ["install", "--registry", `https://${host}`, "--", "@scope/name@^1.2.0"],
+      { cwd: workspace.dir },
+    );
+  });
+});
+
+describe("ToolRouter: network_fetch caps response size at 1 MiB (F5)", () => {
+  const host = "big.example.com";
+
+  it("rejects a response whose content-length header exceeds the cap, without reading the body", async () => {
+    const { watcher } = makeWatcher(baseCharter({ externalAllowlist: [host] }));
+    const { log } = makeLog();
+    const oversizeBytes = 1024 * 1024 + 1;
+    const fetchImpl = vi.fn(
+      async () => new Response("x", { status: 200, headers: { "content-length": String(oversizeBytes) } }),
+    );
+    const router = new ToolRouter({ workspace, watcher, agentId: 1, budget: { toolCalls: 0 }, log, fetchImpl });
+
+    const result = await router.call({ class: "network_fetch", target: host, args: { path: "/big" } });
+    expect(result).toEqual({ ok: false, error: "response_too_large" });
+  });
+
+  it("rejects a streamed response that exceeds the cap even without a content-length header", async () => {
+    const { watcher } = makeWatcher(baseCharter({ externalAllowlist: [host] }));
+    const { log } = makeLog();
+    const chunk = new Uint8Array(256 * 1024).fill(97);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let i = 0; i < 5; i++) controller.enqueue(chunk);
+        controller.close();
+      },
+    });
+    const fetchImpl = vi.fn(async () => new Response(stream, { status: 200 }));
+    const router = new ToolRouter({ workspace, watcher, agentId: 1, budget: { toolCalls: 0 }, log, fetchImpl });
+
+    const result = await router.call({ class: "network_fetch", target: host, args: { path: "/stream" } });
+    expect(result).toEqual({ ok: false, error: "response_too_large" });
+  });
+
+  it("still allows a response under the cap", async () => {
+    const { watcher } = makeWatcher(baseCharter({ externalAllowlist: [host] }));
+    const { log } = makeLog();
+    const fetchImpl = vi.fn(async () => new Response("small body", { status: 200 }));
+    const router = new ToolRouter({ workspace, watcher, agentId: 1, budget: { toolCalls: 0 }, log, fetchImpl });
+
+    const result = await router.call({ class: "network_fetch", target: host, args: { path: "/small" } });
+    expect(result).toEqual({ ok: true, output: "small body" });
+  });
+});
+
+describe("ToolRouter: modify_tests detection is widened beyond the top-level test/ (F6)", () => {
+  it("blocks a nested test/ directory anywhere in the path", async () => {
+    const charter = baseCharter({ forbiddenActions: ["modify_tests"] });
+    const { watcher } = makeWatcher(charter);
+    const { log } = makeLog();
+    const router = new ToolRouter({ workspace, watcher, agentId: 1, budget: { toolCalls: 0 }, log });
+
+    await mkdir(join(workspace.dir, "packages", "foo", "test"), { recursive: true });
+    await fsWriteFile(join(workspace.dir, "packages", "foo", "test", "bar.test.ts"), "// original\n");
+
+    const result = await router.call({
+      class: "write_repo",
+      target: "packages/foo/test/bar.test.ts",
+      args: { content: "// tampered" },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok || !("blocked" in result)) throw new Error("unreachable");
+    expect(result.blocked.reason).toBe("forbidden_action");
+  });
+
+  it("blocks a *.spec.* file outside any test directory", async () => {
+    const charter = baseCharter({ forbiddenActions: ["modify_tests"] });
+    const { watcher } = makeWatcher(charter);
+    const { log } = makeLog();
+    const router = new ToolRouter({ workspace, watcher, agentId: 1, budget: { toolCalls: 0 }, log });
+
+    const result = await router.call({
+      class: "write_repo",
+      target: "src/util.spec.ts",
+      args: { content: "// tampered" },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok || !("blocked" in result)) throw new Error("unreachable");
+    expect(result.blocked.reason).toBe("forbidden_action");
+  });
+
+  it("still allows a directory whose name merely contains \"test\" as a substring", async () => {
+    const charter = baseCharter({ forbiddenActions: ["modify_tests"] });
+    const { watcher } = makeWatcher(charter);
+    const { log } = makeLog();
+    const router = new ToolRouter({ workspace, watcher, agentId: 1, budget: { toolCalls: 0 }, log });
+
+    const result = await router.call({
+      class: "write_repo",
+      target: "src/testing/helpers.ts",
+      args: { content: "// perfectly normal source file\n" },
+    });
+    expect(result).toEqual({ ok: true, output: "wrote src/testing/helpers.ts" });
   });
 });

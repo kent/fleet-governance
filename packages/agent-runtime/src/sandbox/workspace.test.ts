@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile as fsWriteFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readFile, rm, symlink, writeFile as fsWriteFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -88,5 +88,60 @@ describe("Workspace.listFiles", () => {
     await workspace.writeFile("src/added.ts", "// added\n");
     const files = await workspace.listFiles();
     expect(files).toContain("src/added.ts");
+  });
+});
+
+describe("Workspace: symlinks are refused (F1)", () => {
+  let outsideDir: string;
+  let outsideFileDir: string;
+  let outsideFile: string;
+
+  beforeEach(async () => {
+    outsideDir = await mkdtemp(join(tmpdir(), "fleet-outside-dir-"));
+    await fsWriteFile(join(outsideDir, "secret.txt"), "outside directory content\n");
+
+    outsideFileDir = await mkdtemp(join(tmpdir(), "fleet-outside-file-"));
+    outsideFile = join(outsideFileDir, "secret2.txt");
+    await fsWriteFile(outsideFile, "outside file content\n");
+
+    await symlink(outsideDir, join(fixtureDir, "escape-dir"), "dir");
+    await symlink(outsideFile, join(fixtureDir, "escape-file"), "file");
+  });
+
+  afterEach(async () => {
+    await rm(outsideDir, { recursive: true, force: true });
+    await rm(outsideFileDir, { recursive: true, force: true });
+  });
+
+  it("does not copy either symlink into the workspace", async () => {
+    const workspace = await Workspace.fromFixture(fixtureDir, 1, runDir);
+    await expect(lstat(join(workspace.dir, "escape-dir"))).rejects.toThrow();
+    await expect(lstat(join(workspace.dir, "escape-file"))).rejects.toThrow();
+  });
+
+  it("refuses to read through a symlink to a directory outside the workspace (defense in depth, independent of the copy filter)", async () => {
+    const workspace = await Workspace.fromFixture(fixtureDir, 1, runDir);
+    await symlink(outsideDir, join(workspace.dir, "later-escape-dir"), "dir");
+    await expect(workspace.readFile("later-escape-dir/secret.txt")).rejects.toThrow(/escapes/i);
+  });
+
+  it("refuses to read or write through a symlink to a file outside the workspace", async () => {
+    const workspace = await Workspace.fromFixture(fixtureDir, 1, runDir);
+    await symlink(outsideFile, join(workspace.dir, "later-escape-file"), "file");
+    await expect(workspace.readFile("later-escape-file")).rejects.toThrow(/escapes/i);
+    await expect(workspace.writeFile("later-escape-file", "overwritten")).rejects.toThrow(/escapes/i);
+    expect(await readFile(outsideFile, "utf8")).toBe("outside file content\n");
+  });
+
+  it("refuses a symlink even when its own target resolves inside the workspace", async () => {
+    const workspace = await Workspace.fromFixture(fixtureDir, 1, runDir);
+    await symlink(join(workspace.dir, "src", "index.ts"), join(workspace.dir, "src", "internal-link.ts"), "file");
+    await expect(workspace.readFile("src/internal-link.ts")).rejects.toThrow(/escapes/i);
+  });
+
+  it("still allows a normal new-file write whose parent exists but whose file does not", async () => {
+    const workspace = await Workspace.fromFixture(fixtureDir, 1, runDir);
+    await workspace.writeFile("src/brand-new.ts", "// new\n");
+    expect(await workspace.readFile("src/brand-new.ts")).toBe("// new\n");
   });
 });

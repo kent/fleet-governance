@@ -24,10 +24,10 @@ export type ToolRouterOpts = {
   workspace: Workspace;
   watcher: LedgerWatcher;
   agentId: number;
-  /** The task's running tool-call usage as of construction (not a maximum: the maximum is
-   *  `charter.budget.toolCalls`, read fresh from the ledger snapshot on every call). Lets a
-   *  resumed run seed the counter from wherever a prior process left off, rather than always
-   *  starting at 0. */
+  /** This is the task's *starting* tool-call usage count, plainly: not a maximum. The maximum
+   *  comes from `charter.budget.toolCalls`, read fresh from the ledger snapshot on every call.
+   *  Lets a resumed run seed the counter from wherever a prior process left off, rather than
+   *  always starting at 0. (M7) */
   budget: { toolCalls: number };
   log: (r: GatewayLogRecord) => void;
   fetchImpl?: typeof fetch;
@@ -42,24 +42,68 @@ export type ToolRouterOpts = {
   packageInstallRunner?: CommandRunner;
 };
 
-/** Marker string an operator writes into `charter.forbiddenActions` to mean "no writes under a
- *  top-level `test/` directory", spec'd by the task brief. This is not an `ActionClass` or a
- *  `class:target` pair `evaluateAction` already understands (those are exact-string matches; this
- *  is a glob over every path under `test/`), so it is checked here, once, only for `write_repo`,
- *  after the gateway's own charter/exception/escalation/budget checks have already run. */
+/** Marker string an operator writes into `charter.forbiddenActions` to mean "no writes that
+ *  modify a test", spec'd by the task brief. This is not an `ActionClass` or a `class:target`
+ *  pair `evaluateAction` already understands (those are exact-string matches; this is a pattern
+ *  over paths and file names), so it is checked here, once, only for `write_repo`, after the
+ *  gateway's own charter/exception/escalation/budget checks have already run. */
 const MODIFY_TESTS_MARKER = "modify_tests";
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** True when `target` names a path under a top-level `test/` directory (`test/**` in the
- *  brief's glob notation): the first path segment, after stripping a leading `./`, is `test`. */
-function isUnderTestDir(target: string): boolean {
+/** Directory names that mark a path as test-owned, wherever they occur (F6 ruling: not just a
+ *  top-level `test/`, and not a substring match either - `src/testing/helpers.ts` is not a test
+ *  file just because "testing" contains "test"). */
+const TEST_DIR_SEGMENTS: ReadonlySet<string> = new Set(["test", "tests", "__tests__"]);
+
+/** Matches a base file name like `foo.test.ts` or `foo.spec.tsx`: `.test.` or `.spec.` appears
+ *  somewhere in the name, followed by at least one more character (the extension). */
+const TEST_FILE_NAME_PATTERN = /\.(test|spec)\./;
+
+/**
+ * True when `target` names a test file, F6's widened ruling: any path segment exactly equals
+ * `test`, `tests`, or `__tests__` (a directory, not a substring - `testing/` does not count), or
+ * the base file name matches `*.test.*` / `*.spec.*`. Deliberately broader than the brief's
+ * literal `test/**`: the rule exists to stop an agent faking a green suite by editing the tests
+ * that check its own work, and a write this catches that was actually a legitimate edit still
+ * has a governance path out (`GRANT_EXCEPTION`, see F3's exception check in `call`).
+ */
+function isTestModification(target: string): boolean {
   const normalized = target.startsWith("./") ? target.slice(2) : target;
-  const first = normalized.split("/")[0];
-  return first === "test";
+  const segments = normalized.split("/").filter((segment) => segment.length > 0);
+  if (segments.some((segment) => TEST_DIR_SEGMENTS.has(segment))) return true;
+  const fileName = segments[segments.length - 1] ?? "";
+  return TEST_FILE_NAME_PATTERN.test(fileName);
 }
+
+/**
+ * npm's package-name grammar plus an optional `@<version-range>` suffix (F4). The character
+ * classes here still permit a leading `-` (`~-` at the end of `[a-z0-9~-]` is literal, not a
+ * range), which is exactly what would let a name like `-g` be read by npm as an option flag
+ * rather than a package name, so `isValidPackageSpec` rejects that separately rather than
+ * relying on the regex alone.
+ */
+const NPM_PACKAGE_SPEC_PATTERN = /^(@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*(@[A-Za-z0-9.^~<>=*|+-]+)?$/;
+const NPM_PACKAGE_SPEC_MAX_LENGTH = 214;
+
+/** Validates `pkg` before it ever reaches a subprocess (F4): the npm package-name grammar, a
+ *  214-char length cap, no leading `-` (would be read as an npm option flag), and no whitespace
+ *  (a separate-argv-element injection attempt). `packageInstall` additionally puts `pkg` after a
+ *  literal `--` in argv, so even a spec that somehow slipped past this check could not be read
+ *  as an option by npm's own parser; the two defenses are independent, neither relies on the
+ *  other. */
+function isValidPackageSpec(pkg: string): boolean {
+  if (pkg.length === 0 || pkg.length > NPM_PACKAGE_SPEC_MAX_LENGTH) return false;
+  if (pkg.startsWith("-")) return false;
+  if (/\s/.test(pkg)) return false;
+  return NPM_PACKAGE_SPEC_PATTERN.test(pkg);
+}
+
+/** F5: `network_fetch`'s response body is capped at 1 MiB so a malicious or merely huge response
+ *  cannot exhaust memory or fill a report. */
+const MAX_RESPONSE_BYTES = 1024 * 1024;
 
 /**
  * Routes one agent's tool calls through the charter gateway: describes the call as an
@@ -106,7 +150,14 @@ export class ToolRouter {
     this.usageState.toolCalls += 1;
 
     if (verdict.verdict === "ALLOW" && tc.class === "write_repo" && this.isForbiddenTestWrite(snapshot.charter, tc.target)) {
-      verdict = this.forbiddenTestWriteVerdict(descriptor);
+      // F3: this block is waivable like any other forbidden_action (spec 7.6, evaluate.ts's
+      // forbidden_action arm), so its own GRANT_EXCEPTION draft has to actually mean something.
+      // Check the exact payload the draft carries against the exception registry before
+      // committing to the block; a granted exception lets the write proceed as basis:"exception",
+      // logged that way, exactly like a charter-based exception would.
+      const forbidden = this.forbiddenTestWriteVerdict(descriptor);
+      const exceptionVersion = await snapshot.exceptionVersion(forbidden.payloadHash);
+      verdict = exceptionVersion !== 0 ? { verdict: "ALLOW", basis: "exception", payloadHash: forbidden.payloadHash } : forbidden;
     }
 
     this.logSink(this.buildLogRecord(snapshot, descriptor, verdict));
@@ -124,7 +175,7 @@ export class ToolRouter {
   }
 
   private isForbiddenTestWrite(charter: CharterV1, target: string): boolean {
-    return charter.forbiddenActions.includes(MODIFY_TESTS_MARKER) && isUnderTestDir(target);
+    return charter.forbiddenActions.includes(MODIFY_TESTS_MARKER) && isTestModification(target);
   }
 
   private forbiddenTestWriteVerdict(descriptor: ActionDescriptor): GatewayVerdict & { verdict: "BLOCK" } {
@@ -206,8 +257,16 @@ export class ToolRouter {
     // Gateway already confirmed tc.target is on charter.externalAllowlist (package_install is a
     // host-allowlisted class, evaluate.ts's isTargetAllowed) before this handler ever runs.
     const pkg = typeof tc.args.pkg === "string" ? tc.args.pkg : "";
+    if (!isValidPackageSpec(pkg)) {
+      // F4: rejected before any subprocess, argument-injection attempts included ("-g", "foo
+      // bar", "foo;rm" are all invalid specs, not commands that ever reach npm).
+      throw new Error("invalid_package_name");
+    }
     const cmd = "npm";
-    const args = ["install", pkg, "--registry", `https://${tc.target}`];
+    // F4: "--" ends npm's own option parsing, so pkg (already validated, and now also argv's
+    // very last element rather than interpolated into a flag) cannot be read as another flag
+    // even if some future change to the validation above let something unexpected through.
+    const args = ["install", "--registry", `https://${tc.target}`, "--", pkg];
     const result = await this.packageInstallRunner(cmd, args, { cwd: this.workspace.dir });
     return JSON.stringify({ command: `${cmd} ${args.join(" ")}`, code: result.code, output: result.output });
   }
@@ -223,7 +282,66 @@ export class ToolRouter {
     const scheme = tc.args.scheme === "http" ? "http" : "https";
     const url = `${scheme}://${tc.target}${path}`;
 
-    const response = await this.fetchImpl(url, { method: "GET", signal: AbortSignal.timeout(10_000) });
-    return response.text();
+    // F2: never auto-follow a redirect. A 3xx response might point anywhere, including a host
+    // the gateway never evaluated or allowlisted; "manual" hands the raw redirect response back
+    // instead of chasing it, so the handler can refuse it outright rather than ever issuing a
+    // second request this router never asked the gateway about.
+    const response = await this.fetchImpl(url, {
+      method: "GET",
+      redirect: "manual",
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location") ?? "";
+      let locationHost = location;
+      try {
+        locationHost = new URL(location, url).host;
+      } catch {
+        // Location did not parse as a URL (relative to url or otherwise); fall back to the raw
+        // header value rather than throwing out of this branch.
+      }
+      // Deliberately not the full URL/Location text: only the status and the target host, so
+      // the error string cannot itself carry a query string or credentials from the redirect.
+      throw new Error(`redirect_refused: ${response.status} -> ${locationHost}`);
+    }
+
+    return this.readCappedBody(response);
+  }
+
+  /** F5: reads `response`'s body up to `MAX_RESPONSE_BYTES`, honoring `content-length` when
+   *  present (rejects before reading anything), and otherwise counting bytes as they stream in
+   *  and aborting the moment the cap is crossed, so an unbounded or mislabeled body can never be
+   *  buffered in full first. */
+  private async readCappedBody(response: Response): Promise<string> {
+    const contentLengthHeader = response.headers.get("content-length");
+    if (contentLengthHeader !== null) {
+      const contentLength = Number(contentLengthHeader);
+      if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
+        throw new Error("response_too_large");
+      }
+    }
+
+    const body = response.body;
+    if (!body) {
+      return response.text();
+    }
+
+    const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        total += value.byteLength;
+        if (total > MAX_RESPONSE_BYTES) {
+          await reader.cancel();
+          throw new Error("response_too_large");
+        }
+        chunks.push(value);
+      }
+    }
+    return Buffer.concat(chunks).toString("utf8");
   }
 }
