@@ -131,3 +131,133 @@ submodule, it is suppressed via `[profile.default] ignored_warnings_from =
 ["lib/agora-governor/lib/openzeppelin-contracts"]` in `contracts/foundry.toml` (confirmed
 honoured by Foundry 1.7.1, verified with `forge config`), rather than by changing the revert
 behavior or editing vendored code.
+
+## Task 5: HookMiner, FleetHook, and a cross-context `IHooks` type mismatch
+
+### Contract sizes
+
+`forge build --sizes` after adding `FleetHook`, run from `contracts/`:
+
+```
+| Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
+| AgoraGovernor | 23,005           | 26,483             | 1,571               | 22,669               |
+| FleetHook     | 10,002           | 10,833             | 14,574              | 38,319               |
+| FleetRegistry | 1,422            | 3,284              | 23,154              | 45,868               |
+| FleetVotes    | 7,149            | 10,969             | 17,427              | 38,183               |
+| TaskLedger    | 6,616            | 7,078              | 17,960              | 42,074               |
+```
+
+`AgoraGovernor` is unchanged at 23,005 bytes runtime, as expected since it is vendored and
+untouched. `FleetHook` is 10,002 bytes runtime, well under the 24,576-byte limit.
+
+### Deviation 1: a contract's `public constant` is not reachable as `ContractName.CONSTANT`
+
+The brief's `FleetHook.t.sol` mines the CREATE2 salt with
+`HookMiner.find(address(this), FleetHook.PERMISSION_MASK, ...)`, reading the constant directly
+off the contract type before any instance exists (the salt search needs the flags value to look
+for). This does not compile: `ContractName.member` syntax only resolves the special `type(X)`
+members (`creationCode`, `runtimeCode`, `name`, `interfaceId`) and nested declarations (enums,
+errors, events, by name), plus whatever a *library* exposes this way, because a library's
+constants have no per-instance storage. A regular contract's `public constant`, by contrast, is
+exposed only through the getter function generated on a deployed instance; solc rejects
+`ContractName.CONSTANT` for it with `Member "PERMISSION_MASK" not found or not visible after
+argument-dependent lookup in type(contract FleetHook)`. Confirmed in isolation with a minimal
+contract unrelated to Agora or IHooks: a plain `contract Plain { uint160 public constant
+FOO_BAR = 0x22C0; }` fails the same way from another file, while the identical constant declared
+in a `library` compiles and resolves fine.
+
+Fix applied in `contracts/test/unit/FleetHook.t.sol`: both `HookMiner.find(...)` calls now pass
+the literal `0x22C0` (documented in the brief's own interface block as
+`PERMISSION_MASK = 0x22C0`) in place of `FleetHook.PERMISSION_MASK`, with a comment explaining
+why. `FleetHook.PERMISSION_MASK` itself is unchanged and still `public`; the deviation is only in
+how the test reads the value before deployment.
+
+### Deviation 2: `IHooks` imported by our files is not the same nominal type `AgoraGovernor` expects
+
+The brief's `FleetHook.t.sol` builds the governor with
+`new AgoraGovernor(15, 120, 1e18, 6000, IVotes(address(token)), timelock, address(0), address(0),
+IHooks(address(hook)))`. This fails to compile:
+
+```
+TypeError: Invalid type for argument in function call. Invalid implicit conversion from
+contract IHooks to contract IHooks requested.
+```
+
+Both sides of the message really do say "IHooks"; solc is reporting two distinct nominal types
+that happen to share a name. Root cause, confirmed with about a dozen minimal repros (isolated
+from FleetHook and from Agora entirely): `AgoraGovernor.sol` and `Hooks.sol` live inside
+`lib/agora-governor/` and import `IHooks` as `import {IHooks} from "src/interfaces/IHooks.sol";`,
+resolved through the context-scoped remapping (`lib/agora-governor/:src/=lib/agora-governor/src/`
+in `contracts/remappings.txt`, itself redundant with a remapping Foundry auto-detects from the
+submodule's own `foundry.toml` `src = 'src'`, confirmed by testing with that manual line removed:
+identical failure). Context-scoped remappings apply only when the *importing file* is inside the
+context directory, by design, so no import written in our own `contracts/src` or `contracts/test`
+files (regardless of the exact string used: `agora-governor/src/interfaces/IHooks.sol`,
+`lib/agora-governor/src/interfaces/IHooks.sol`, or even the literal `src/interfaces/IHooks.sol`
+under a same-prefix global remapping) can ever resolve through that context rule. Every import
+route available to us produces a second, separate parse of the identical file, and solc's nominal
+typing treats the two `IHooks` declarations as different types. This is not fixable from the
+consumer side by changing `contracts/remappings.txt`: every combination tried (global-only
+form, context-only form, both together, `auto_detect_remappings = false`) reproduced the same
+error for a value built from *any* import reachable from outside `lib/agora-governor/`. It is
+also not specific to `FleetHook`: a two-line repro with no interface inheritance at all (just
+`new AgoraGovernor(..., IHooks(someAddress))` from a throwaway contract) fails identically, so
+this would block any future code (deployment scripts, Task 7's governor wiring) that constructs
+`AgoraGovernor` with a hook address from outside the submodule.
+
+Two call sites were affected and fixed differently, both confined to files already in this
+task's staged set; `contracts/remappings.txt` and `contracts/foundry.toml` are untouched:
+
+- **`FleetHook`'s own constructor** called `Hooks.validateHookPermissions(IHooks(address(this)),
+  getHookPermissions())`, which has the same problem (the library function's `self` parameter is
+  typed with the submodule's `IHooks`). Fixed by inlining the equivalent bit-check directly in
+  `FleetHook.sol` (`_validateHookPermissions`, private, called from the constructor): it compares
+  `getHookPermissions()` against `uint160(address(this))` masked with each of `Hooks`'s 16 flag
+  constants (plain `uint160` values, not interface-typed, so they have no cross-context identity
+  problem) and reverts with `Hooks.HookAddressNotValid(address(this))` on any mismatch, exactly
+  the check `validateHookPermissions` performs. Behavior is identical; only the call mechanism
+  changed.
+- **The test's `new AgoraGovernor(...)`** needed an actual `IHooks`-typed argument, which has no
+  fix at the Solidity source level. Fixed by deploying with forge-std's `deployCode(string,bytes)`
+  (`StdCheats`, inherited by `Test`) instead of `new`: it reads `AgoraGovernor`'s compiled creation
+  code by artifact name (`"AgoraGovernor.sol:AgoraGovernor"`) and appends ABI-encoded constructor
+  arguments, bypassing Solidity's constructor-argument type-checking entirely. This is
+  byte-for-byte equivalent to the `new` call it replaces: contract and interface type constructor
+  arguments are ABI-encoded identically to `address`, so `abi.encode(..., address(hook))` produces
+  the same calldata `IHooks(address(hook))` would have. `IVotes` and `TimelockController` were
+  left in their prior form in every other respect (both resolve through the *same*
+  `@openzeppelin/contracts/=...` remapping for every importer, submodule and consumer alike, so
+  they do not have this problem); the `IVotes`/`IHooks` imports became unused after the change and
+  were removed from the test file to keep the build warning-free.
+
+**Handoff to later tasks:** any future code that constructs `AgoraGovernor` (or calls anything
+else whose signature carries the submodule's `IHooks`, `Hooks.Permissions`, or similar
+context-resolved types) from a file outside `lib/agora-governor/` will hit this same error and
+need the same `deployCode`-style workaround, or a structural fix to how the submodule is vendored
+(for instance, consuming it without a nested `foundry.toml` of its own, so there is only one
+resolution context for its internal imports). Flagging this explicitly for whoever deploys the
+real governor.
+
+### Note for Task 8: hook revert data is not preserved through `Hooks.callHook`
+
+Read (not observed live; `test_BeforeVoteSucceededUsesForOnlyRule` does not exercise a revert
+path) directly from `lib/agora-governor/src/libraries/Hooks.sol`: both `callHook` (used for
+`beforePropose`, `afterPropose`, `beforeVote`) and `staticCallHook` (used for
+`beforeVoteSucceeded`) do
+
+```solidity
+if (!success) revert HookCallFailed();
+```
+
+`HookCallFailed()` is declared with **no parameters** (`error HookCallFailed();`), and the
+`returndata` from the failed call is never read on the revert path, only on success. There is no
+ERC-7751 `WrappedError(target, selector, reason, details)` construction anywhere in this pinned
+fork, no try/catch around the hook call, and no other wrapping layer in `AgoraGovernor.sol`. This
+means a revert from inside `FleetHook` (for example `NotMember(address)` or
+`CharterVersionMismatch(uint32,uint32)`) is **not preserved** in any form once it crosses
+`Hooks.callHook`/`staticCallHook`: the governor's own revert carries only the bare
+`Hooks.HookCallFailed` selector, and the original error's selector, arguments, and reason string
+are all discarded. Code that needs to distinguish *why* a proposal or vote was rejected by
+`FleetHook` cannot do so by inspecting the governor call's revert data; it would need to
+simulate the hook call directly (e.g. `eth_call` against `FleetHook` with the same arguments) to
+recover the real error.
