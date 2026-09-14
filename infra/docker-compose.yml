@@ -71,5 +71,70 @@ services:
       retries: 10
       start_period: 30s
 
+  cpls:
+    build:
+      context: ..
+      dockerfile: infra/cpls/Dockerfile
+    ports:
+      - "${CPLS_PORT:-8001}:8001"
+    environment:
+      ENVIRONMENT: dev
+      GCS_BUCKET_NAME: ${GCS_BUCKET_NAME:-fleet-archive-dev}
+      DAO_NODE_URL_TEMPLATE: http://dao-node:8000
+      SCHEDULER_INTERVAL_MINUTES: "1"
+      # Only "fleet" is provisioned (infra/cpls/tenants/fleet.yaml.template);
+      # upstream's own default here is a list of unrelated production DAOs.
+      INFRA_DAO_SLUGS: fleet
+      # Points cpls/config.py's load_tenant_configs() at the directory
+      # infra/cpls/entrypoint.sh renders infra/cpls/tenants/*.yaml.template
+      # into, instead of the upstream default (a private repo checkout at
+      # /config/envs/prod that only exists if built with a GITHUB_TOKEN).
+      TENANT_CONFIG_PATH: /tenants
+      # Selects which key of fleet.yaml.template's `deployments:` map to
+      # use; kept equal to CONTRACT_DEPLOYMENT (dao-node's own deployment
+      # key) so both services agree on one deployment name.
+      CONTRACT_DEPLOYMENT: ${CONTRACT_DEPLOYMENT:-local}
+      DEPLOYMENT: ${CONTRACT_DEPLOYMENT:-local}
+      CHAIN_ID: ${CHAIN_ID:-31337}
+      TOKEN_ADDRESS: ${TOKEN_ADDRESS}
+      GOVERNOR_ADDRESS: ${GOVERNOR_ADDRESS}
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcs.json
+      # google-cloud-storage's Client() reads this env var directly and, when
+      # set, swaps in AnonymousCredentials instead of resolving
+      # GOOGLE_APPLICATION_CREDENTIALS/ADC, so the bind-mounted /dev/null
+      # placeholder below is never actually parsed as credentials while this
+      # points at fake-gcs. Defaulting it here (rather than only under a
+      # compose profile, which can't conditionally add one env var to an
+      # always-on service) is what keeps `docker compose up` bootable without
+      # real GCS credentials. To use real GCS: set STORAGE_EMULATOR_HOST= (
+      # blank) and GCS_CREDENTIALS_FILE in infra/.env, and start the stack
+      # without --profile offline (fake-gcs then never runs).
+      STORAGE_EMULATOR_HOST: ${STORAGE_EMULATOR_HOST:-http://fake-gcs:4443}
+    volumes:
+      # Real GCS credentials file (JSON), mounted read-only. Defaults to
+      # /dev/null, an empty placeholder; harmless because STORAGE_EMULATOR_HOST
+      # above makes cpls skip reading it. Set GCS_CREDENTIALS_FILE in
+      # infra/.env to a real service-account key to switch to real GCS.
+      - ${GCS_CREDENTIALS_FILE:-/dev/null}:/secrets/gcs.json:ro
+    depends_on:
+      dao-node:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # Local stand-in for the GCS archive bucket. Only started with
+  # `docker compose --profile offline up`; infra/scripts/create-fake-bucket.sh
+  # creates the bucket cpls writes to once this is up.
+  fake-gcs:
+    image: fsouza/fake-gcs-server
+    command: ["-scheme", "http", "-port", "4443", "-public-host", "localhost:4443", "-external-url", "http://localhost:4443"]
+    ports:
+      - "${FAKE_GCS_PORT:-4443}:4443"
+    profiles: ["offline"]
+
 volumes:
   postgres-data:

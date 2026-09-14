@@ -296,3 +296,377 @@ contract (51 ABI fragments, superset of the abstract `ERC20Votes` import
 it extends, 44 fragments, plus a `registry` accessor), so it's the
 correct one for a real token deployment and is what Task 6's script
 should also prefer when both are present.
+
+## CPLS and the archive store (Task 4), pinned commit be1ef85645b467008fb6028d6df9db4e6f39dc66
+
+### Env var names, confirmed from source
+
+`vendor/cpls/cpls/config.py`:
+- `ENVIRONMENT` (line 10, default `dev`), `GCS_BUCKET_NAME` (line 13),
+  `WRITE_TO_DISK = ENVIRONMENT == 'dev'` (line 21, not itself an env var).
+- Tenant config directory is `TENANT_CONFIG_PATH` (line 22, singular
+  "TENANT", not "TENANTS"), default `/config/envs/prod`. The module-level
+  variable holding it is named `TENANTS_CONFIG_PATH` (plural) but the env
+  var it reads is singular; easy to typo.
+- `DEPLOYMENT` (line 23, default `main`) selects which key of a tenant
+  YAML's `deployments:` map to use.
+- `INFRA_DAO_SLUGS` (line 24, default
+  `ens,optimism,cyber,pguild,syndicate`, comma-separated or `all`) is the
+  list the scheduler iterates; we set it to `fleet` since only that tenant
+  is provisioned.
+- `DAO_NODE_URL_TEMPLATE` (line 29) is the exact env key, confirmed; the
+  brief's guess was right.
+
+`vendor/cpls/cpls/gcs.py`:
+- `GCSClient.__init__` (line 16) defaults `local_copy_dir` to the
+  hardcoded developer path `/home/developer/code/cpls/data`; this is a Python
+  default, not read from any env var, so it can't be redirected without a
+  source patch. We didn't patch it (out of scope, harmless): the path is
+  created with `mkdir(parents=True)` inside the container and the debug
+  copies just live in the container's writable overlay filesystem,
+  discarded on removal. Confirmed populated:
+  `docker exec infra-cpls-1 find /home/developer/code/cpls/data -type f` listed
+  `jobs/scheduled/...json`, `jobs/sync_daonode/...json`,
+  `data/fleet/proposal_list.full.ndjson.gz`, and
+  `data/fleet/proposal_list/dao_node/raw.ndjson.gz`.
+- Also noticed in passing (lines ~135-138 and ~245-248): the local debug
+  copy is written as **uncompressed** text but saved under the
+  **`.gz`-suffixed** filename (`_write_local_copy(blob_name, ...)` is
+  called with the gzip blob name but plain-text bytes). Pre-existing
+  upstream behaviour, not something we touched; worth knowing if anyone
+  tries to `gunzip` one of these local debug files and gets "not in gzip
+  format".
+- Credentials: `GOOGLE_CREDENTIALS` (a JSON blob env var, line 28) if set,
+  else plain `storage.Client()` (line 33), which resolves credentials via
+  standard `google-auth` behaviour: `GOOGLE_APPLICATION_CREDENTIALS` (a
+  file path) or metadata-server ADC. Neither `GOOGLE_APPLICATION_CREDENTIALS`
+  nor `STORAGE_EMULATOR_HOST` are CPLS-specific; they're standard
+  `google-cloud-storage` library env vars, and `vendor/cpls/DOCUMENTATION.md`'s
+  own env var reference table (lines 862-880) doesn't mention either,
+  confirming they're library-level, not application-level.
+
+`vendor/cpls/cpls/sync_daonode.py`: `DAO_NODE_URL_TEMPLATE.format(tenant_namespace=self.infra_dao_slug)`
+at lines 127, 134, 142, 151, fetching `/v1/progress`, `/v1/proposals`,
+`/v1/proposal/{id}`, `/v1/proposal_types` respectively. Confirmed the
+template does **not** need to contain `{tenant_namespace}`: Python's
+`str.format()` silently ignores unused keyword arguments when the format
+string has no matching placeholder (`'http://dao-node:8000'.format(tenant_namespace='fleet')`
+returns `'http://dao-node:8000'` unchanged). `DAO_NODE_URL_TEMPLATE=http://dao-node:8000`
+works fine as a single-DAO-Node stack, no placeholder required.
+
+### STORAGE_EMULATOR_HOST really does bypass ADC, verified empirically against the built image
+
+Ran directly against the pinned `google-cloud-storage==2.18.2` (from
+`vendor/cpls/requirements.txt`) inside the built `infra-cpls` image:
+
+```
+$ docker run --rm --entrypoint python3 -e STORAGE_EMULATOR_HOST=http://fake-gcs:4443 infra-cpls -c "
+from google.cloud import storage
+c = storage.Client()
+print('credentials type:', type(c._credentials))
+print('base_url:', c._connection.API_BASE_URL)
+"
+credentials type: <class 'google.auth.credentials.AnonymousCredentials'>
+base_url: http://fake-gcs:4443
+```
+
+So when `STORAGE_EMULATOR_HOST` is set, `storage.Client()` swaps in
+`AnonymousCredentials` and never calls `google.auth.default()` at all,
+meaning the `GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcs.json` bind mount
+(defaulted to `/dev/null`, an empty file) is never actually read or
+parsed while pointed at the emulator. Confirmed the failure mode too: a
+bare `docker run` with no env vars at all crashed at
+`storage.Client()` with `google.auth.exceptions.DefaultCredentialsError`,
+and because `gcs_client = GCSClient(GCS_BUCKET_NAME)` is instantiated at
+**module import time** in `cpls/server.py` (line 32, outside any
+try/except. Only the later `self.bucket = self.client.bucket(...)` call
+in `gcs.py` is wrapped, so that exception propagates all the way up through
+`uvicorn`'s app import and kills the whole container before it ever binds
+a port. This is why `STORAGE_EMULATOR_HOST` has to default to something
+usable rather than being left unset by default.
+
+### `STORAGE_EMULATOR_HOST` couldn't be scoped strictly to the `offline` compose profile
+
+The brief's framing was "under the `offline` profile, also
+`STORAGE_EMULATOR_HOST=http://fake-gcs:4443`", implying it should only
+apply when `--profile offline` is active. Compose profiles gate whether a
+*service* starts, not individual env vars within one always-on service
+definition, and there's no conditional syntax to add one env var to
+`cpls` only when a given profile is requested. Given the crash mode
+above, leaving `STORAGE_EMULATOR_HOST` unset by default was not an
+option (it would crash-loop `docker compose up` with no profile and no
+real credentials configured). Instead, `infra/docker-compose.yml`'s
+`cpls` service defaults it to the fake-gcs address via
+`${STORAGE_EMULATOR_HOST:-http://fake-gcs:4443}` and documents the
+override in `infra/.env.example`. To use real GCS: set
+`STORAGE_EMULATOR_HOST=` (blank) and `GCS_CREDENTIALS_FILE=/path/to/real-key.json`
+in `infra/.env`, set `GCS_BUCKET_NAME` to the real bucket, and run
+`docker compose up` **without** `--profile offline` (fake-gcs then never
+starts, which is fine since nothing points at it once
+`STORAGE_EMULATOR_HOST` is blank).
+
+### No literal `sync_daonode` job type exists in `cpls/jobs.py`; `job.type` is a free-form label
+
+The brief (and `vendor/cpls/DOCUMENTATION.md`'s own example payload) both
+suggest posting a job of `"type": "sync_daonode"`, but grepping the
+source (`grep -rn "sync_daonode\b" cpls/*.py`) finds no job-type constant
+or dispatch branch keyed on that string anywhere. `JobQueue._execute_job`
+(`cpls/jobs.py` lines ~366-419) does not branch on `job.type` at all; it
+iterates `job.payload['sources']` and dispatches by **source name**
+(`'dao_node'`, `'eas-atlas'`, `'eas-oodao'`, `'snapshot'`), driven
+entirely by payload fields:
+- `infra_dao_slug` (required; `JobQueue.add_job`, line ~124-126, raises
+  `ValueError` if missing)
+- `sources`: a list, e.g. `["dao_node"]` (required; `KeyError` if absent)
+- `logic`: must be the literal string `"refresh_list"` for any sync to
+  actually run (required key, but only `"refresh_list"` does anything;
+  any other value silently produces zeroed stats)
+- `config`: the **full tenant config dict** as produced by
+  `load_tenant_configs()`, not just a tenant slug string (required key)
+- `reset`: boolean (required key)
+
+`job.type` (`POST /jobs`'s `"type"` field) is stored on the `Job` record
+and used only to namespace the GCS job-result path
+(`jobs/{job.type}/{timestamp}_{job.id}.json`, `cpls/gcs.py` lines
+319-321) and the `GET /jobs/{id}` response's `type` field; it has zero
+effect on execution. Production code (`cpls/server.py`'s
+`scheduled_proposal_job`, lines 57-58) uses `job_type="scheduled"`, not
+`"sync_daonode"`. We still posted `"type": "sync_daonode"` in the manual
+verification job below, since the brief asked for it by that name and it
+is a valid (if cosmetic) choice for the label. Confirmed it round-trips
+correctly (`GET /jobs/{id}` returned `"type":"sync_daonode"`, and the
+result landed at `jobs/sync_daonode/...json` in the bucket) with no
+functional difference from `"scheduled"`.
+
+Exact working payload (see also "Verify a job writes the archive" below):
+
+```json
+{
+  "type": "sync_daonode",
+  "payload": {
+    "infra_dao_slug": "fleet",
+    "logic": "refresh_list",
+    "sources": ["dao_node"],
+    "config": {
+      "schema": "fleet",
+      "dao_slug": "FLEET",
+      "index_tenant_prefix": "fleet",
+      "features": {"oodao": false, "snapshot_proposals": false, "dao_node_proposals": true},
+      "deployment": {
+        "chain_id": 31337,
+        "gov": {"address": "0x1000000000000000000000000000000000000002"},
+        "token": {"address": "0x1000000000000000000000000000000000000001"}
+      }
+    },
+    "reset": true
+  }
+}
+```
+
+### `reset: true` (or `RESET_PROPOSALS_ON_RESTART`'s first-run default) is required to get any output at all with zero proposals
+
+`DaoNodeSync.refresh_list` (`cpls/sync_daonode.py`, end of method) only
+calls `refresh_source_list`/`refresh_full_list` (the calls that actually
+write `proposal_list/{source}/raw.ndjson.gz` and
+`proposal_list.full.ndjson.gz`) `if anything_changed or self.reset`.
+`anything_changed` is initialized `False` and is never set anywhere in
+the method when the proposals loop body never executes (which is exactly
+what happens with dao-node's placeholder-address, zero-proposal chain).
+So a job with `"reset": false` against an empty DAO produces **no**
+archive objects at all, only the `jobs/{type}/...json` result record.
+
+This did not block verification because `RESET_PROPOSALS_ON_RESTART`
+defaults to `true` (`cpls/config.py` line 26) and
+`reset_tracker = defaultdict(lambda: RESET_PROPOSALS_ON_RESTART)`
+(`cpls/server.py` line 27) means the **first** scheduled job for a given
+`infra_dao_slug` after container start always runs with `reset=True`
+(then flips to `False` for subsequent runs, `cpls/server.py` line 71).
+With `SCHEDULER_INTERVAL_MINUTES=1`, this fired automatically about a
+minute after boot and produced the expected objects without any manual
+job post. For the manual `POST /jobs` verification we set
+`"reset": true` explicitly so the result wouldn't depend on scheduler
+timing.
+
+### Health route and job dispatch confirmed
+
+`GET /health` (`cpls/server.py` lines 205-213) returns
+`{"status": "healthy", "queue_size": ..., "total_jobs": ..., "current_job": ...}`
+unconditionally (no error branch), unlike dao-node's `/health` (see
+above). `infra/docker-compose.yml`'s `cpls` healthcheck targets it
+directly, same `python3 -c "import urllib.request; ..."` pattern as
+dao-node's healthcheck (python:3.11-slim has no `curl`).
+
+### Object names actually produced (verified against fake-gcs, zero proposals)
+
+```
+data/fleet/proposal_list/dao_node/raw.ndjson        (uncompressed sibling, 0 bytes; ENVIRONMENT=dev writes both)
+data/fleet/proposal_list/dao_node/raw.ndjson.gz      (20 bytes: gzip of an empty string)
+data/fleet/proposal_list.full.ndjson                 (0 bytes)
+data/fleet/proposal_list.full.ndjson.gz               (20 bytes)
+jobs/scheduled/<timestamp>_<job-id>.json              (job result record, job_type="scheduled")
+jobs/sync_daonode/<timestamp>_<job-id>.json            (job result record, job_type="sync_daonode")
+```
+
+The `.ndjson` (uncompressed) sibling alongside every `.ndjson.gz` is
+`cpls/gcs.py`'s own behaviour: `must_upload_uncompressed = blob_name.endswith('.ndjson') or (ENVIRONMENT == "dev")`
+(line 213), so in `dev` mode every upload gets both forms regardless of
+the blob name passed in.
+
+### CPLS's own tenant config: no private `tenants` repo, rendered from a template like dao-node's
+
+`vendor/cpls/Dockerfile`'s upstream `CMD` is confirmed as
+`python -m uvicorn cpls.server:app --host 0.0.0.0 --port 8001`
+(`infra/cpls/entrypoint.sh` execs this exactly). But that Dockerfile also
+`git clone`s a **private** `github.com/voteagora/tenants.git` repo into
+`/config` using a `GITHUB_TOKEN` build arg we don't have and shouldn't
+need for a local fleet-only stack. `vendor/cpls/DOCUMENTATION.md`'s
+"Expected Tenant Config Structure" (lines 480-503) and
+`cpls/config.py`'s `load_tenant_configs()` (lines 76-107) together give
+the exact shape needed: a YAML file per tenant, keyed by filename stem,
+with `schema`, `dao_slug`, `index_tenant_prefix`, `features`, and a
+`deployments:` map keyed by deployment name with `chain_id`,
+`gov.address`, `token.address`. `infra/cpls/tenants/fleet.yaml.template`
+supplies this for `fleet` (`dao_slug: FLEET`, `index_tenant_prefix: fleet`,
+`schema: fleet`), and `infra/cpls/entrypoint.sh` renders it with
+`envsubst` into `$TENANT_CONFIG_PATH` (`/tenants`), the same pattern
+`infra/dao-node/entrypoint.sh` already uses for
+`config.template.yaml`. Compose sets `TENANT_CONFIG_PATH=/tenants`
+(overriding the upstream default `/config/envs/prod`) and
+`CONTRACT_DEPLOYMENT`/`DEPLOYMENT` to the same value dao-node uses, so
+the template's `deployments.<CONTRACT_DEPLOYMENT>:` key and CPLS's own
+`DEPLOYMENT` selector agree.
+
+### Blocking dao-node regression found and worked around: fake token/gov addresses have no ABI anywhere
+
+Bringing the full stack up under `--profile offline` failed before CPLS
+was even reachable: `dao-node` crashed on every boot (container exited
+1, `docker compose ps` showed `Error dependency dao-node failed to
+start`). `infra/.env` (gitignored, not `.env.example`) had
+`TOKEN_ADDRESS=0x1000000000000000000000000000000000000001` and
+`GOVERNOR_ADDRESS=0x1000000000000000000000000000000000000002` left over
+from Task 3's own verification (matching the addresses recorded in this
+file's dao-node section above). `infra/dao-node/abis/` (the `ABI_DIR`
+bind mount) held only `.gitkeep`, no file for either address, so patch
+0001's `load_abi()` (`vendor/dao-node/app/server.py`, patched, lines
+~1608-1636) fell through to `ABI.from_internet(...)` for the token
+address during `bootstrap_data_feeds`, and that 404s:
+
+```
+docker logs infra-dao-node-1
+...
+ERROR: ABI not found for 0x1000000000000000000000000000000000000001 @
+https://storage.googleapis.com/agora-abis/v2/31337/checked/0x1000...0001.json?t=...
+Error: Expecting value: line 1 column 1 (char 0)
+...
+Main ERROR: Not all workers acknowledged a successful startup. Shutting down.
+```
+
+Confirmed this is a real, deterministic 404 (not a sandboxing artifact):
+`docker run --rm curlimages/curl:latest -s -o /dev/null -w '%{http_code}\n' https://storage.googleapis.com/agora-abis/v2/31337/checked/0x1000000000000000000000000000000000000001.json`
+returned `404`, and containers do have normal internet egress (the image
+pull for that test succeeded). The all-zero placeholder
+(`0x0000...0000`, `.env.example`'s own default) 404s identically, so
+switching back to it would not have helped. This crash happens
+unconditionally for **any** address without a real, published ABI or a
+local `ABI_DIR` override, and it blocks every dao-node endpoint (not
+just `/v1/proposals`), which in turn blocks `cpls`'s own boot healthcheck
+and any DAO Node sync job.
+
+Worked around locally by adding two placeholder ABI files to
+`infra/dao-node/abis/` (`0x1000000000000000000000000000000000000001.json`
+and `...0002.json`, each just `[]`, an empty ABI fragment list). This is
+exactly the mechanism patch 0001 was written to support: a local
+`ABI_DIR/<address>.json` file short-circuits the internet fetch
+entirely. An empty ABI fragment list is safe here because these two
+placeholder addresses are not real deployed contracts on the local anvil
+chain, so no log ever needs decoding against them.
+`docker compose up -d dao-node` came up healthy on the next attempt
+(`starting` to `healthy` in about 9s) with these files present.
+
+Not committed: `infra/dao-node/.gitignore` deliberately excludes
+`abis/*.json` (Task 3's own choice, since real ABIs are meant to come
+from Task 6's deploy script copying `contracts/out/`), so these two
+placeholder files stay local to this worktree only and are not part of
+this task's commit. A fresh clone or worktree will hit the same crash
+against these fake addresses until either Task 6 actually deploys (which
+populates real ABIs) or someone recreates the same two placeholder files
+by hand:
+
+```
+echo '[]' > infra/dao-node/abis/0x1000000000000000000000000000000000000001.json
+echo '[]' > infra/dao-node/abis/0x1000000000000000000000000000000000000002.json
+```
+
+This is flagged as a concern in the task report rather than fixed at the
+source, since `dao-node/abis`'s population strategy belongs to Task 3/6,
+not this task.
+
+### Verification commands and outputs
+
+```
+$ cd infra && docker compose --profile offline up -d --build
+...
+ Container infra-dao-node-1 Error dependency dao-node failed to start   # see ABI blocker above
+$ # added infra/dao-node/abis/0x1000...0001.json and ...0002.json ([])
+$ docker compose up -d dao-node
+ Container infra-dao-node-1 Healthy   (3rd health poll, ~9s)
+$ docker compose up -d cpls fake-gcs
+ Container infra-cpls-1 Healthy       (2nd health poll, ~9s)
+$ docker compose ps
+NAME               STATUS
+infra-anvil-1      Up (healthy)
+infra-cpls-1       Up (healthy)
+infra-dao-node-1   Up (healthy)
+infra-fake-gcs-1   Up
+infra-postgres-1   Up (healthy)
+
+$ curl -s http://localhost:8000/v1/proposals
+{"proposals":[]}
+
+$ ./infra/scripts/create-fake-bucket.sh
+create-fake-bucket: created bucket fleet-archive-dev
+$ ./infra/scripts/create-fake-bucket.sh        # idempotency check
+create-fake-bucket: bucket fleet-archive-dev already exists, continuing
+
+# Scheduler fired automatically ~1 min after cpls boot (SCHEDULER_INTERVAL_MINUTES=1,
+# RESET_PROPOSALS_ON_RESTART default true on first run for the "fleet" tenant):
+"Added scheduled job: bfc40cea-... for infra_dao_slug: fleet w/ sources: ['dao_node'] @ interval: 1 minutes)"
+"Refreshed 0 proposals, skipped 0"
+
+$ curl -s "http://localhost:4443/storage/v1/b/fleet-archive-dev/o" | jq '.items[].name'
+"data/fleet/proposal_list.full.ndjson"
+"data/fleet/proposal_list.full.ndjson.gz"
+"data/fleet/proposal_list/dao_node/raw.ndjson"
+"data/fleet/proposal_list/dao_node/raw.ndjson.gz"
+"jobs/scheduled/20260914_060135_bfc40cea-6875-492e-9f95-1586dedab74c.json"
+
+# Manual POST per the brief's Step 3, with the full corrected payload (see above):
+$ curl -s -X POST localhost:8001/jobs -H 'content-type: application/json' -d @sync-daonode-job.json
+{"job_id":"1311da54-b4fb-439c-932a-f14a6f22ba8b","status":"queued"}
+$ curl -s http://localhost:8001/jobs/1311da54-b4fb-439c-932a-f14a6f22ba8b
+{"id":"1311da54-...","type":"sync_daonode","status":"completed","error":null,...}
+$ curl -s "http://localhost:4443/storage/v1/b/fleet-archive-dev/o" | jq '.items[].name'
+...
+"jobs/sync_daonode/20260914_060212_1311da54-b4fb-439c-932a-f14a6f22ba8b.json"   # new
+
+$ curl -s ".../download/storage/v1/b/fleet-archive-dev/o/data%2Ffleet%2Fproposal_list%2Fdao_node%2Fraw.ndjson.gz?alt=media" | gunzip -c | wc -c
+0   # confirmed: empty NDJSON list, gzip-compressed
+
+$ curl -s http://localhost:8001/health
+{"status":"healthy","queue_size":0,"total_jobs":3,"current_job":"..."}
+```
+
+### Switching to real GCS
+
+Set in `infra/.env`:
+- `GCS_CREDENTIALS_FILE=/absolute/path/to/service-account.json` (a real
+  service-account key with write access to the target bucket)
+- `GCS_BUCKET_NAME=<real-bucket-name>`
+- `STORAGE_EMULATOR_HOST=` (blank; overrides the fake-gcs default)
+
+Then run `docker compose up` **without** `--profile offline` (fake-gcs
+then never starts). No source or Dockerfile change needed; `cpls/gcs.py`
+already falls through to plain `storage.Client()` reading
+`GOOGLE_APPLICATION_CREDENTIALS` (which compose sets to
+`/secrets/gcs.json`, the bind-mount target of `GCS_CREDENTIALS_FILE`)
+whenever `STORAGE_EMULATOR_HOST` is unset.
