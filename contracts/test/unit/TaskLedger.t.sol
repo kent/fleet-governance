@@ -23,7 +23,14 @@ contract TaskLedgerTest is Test {
         return ledger.openTask(charter, 3600);
     }
 
-    function _record(uint256 taskId, uint8 kind, uint32 version, bytes32 payloadHash, string memory text, string memory summary) internal {
+    function _record(
+        uint256 taskId,
+        uint8 kind,
+        uint32 version,
+        bytes32 payloadHash,
+        string memory text,
+        string memory summary
+    ) internal {
         vm.prank(timelock);
         ledger.recordDecision(taskId, kind, version, payloadHash, text, summary);
     }
@@ -81,7 +88,9 @@ contract TaskLedgerTest is Test {
         bytes32 payload = keccak256("path-a");
         bytes32 actionId = ActionId.compute(address(ledger), id, 0, 1, payload);
         vm.expectEmit(true, true, false, true);
-        emit TaskLedger.DecisionRecorded(id, 0, TaskLedger.DecisionKind.CHOOSE_PATH, 1, 1, payload, actionId, "take path a");
+        emit TaskLedger.DecisionRecorded(
+            id, 0, TaskLedger.DecisionKind.CHOOSE_PATH, 1, 1, payload, actionId, "take path a"
+        );
         _record(id, 0, 1, payload, "", "take path a");
         TaskLedger.Decision memory d = ledger.getDecision(id, 0);
         assertEq(d.actionId, actionId);
@@ -125,7 +134,9 @@ contract TaskLedgerTest is Test {
         vm.expectRevert(abi.encodeWithSelector(TaskLedger.CharterTextLengthOutOfRange.selector, 0));
         ledger.recordDecision(id, 2, 1, keccak256(""), "", "amend");
         vm.prank(timelock);
-        vm.expectRevert(abi.encodeWithSelector(TaskLedger.CharterHashMismatch.selector, bytes32(uint256(1)), keccak256("abc")));
+        vm.expectRevert(
+            abi.encodeWithSelector(TaskLedger.CharterHashMismatch.selector, bytes32(uint256(1)), keccak256("abc"))
+        );
         ledger.recordDecision(id, 2, 1, bytes32(uint256(1)), "abc", "amend");
     }
 

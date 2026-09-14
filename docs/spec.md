@@ -318,7 +318,7 @@ The registry, token, timelock, and ledger are each far below the size limit and 
 
 ### 7.2 FleetRegistry
 
-Immutable membership and manifests. Constructor takes the member array and manifests. Rejects duplicates, zero addresses, mismatched lengths, N below 2, and manifests above their byte limits. Emits `MemberRegistered(agentId, account, manifestHash)` per member and `FleetManifestSet(hash)`.
+Immutable membership and manifests. Constructor takes the member array and manifests. Rejects duplicates, zero addresses, mismatched lengths, N below 2, and manifests above their byte limits. Emits `MemberRegistered(uint256 indexed agentId, address indexed account, bytes32 manifestHash, string manifest)` per member and `FleetManifestSet(bytes32 manifestHash, string manifest)`. Both events carry the manifest text itself as the last argument, not only its hash, so an indexer can reconstruct every manifest from logs alone without an archive node call; the hash stays in the event as the cheap identity to match against.
 
 Views:
 

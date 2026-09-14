@@ -109,7 +109,17 @@ library FleetDeployer {
     ) private returns (address governor) {
         bytes memory initCode = abi.encodePacked(
             type(AgoraGovernor).creationCode,
-            abi.encode(votingDelay, votingPeriod, proposalThreshold, quorumNumerator, token, timelock, address(0), address(0), hook)
+            abi.encode(
+                votingDelay,
+                votingPeriod,
+                proposalThreshold,
+                quorumNumerator,
+                token,
+                timelock,
+                address(0),
+                address(0),
+                hook
+            )
         );
         assembly ("memory-safe") {
             governor := create(0, add(initCode, 0x20), mload(initCode))

@@ -3,7 +3,6 @@ pragma solidity 0.8.29;
 
 import {FleetFixture} from "../fixtures/FleetFixture.sol";
 import {TaskLedger} from "../../src/TaskLedger.sol";
-import {FleetHook} from "../../src/FleetHook.sol";
 import {Hooks} from "agora-governor/src/libraries/Hooks.sol";
 import {IGovernor} from "@openzeppelin/contracts/governance/IGovernor.sol";
 import {GovernorSettings} from "@openzeppelin/contracts/governance/extensions/GovernorSettings.sol";
@@ -86,7 +85,8 @@ contract AdmissionTest is FleetFixture {
             governor.propose(t, v, c, description);
         }
         // governance settings and relay are unreachable even with ledger as target because the selector is wrong
-        (address[] memory t2, uint256[] memory v2, bytes[] memory c2) = singleAction(abi.encodeCall(GovernorSettings.setVotingDelay, (1)));
+        (address[] memory t2, uint256[] memory v2, bytes[] memory c2) =
+            singleAction(abi.encodeCall(GovernorSettings.setVotingDelay, (1)));
         vm.prank(members[0]);
         vm.expectRevert(Hooks.HookCallFailed.selector);
         governor.propose(t2, v2, c2, description);
@@ -97,7 +97,10 @@ contract AdmissionTest is FleetFixture {
         address[] memory t2 = new address[](2);
         uint256[] memory v2 = new uint256[](2);
         bytes[] memory c2 = new bytes[](2);
-        t2[0] = t[0]; t2[1] = t[0]; c2[0] = data; c2[1] = data;
+        t2[0] = t[0];
+        t2[1] = t[0];
+        c2[0] = data;
+        c2[1] = data;
         vm.prank(members[0]);
         vm.expectRevert(Hooks.HookCallFailed.selector);
         governor.propose(t2, v2, c2, description);
@@ -130,7 +133,8 @@ contract AdmissionTest is FleetFixture {
     }
 
     function test_StaleVersionPausedAndExpiredRejected() public {
-        (address[] memory t, uint256[] memory v, bytes[] memory c) = singleAction(actionCalldata(taskId, 0, 2, keccak256("p"), "", "s"));
+        (address[] memory t, uint256[] memory v, bytes[] memory c) =
+            singleAction(actionCalldata(taskId, 0, 2, keccak256("p"), "", "s"));
         vm.prank(members[0]);
         vm.expectRevert(Hooks.HookCallFailed.selector);
         governor.propose(t, v, c, description);
@@ -194,8 +198,7 @@ contract AdmissionTest is FleetFixture {
 
     /// @notice The contrast: a genuinely succeeded proposal still holds the slot until it settles.
     function test_SucceededUnqueuedProposalStillBlocksTheProposerSlot() public {
-        (uint256 pid, address[] memory t, uint256[] memory v, bytes[] memory c) =
-            proposeDecision(0, data, description);
+        (uint256 pid, address[] memory t, uint256[] memory v, bytes[] memory c) = proposeDecision(0, data, description);
         warpToActive(pid);
         vote(0, pid, FOR, "for");
         vote(1, pid, FOR, "for");
@@ -274,9 +277,8 @@ contract AdmissionTest is FleetFixture {
     function test_MemberSignedBallotWithoutReasonRejectedByTheHook() public {
         (uint256 pid,,,) = proposeDecision(0, data, description);
         warpToActive(pid);
-        bytes32 structHash = keccak256(
-            abi.encode(governor.BALLOT_TYPEHASH(), pid, FOR, members[1], governor.nonces(members[1]))
-        );
+        bytes32 structHash =
+            keccak256(abi.encode(governor.BALLOT_TYPEHASH(), pid, FOR, members[1], governor.nonces(members[1])));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(memberKeys[1], _governorDigest(structHash));
 
         // castVoteBySig carries no reason, and the hook requires one on every ballot.

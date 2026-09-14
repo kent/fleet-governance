@@ -53,7 +53,17 @@ contract AdminBypassTest is FleetFixture {
     function _deployBareGovernor(address admin) internal returns (address governor) {
         bytes memory initCode = abi.encodePacked(
             type(AgoraGovernor).creationCode,
-            abi.encode(VOTING_DELAY, VOTING_PERIOD, uint256(0), uint256(6000), address(token), address(0), admin, address(0), address(0))
+            abi.encode(
+                VOTING_DELAY,
+                VOTING_PERIOD,
+                uint256(0),
+                uint256(6000),
+                address(token),
+                address(0),
+                admin,
+                address(0),
+                address(0)
+            )
         );
         assembly ("memory-safe") {
             governor := create(0, add(initCode, 0x20), mload(initCode))

@@ -4,7 +4,6 @@ pragma solidity 0.8.29;
 import {Test} from "forge-std/Test.sol";
 import {FleetRegistry} from "../../src/FleetRegistry.sol";
 import {FleetVotes} from "../../src/FleetVotes.sol";
-import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 
 contract FleetVotesTest is Test {
     address[] members;
@@ -119,7 +118,9 @@ contract FleetVotesTest is Test {
         uint256 nonce = token.nonces(members[0]);
         uint256 expiry = block.timestamp + 1 days;
         bytes32 structHash = keccak256(
-            abi.encode(keccak256("Delegation(address delegatee,uint256 nonce,uint256 expiry)"), members[2], nonce, expiry)
+            abi.encode(
+                keccak256("Delegation(address delegatee,uint256 nonce,uint256 expiry)"), members[2], nonce, expiry
+            )
         );
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(keys[0], _hashTypedData(structHash));
         token.delegateBySig(members[2], nonce, expiry, v, r, s);

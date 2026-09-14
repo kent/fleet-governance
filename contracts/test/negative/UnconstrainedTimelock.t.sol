@@ -67,7 +67,9 @@ contract UnconstrainedTimelockTest is FleetFixture {
         // that call must be scheduleBatch itself, not this lookup.
         bytes32 proposerRole = timelock.PROPOSER_ROLE();
         vm.prank(eoaProposer);
-        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, eoaProposer, proposerRole));
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, eoaProposer, proposerRole)
+        );
         timelock.scheduleBatch(t, v, c, bytes32(0), salt, TIMELOCK_DELAY);
     }
 }

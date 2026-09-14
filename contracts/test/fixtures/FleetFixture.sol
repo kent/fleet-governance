@@ -131,12 +131,16 @@ abstract contract FleetFixture is Test {
         return keccak256(bytes(description));
     }
 
-    function queueAs(address who, address[] memory t, uint256[] memory v, bytes[] memory c, string memory description) internal {
+    function queueAs(address who, address[] memory t, uint256[] memory v, bytes[] memory c, string memory description)
+        internal
+    {
         vm.prank(who);
         governor.queue(t, v, c, descHash(description));
     }
 
-    function executeAs(address who, address[] memory t, uint256[] memory v, bytes[] memory c, string memory description) internal {
+    function executeAs(address who, address[] memory t, uint256[] memory v, bytes[] memory c, string memory description)
+        internal
+    {
         vm.prank(who);
         governor.execute(t, v, c, descHash(description));
     }

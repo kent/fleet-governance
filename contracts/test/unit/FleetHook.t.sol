@@ -52,8 +52,7 @@ contract FleetHookTest is Test {
         // to `address`, so deploying via the raw creation code plus ABI-encoded args is behaviorally identical
         // to `new AgoraGovernor(...)` and needs no IHooks value at all. See docs/compatibility-notes.md.
         governor = AgoraGovernor(
-            payable(
-                deployCode(
+            payable(deployCode(
                     "AgoraGovernor.sol:AgoraGovernor",
                     abi.encode(
                         uint48(15),
@@ -66,8 +65,7 @@ contract FleetHookTest is Test {
                         address(0),
                         address(hook)
                     )
-                )
-            )
+                ))
         );
         hook.initialize(address(governor));
         vm.warp(block.timestamp + 1);
@@ -77,8 +75,40 @@ contract FleetHookTest is Test {
         assertEq(uint160(address(hook)) & 0xFFFF, 0x22C0);
         Hooks.Permissions memory p = hook.getHookPermissions();
         assertTrue(p.beforeVoteSucceeded && p.beforeVote && p.beforePropose && p.afterPropose);
-        assertFalse(p.beforeQueue || p.afterQueue || p.beforeExecute || p.afterExecute || p.beforeCancel || p.afterCancel);
-        assertFalse(p.beforeInitialize || p.afterInitialize || p.afterVote || p.afterVoteSucceeded || p.beforeQuorumCalculation || p.afterQuorumCalculation);
+        assertFalse(
+            p.beforeQueue || p.afterQueue || p.beforeExecute || p.afterExecute || p.beforeCancel || p.afterCancel
+        );
+        assertFalse(
+            p.beforeInitialize || p.afterInitialize || p.afterVote || p.afterVoteSucceeded || p.beforeQuorumCalculation
+                || p.afterQuorumCalculation
+        );
+
+        // PERMISSION_MASK, the address the deployer mines for, and getHookPermissions() are three
+        // statements of the same fact, and only the constructor's own check ties the last two
+        // together. Recompute the mask from the struct here so a permission added to
+        // getHookPermissions() without updating PERMISSION_MASK fails a test rather than shipping a
+        // hook the governor silently never calls for that permission.
+        assertEq(hook.PERMISSION_MASK(), _maskOf(p));
+        assertEq(uint160(address(hook)) & Hooks.ALL_HOOK_MASK, _maskOf(p));
+    }
+
+    function _maskOf(Hooks.Permissions memory p) internal pure returns (uint160 mask) {
+        if (p.beforeInitialize) mask |= Hooks.BEFORE_INITIALIZE_FLAG;
+        if (p.afterInitialize) mask |= Hooks.AFTER_INITIALIZE_FLAG;
+        if (p.beforeVoteSucceeded) mask |= Hooks.BEFORE_VOTE_SUCCEEDED_FLAG;
+        if (p.afterVoteSucceeded) mask |= Hooks.AFTER_VOTE_SUCCEEDED_FLAG;
+        if (p.beforeQuorumCalculation) mask |= Hooks.BEFORE_QUORUM_CALCULATION_FLAG;
+        if (p.afterQuorumCalculation) mask |= Hooks.AFTER_QUORUM_CALCULATION_FLAG;
+        if (p.beforeVote) mask |= Hooks.BEFORE_VOTE_FLAG;
+        if (p.afterVote) mask |= Hooks.AFTER_VOTE_FLAG;
+        if (p.beforePropose) mask |= Hooks.BEFORE_PROPOSE_FLAG;
+        if (p.afterPropose) mask |= Hooks.AFTER_PROPOSE_FLAG;
+        if (p.beforeCancel) mask |= Hooks.BEFORE_CANCEL_FLAG;
+        if (p.afterCancel) mask |= Hooks.AFTER_CANCEL_FLAG;
+        if (p.beforeQueue) mask |= Hooks.BEFORE_QUEUE_FLAG;
+        if (p.afterQueue) mask |= Hooks.AFTER_QUEUE_FLAG;
+        if (p.beforeExecute) mask |= Hooks.BEFORE_EXECUTE_FLAG;
+        if (p.afterExecute) mask |= Hooks.AFTER_EXECUTE_FLAG;
     }
 
     function test_PlainCreateDeploymentRevertsOnMask() public {
@@ -90,9 +120,8 @@ contract FleetHookTest is Test {
         assertEq(address(hook.governor()), address(governor));
         vm.expectRevert(FleetHook.AlreadyInitialized.selector);
         hook.initialize(address(governor));
-        (, bytes32 salt2) = HookMiner.find(
-            address(this), 0x22C0, type(FleetHook).creationCode, abi.encode(registry, ledger, outsider)
-        );
+        (, bytes32 salt2) =
+            HookMiner.find(address(this), 0x22C0, type(FleetHook).creationCode, abi.encode(registry, ledger, outsider));
         FleetHook other = new FleetHook{salt: salt2}(registry, ledger, outsider);
         vm.expectRevert(abi.encodeWithSelector(FleetHook.NotInitializer.selector, address(this)));
         other.initialize(address(governor));
@@ -175,8 +204,7 @@ contract FleetHookTest is Test {
             bytes32("summary") // summary data, right-padded
         );
         bytes memory payload = bytes.concat(TaskLedger.recordDecision.selector, args);
-        bytes memory canonical =
-            abi.encodeCall(TaskLedger.recordDecision, (7, 1, 1, keccak256("p"), "", "summary"));
+        bytes memory canonical = abi.encodeCall(TaskLedger.recordDecision, (7, 1, 1, keccak256("p"), "", "summary"));
         assertEq(payload.length, 356);
         assertEq(canonical.length, 292);
 
@@ -206,9 +234,12 @@ contract FleetHookTest is Test {
         vm.prank(members[0]);
         uint256 pid = governor.propose(t, v, c, "choose\n#proposalTypeId=0");
         vm.warp(governor.proposalSnapshot(pid) + 1);
-        vm.prank(members[0]); governor.castVoteWithReason(pid, 1, "for");
-        vm.prank(members[1]); governor.castVoteWithReason(pid, 1, "for");
-        vm.prank(members[2]); governor.castVoteWithReason(pid, 2, "abstain");
+        vm.prank(members[0]);
+        governor.castVoteWithReason(pid, 1, "for");
+        vm.prank(members[1]);
+        governor.castVoteWithReason(pid, 1, "for");
+        vm.prank(members[2]);
+        governor.castVoteWithReason(pid, 2, "abstain");
         vm.warp(governor.proposalDeadline(pid) + 1);
         // 2 For + 1 Abstain: participation quorum met, For-only quorum not met
         assertEq(uint8(governor.state(pid)), uint8(IGovernorState.Defeated));

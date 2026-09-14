@@ -464,7 +464,7 @@ the predicted and actual addresses were equal under broadcast. `p.create2Deploye
 (forge-std's `0x4e59b44847b379578588920cA78FbF26c0B4956C`, pre-deployed on Anvil) makes
 `HookMiner` search for a salt using the same deployer address Foundry's own `new X{salt: ...}`
 CREATE2 routing uses under `vm.startBroadcast`, so the two computations agree. The deployed hook
-address is `0x2Fa096005b0f85E26177C97c306AA0159e1c22C0`, whose low 16 bits (`0x22C0`) match
+address is `0xA8d43557A9D305D0B2F98BfEbe07dC0A8DB522c0`, whose low 16 bits (`0x22C0`) match
 `FleetHook.PERMISSION_MASK` exactly, and `broadcast/.../run-latest.json` records this transaction
 with `"transactionType": "CREATE2"`.
 
@@ -494,14 +494,16 @@ with `cast nonce 0xf39Fd6...92266 --rpc-url http://127.0.0.1:8599`.
 | FleetVotes     | `0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512`  |
 | TimelockController | `0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0` |
 | TaskLedger     | `0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9`  |
-| FleetHook      | `0x2Fa096005b0f85E26177C97c306AA0159e1c22C0`  |
+| FleetHook      | `0xA8d43557A9D305D0B2F98BfEbe07dC0A8DB522c0`  |
 | AgoraGovernor  | `0x5FC8d32690cc91D4c39d9d3abcBD16989F875707`  |
 
 `hookSalt` (the CREATE2 salt `HookMiner.find` mined for this exact deployer, config, and
-`FleetHook` init code): `0x0000000000000000000000000000000000000000000000000000000000000155`.
+`FleetHook` init code): `0x000000000000000000000000000000000000000000000000000000000003a07f`.
 
-The hook address and salt above are from the final-review re-run, after the `afterPropose` fix of
-that round changed `FleetHook`'s bytecode. The salt is mined against the hook's init code hash, so
+The hook address and salt above are from the final-review re-run. Two things moved `FleetHook`'s
+bytecode in that round: the `afterPropose` fix, and `forge fmt` over the whole project, because
+reformatting changes the source text and therefore the CBOR metadata hash the compiler appends to
+the deployed code. The salt is mined against the hook's init code hash, so
 any change to the hook's code or constructor arguments moves both, and the governor's `codehash`
 moves with them because the hook address is one of the governor's immutables. Nothing else in the
 manifest changed: the five `CREATE` addresses are fixed by the deployer and its nonces.
@@ -510,12 +512,12 @@ manifest changed: the five `CREATE` addresses are fixed by the deployer and its 
 
 The manifest's `codeHashes.governor` is `address.codehash` (`EXTCODEHASH`) read from the live
 chain right after deployment, not a hash of the compiled artifact. For this run it is
-`0x4b7ff2e4ce31fecaa995882f79ff2445cf8ed44709979480a3781f806c0363f2`, and re-hashing the deployed
+`0xfafb3c0159dcdc534750b417df76d953e00bc97cfb4d550ef4685835cc461515`, and re-hashing the deployed
 code directly reproduces it exactly:
 
 ```
 $ cast keccak $(cast code 0x5FC8d32690cc91D4c39d9d3abcBD16989F875707 --rpc-url http://127.0.0.1:8599)
-0x4b7ff2e4ce31fecaa995882f79ff2445cf8ed44709979480a3781f806c0363f2
+0xfafb3c0159dcdc534750b417df76d953e00bc97cfb4d550ef4685835cc461515
 ```
 
 That hash does **not** equal `keccak256` of `deployedBytecode.object` in the compiled

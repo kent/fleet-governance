@@ -7,13 +7,21 @@ import {IGovernor} from "@openzeppelin/contracts/governance/IGovernor.sol";
 import {Hooks} from "agora-governor/src/libraries/Hooks.sol";
 
 contract AmendmentTest is FleetFixture {
-    string constant CHARTER_V2 = '{"schema":"fleet.charter.v1","goal":"pass tests","externalAllowlist":["registry.npmjs.org","examples.internal"]}';
+    string constant CHARTER_V2 =
+        '{"schema":"fleet.charter.v1","goal":"pass tests","externalAllowlist":["registry.npmjs.org","examples.internal"]}';
 
-    function _passAndExecute(uint256 agent, bytes memory data, string memory description) internal returns (uint256 pid) {
-        address[] memory t; uint256[] memory v; bytes[] memory c;
+    function _passAndExecute(uint256 agent, bytes memory data, string memory description)
+        internal
+        returns (uint256 pid)
+    {
+        address[] memory t;
+        uint256[] memory v;
+        bytes[] memory c;
         (pid, t, v, c) = proposeDecision(agent, data, description);
         warpToActive(pid);
-        vote(0, pid, FOR, "for"); vote(1, pid, FOR, "for"); vote(2, pid, FOR, "for");
+        vote(0, pid, FOR, "for");
+        vote(1, pid, FOR, "for");
+        vote(2, pid, FOR, "for");
         warpPastDeadline(pid);
         queueAs(keeper, t, v, c, description);
         vm.warp(block.timestamp + TIMELOCK_DELAY + 1);
@@ -23,7 +31,8 @@ contract AmendmentTest is FleetFixture {
     function test_AmendmentBumpsVersionAndGatewayReadsNewCharter() public {
         uint256 taskId = openTask();
         bytes32 h = keccak256(bytes(CHARTER_V2));
-        bytes memory data = actionCalldata(taskId, uint8(TaskLedger.DecisionKind.AMEND_CHARTER), 1, h, CHARTER_V2, "add host");
+        bytes memory data =
+            actionCalldata(taskId, uint8(TaskLedger.DecisionKind.AMEND_CHARTER), 1, h, CHARTER_V2, "add host");
         _passAndExecute(0, data, string.concat("amend", DESC_SUFFIX));
         TaskLedger.Task memory t = ledger.getTask(taskId);
         assertEq(t.charterVersion, 2);
@@ -55,7 +64,10 @@ contract AmendmentTest is FleetFixture {
         string memory descB = string.concat("B", DESC_SUFFIX);
         (uint256 pidB,,,) = proposeDecision(0, dataB, descB);
         warpToActive(pidB);
-        for (uint256 i = 0; i < 3; i++) { vote(i, pidA, FOR, "for"); vote(i, pidB, FOR, "for"); }
+        for (uint256 i = 0; i < 3; i++) {
+            vote(i, pidA, FOR, "for");
+            vote(i, pidB, FOR, "for");
+        }
         warpPastDeadline(pidB);
         // execute B first
         _queue(dataB, descB);
@@ -82,7 +94,8 @@ contract AmendmentTest is FleetFixture {
         bytes memory data = actionCalldata(taskId, uint8(TaskLedger.DecisionKind.STOP_TASK), 1, bytes32(0), "", "stop");
         _passAndExecute(0, data, string.concat("stop", DESC_SUFFIX));
         assertEq(uint8(ledger.getTask(taskId).state), uint8(TaskLedger.TaskState.Stopped));
-        (address[] memory t, uint256[] memory v, bytes[] memory c) = singleAction(actionCalldata(taskId, 0, 1, keccak256("p"), "", "s"));
+        (address[] memory t, uint256[] memory v, bytes[] memory c) =
+            singleAction(actionCalldata(taskId, 0, 1, keccak256("p"), "", "s"));
         vm.prank(members[1]);
         vm.expectRevert(Hooks.HookCallFailed.selector);
         governor.propose(t, v, c, string.concat("after stop", DESC_SUFFIX));

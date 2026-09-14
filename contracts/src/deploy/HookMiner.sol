@@ -51,20 +51,4 @@ library HookMiner {
         }
         revert SaltNotFound();
     }
-
-    function computeAddress(address deployer, bytes32 salt, bytes32 initCodeHash)
-        internal
-        pure
-        returns (address hookAddress)
-    {
-        assembly ("memory-safe") {
-            let ptr := mload(0x40)
-            mstore(add(ptr, 0x40), initCodeHash)
-            mstore(add(ptr, 0x20), salt)
-            mstore(ptr, deployer)
-            let start := add(ptr, 0x0b)
-            mstore8(start, 0xff)
-            hookAddress := and(keccak256(start, 85), 0xffffffffffffffffffffffffffffffffffffffff)
-        }
-    }
 }

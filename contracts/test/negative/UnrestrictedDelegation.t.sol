@@ -69,7 +69,15 @@ contract UnrestrictedDelegationTest is FleetFixture {
         bytes memory initCode = abi.encodePacked(
             type(AgoraGovernor).creationCode,
             abi.encode(
-                VOTING_DELAY, VOTING_PERIOD, uint256(0), uint256(6000), plainToken, address(0), address(0), address(0), address(0)
+                VOTING_DELAY,
+                VOTING_PERIOD,
+                uint256(0),
+                uint256(6000),
+                plainToken,
+                address(0),
+                address(0),
+                address(0),
+                address(0)
             )
         );
         assembly ("memory-safe") {

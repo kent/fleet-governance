@@ -124,7 +124,9 @@ contract FleetHook is IHooks {
     function initialize(address governor_) external {
         if (msg.sender != initializer) revert NotInitializer(msg.sender);
         if (address(governor) != address(0)) revert AlreadyInitialized();
-        if (address(AgoraGovernor(payable(governor_)).hooks()) != address(this)) revert GovernorHookMismatch(governor_);
+        if (address(AgoraGovernor(payable(governor_)).hooks()) != address(this)) {
+            revert GovernorHookMismatch(governor_);
+        }
         governor = AgoraGovernor(payable(governor_));
         emit Initialized(governor_);
     }
@@ -148,7 +150,9 @@ contract FleetHook is IHooks {
         string memory description
     ) external view override onlyGovernor returns (bytes4, uint256) {
         if (!registry.isMember(sender)) revert NotMember(sender);
-        if (targets.length != 1 || values.length != 1 || calldatas.length != 1) revert InvalidActionCount(targets.length);
+        if (targets.length != 1 || values.length != 1 || calldatas.length != 1) {
+            revert InvalidActionCount(targets.length);
+        }
         if (targets[0] != address(ledger)) revert InvalidTarget(targets[0]);
         if (values[0] != 0) revert NonZeroValue(values[0]);
         uint256 descriptionLength = bytes(description).length;
@@ -231,8 +235,14 @@ contract FleetHook is IHooks {
         // MalformedCalldata(), so guard the minimum length before decoding.
         if (data.length < 4 + 6 * 32) revert MalformedCalldata();
         bytes memory args = _tail(data);
-        (action.taskId, action.kind, action.expectedVersion, action.payloadHash, action.newCharterText, action.summary) =
-            abi.decode(args, (uint256, uint8, uint32, bytes32, string, string));
+        (
+            action.taskId,
+            action.kind,
+            action.expectedVersion,
+            action.payloadHash,
+            action.newCharterText,
+            action.summary
+        ) = abi.decode(args, (uint256, uint8, uint32, bytes32, string, string));
         bytes memory canonical = abi.encodeWithSelector(
             selector,
             action.taskId,
@@ -257,7 +267,9 @@ contract FleetHook is IHooks {
 
         uint256 charterLength = bytes(action.newCharterText).length;
         if (action.kind == uint8(TaskLedger.DecisionKind.AMEND_CHARTER)) {
-            if (charterLength == 0 || charterLength > ledger.MAX_CHARTER_BYTES()) revert CharterTextInvalid(charterLength);
+            if (charterLength == 0 || charterLength > ledger.MAX_CHARTER_BYTES()) {
+                revert CharterTextInvalid(charterLength);
+            }
             bytes32 newHash = keccak256(bytes(action.newCharterText));
             if (newHash != action.payloadHash) revert CharterHashMismatch(action.payloadHash, newHash);
         } else if (charterLength != 0) {
@@ -314,16 +326,86 @@ contract FleetHook is IHooks {
     // lacks their permission bits; they revert so a misconfigured deployment fails loudly.
     // ---------------------------------------------------------------------
 
-    function beforeInitialize(address) external pure override returns (bytes4) { revert HookNotImplemented(); }
-    function afterInitialize(address) external pure override returns (bytes4) { revert HookNotImplemented(); }
-    function afterVoteSucceeded(address, uint256, bool) external pure override returns (bytes4) { revert HookNotImplemented(); }
-    function beforeQuorumCalculation(address, uint256) external pure override returns (bytes4, uint256) { revert HookNotImplemented(); }
-    function afterQuorumCalculation(address, uint256, uint256) external pure override returns (bytes4) { revert HookNotImplemented(); }
-    function afterVote(address, uint256, uint256, address, uint8, string memory, bytes memory) external pure override returns (bytes4) { revert HookNotImplemented(); }
-    function beforeCancel(address, address[] memory, uint256[] memory, bytes[] memory, bytes32) external pure override returns (bytes4, uint256) { revert HookNotImplemented(); }
-    function afterCancel(address, uint256, address[] memory, uint256[] memory, bytes[] memory, bytes32) external pure override returns (bytes4) { revert HookNotImplemented(); }
-    function beforeQueue(address, address[] memory, uint256[] memory, bytes[] memory, bytes32) external pure override returns (bytes4, address[] memory, uint256[] memory, bytes[] memory, bytes32) { revert HookNotImplemented(); }
-    function afterQueue(address, uint256, address[] memory, uint256[] memory, bytes[] memory, bytes32) external pure override returns (bytes4) { revert HookNotImplemented(); }
-    function beforeExecute(address, address[] memory, uint256[] memory, bytes[] memory, bytes32) external pure override returns (bytes4, bool) { revert HookNotImplemented(); }
-    function afterExecute(address, uint256, address[] memory, uint256[] memory, bytes[] memory, bytes32) external pure override returns (bytes4) { revert HookNotImplemented(); }
+    function beforeInitialize(address) external pure override returns (bytes4) {
+        revert HookNotImplemented();
+    }
+
+    function afterInitialize(address) external pure override returns (bytes4) {
+        revert HookNotImplemented();
+    }
+
+    function afterVoteSucceeded(address, uint256, bool) external pure override returns (bytes4) {
+        revert HookNotImplemented();
+    }
+
+    function beforeQuorumCalculation(address, uint256) external pure override returns (bytes4, uint256) {
+        revert HookNotImplemented();
+    }
+
+    function afterQuorumCalculation(address, uint256, uint256) external pure override returns (bytes4) {
+        revert HookNotImplemented();
+    }
+
+    function afterVote(address, uint256, uint256, address, uint8, string memory, bytes memory)
+        external
+        pure
+        override
+        returns (bytes4)
+    {
+        revert HookNotImplemented();
+    }
+
+    function beforeCancel(address, address[] memory, uint256[] memory, bytes[] memory, bytes32)
+        external
+        pure
+        override
+        returns (bytes4, uint256)
+    {
+        revert HookNotImplemented();
+    }
+
+    function afterCancel(address, uint256, address[] memory, uint256[] memory, bytes[] memory, bytes32)
+        external
+        pure
+        override
+        returns (bytes4)
+    {
+        revert HookNotImplemented();
+    }
+
+    function beforeQueue(address, address[] memory, uint256[] memory, bytes[] memory, bytes32)
+        external
+        pure
+        override
+        returns (bytes4, address[] memory, uint256[] memory, bytes[] memory, bytes32)
+    {
+        revert HookNotImplemented();
+    }
+
+    function afterQueue(address, uint256, address[] memory, uint256[] memory, bytes[] memory, bytes32)
+        external
+        pure
+        override
+        returns (bytes4)
+    {
+        revert HookNotImplemented();
+    }
+
+    function beforeExecute(address, address[] memory, uint256[] memory, bytes[] memory, bytes32)
+        external
+        pure
+        override
+        returns (bytes4, bool)
+    {
+        revert HookNotImplemented();
+    }
+
+    function afterExecute(address, uint256, address[] memory, uint256[] memory, bytes[] memory, bytes32)
+        external
+        pure
+        override
+        returns (bytes4)
+    {
+        revert HookNotImplemented();
+    }
 }

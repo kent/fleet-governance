@@ -8,10 +8,15 @@ import {IGovernor} from "@openzeppelin/contracts/governance/IGovernor.sol";
 /// @notice NOT FOR DEPLOYMENT. Negative demonstration: what FleetHook's beforeVoteSucceeded rule
 ///         replaces.
 /// @dev Deploys a second AgoraGovernor over the fixture's real FleetVotes token, with
-///      hooks = address(0) instead of the pinned FleetHook. With no hook, AgoraGovernor falls back
-///      to OpenZeppelin's stock GovernorCountingSimple: quorum is reached once
-///      For + Against + Abstain meets the numerator's share of supply, and a vote succeeds whenever
-///      For exceeds Against. On a 5-member, 5e18-supply token with a 6000 (60%) numerator, that lets
+///      hooks = address(0) instead of the pinned FleetHook. With no hook, AgoraGovernor's own
+///      counting applies: quorum is reached once For + Against + Abstain meets the numerator's share
+///      of supply, which is AgoraGovernor's `_quorumReached` override, not OpenZeppelin's, and a vote
+///      succeeds whenever For exceeds Against, which is OpenZeppelin's stock
+///      GovernorCountingSimple._voteSucceeded reached through `super`. The distinction matters when
+///      reading the pinned source: OpenZeppelin's own GovernorCountingSimple._quorumReached counts
+///      For plus Abstain and ignores Against, while AgoraGovernor counts all three ballots, so the
+///      bar this test demonstrates is Agora's, and it is the easier of the two to clear with
+///      Abstains. On a 5-member, 5e18-supply token with a 6000 (60%) numerator, that lets
 ///      2 For (2e18) plus 1 Abstain (1e18) pass a proposal: participation of 3e18 clears the 3e18
 ///      quorum bar, and 2e18 For beats 0 Against, even though only two of five members ever voted
 ///      For and nobody voted Against. FleetHook.beforeVoteSucceeded replaces this default with a
@@ -63,7 +68,15 @@ contract ParticipationQuorumTest is FleetFixture {
         bytes memory initCode = abi.encodePacked(
             type(AgoraGovernor).creationCode,
             abi.encode(
-                VOTING_DELAY, VOTING_PERIOD, uint256(0), uint256(6000), address(token), address(0), address(0), address(0), address(0)
+                VOTING_DELAY,
+                VOTING_PERIOD,
+                uint256(0),
+                uint256(6000),
+                address(token),
+                address(0),
+                address(0),
+                address(0),
+                address(0)
             )
         );
         assembly ("memory-safe") {

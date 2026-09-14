@@ -12,7 +12,8 @@ contract LifecycleTest is FleetFixture {
     function test_GrantExceptionProposalThroughToLedger() public {
         uint256 taskId = openTask();
         bytes32 payload = keccak256("network_fetch|examples.internal|0xargs");
-        bytes memory data = actionCalldata(taskId, uint8(TaskLedger.DecisionKind.GRANT_EXCEPTION), 1, payload, "", "one-time fetch");
+        bytes memory data =
+            actionCalldata(taskId, uint8(TaskLedger.DecisionKind.GRANT_EXCEPTION), 1, payload, "", "one-time fetch");
         string memory description = string.concat("# Grant exception\n\nfetch examples.internal", DESC_SUFFIX);
 
         (uint256 pid, address[] memory t, uint256[] memory v, bytes[] memory c) = proposeDecision(1, data, description);
@@ -52,6 +53,18 @@ contract LifecycleTest is FleetFixture {
         assertEq(uint8(d.kind), uint8(TaskLedger.DecisionKind.GRANT_EXCEPTION));
     }
 
+    /// @notice The governor's clock has to be the token's clock, or every snapshot and deadline is
+    ///         measured in different units from the checkpoints they are looked up against.
+    /// @dev GovernorVotes reads clock() and CLOCK_MODE() from the token through a try/catch and
+    ///      falls back to block numbers if the token does not implement ERC-6372. FleetVotes is
+    ///      timestamp-clocked, so the fallback must not be what this deployment is running on.
+    function test_GovernorAndTokenShareTheTimestampClock() public view {
+        assertEq(governor.clock(), token.clock());
+        assertEq(governor.CLOCK_MODE(), token.CLOCK_MODE());
+        assertEq(governor.CLOCK_MODE(), "mode=timestamp");
+        assertEq(governor.clock(), uint48(block.timestamp));
+    }
+
     function test_DefeatedProposalCannotQueueOrExecute() public {
         uint256 taskId = openTask();
         bytes memory data = actionCalldata(taskId, 1, 1, keccak256("p"), "", "s");
@@ -74,8 +87,10 @@ contract LifecycleTest is FleetFixture {
 
     function test_DelegatedWeightCountsAndIsVisible() public {
         // agent 3 and 4 delegate to agent 0 before the snapshot
-        vm.prank(members[3]); token.delegate(members[0]);
-        vm.prank(members[4]); token.delegate(members[0]);
+        vm.prank(members[3]);
+        token.delegate(members[0]);
+        vm.prank(members[4]);
+        token.delegate(members[0]);
         vm.warp(block.timestamp + 1);
         assertEq(token.getVotes(members[0]), 3e18);
 

@@ -13,7 +13,9 @@ contract GuardianTest is FleetFixture {
         string memory description = string.concat("risky", DESC_SUFFIX);
         (uint256 pid, address[] memory t, uint256[] memory v, bytes[] memory c) = proposeDecision(0, data, description);
         warpToActive(pid);
-        vote(0, pid, FOR, "for"); vote(1, pid, FOR, "for"); vote(2, pid, FOR, "for");
+        vote(0, pid, FOR, "for");
+        vote(1, pid, FOR, "for");
+        vote(2, pid, FOR, "for");
         warpPastDeadline(pid);
         queueAs(keeper, t, v, c, description);
         assertEq(uint8(stateOf(pid)), uint8(IGovernor.ProposalState.Queued));
@@ -38,7 +40,10 @@ contract GuardianTest is FleetFixture {
                 IGovernor.GovernorUnexpectedProposalState.selector,
                 pid,
                 IGovernor.ProposalState.Canceled,
-                bytes32(uint256(1 << uint8(IGovernor.ProposalState.Succeeded)) | uint256(1 << uint8(IGovernor.ProposalState.Queued)))
+                bytes32(
+                    uint256(1 << uint8(IGovernor.ProposalState.Succeeded))
+                        | uint256(1 << uint8(IGovernor.ProposalState.Queued))
+                )
             )
         );
         governor.execute(t, v, c, descHash(description));

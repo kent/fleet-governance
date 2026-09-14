@@ -41,7 +41,11 @@ contract NaiveLedger {
         bytes32, /* payloadHash */
         string calldata, /* newCharterText */
         string calldata /* summary */
-    ) external whenNotPaused returns (uint32 index) {
+    )
+        external
+        whenNotPaused
+        returns (uint32 index)
+    {
         index = decisionCount[taskId];
         decisionCount[taskId] = index + 1;
         emit DecisionRecorded(taskId, index, kind);

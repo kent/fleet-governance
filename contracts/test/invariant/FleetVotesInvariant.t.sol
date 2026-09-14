@@ -11,8 +11,12 @@ contract VotesHandler is Test {
 
     constructor(FleetVotes token_, address[] memory members, address[] memory outsiders) {
         token = token_;
-        for (uint256 i = 0; i < members.length; i++) actors.push(members[i]);
-        for (uint256 i = 0; i < outsiders.length; i++) actors.push(outsiders[i]);
+        for (uint256 i = 0; i < members.length; i++) {
+            actors.push(members[i]);
+        }
+        for (uint256 i = 0; i < outsiders.length; i++) {
+            actors.push(outsiders[i]);
+        }
     }
 
     function delegateTo(uint256 a, uint256 b) external {
@@ -58,17 +62,23 @@ contract FleetVotesInvariant is FleetFixture {
     }
 
     function invariant_BalancesFixed() public view {
-        for (uint256 i = 0; i < N; i++) assertEq(token.balanceOf(members[i]), 1e18);
+        for (uint256 i = 0; i < N; i++) {
+            assertEq(token.balanceOf(members[i]), 1e18);
+        }
     }
 
     function invariant_VotingPowerSumsToSupply() public view {
         uint256 sum;
-        for (uint256 i = 0; i < N; i++) sum += token.getVotes(members[i]);
+        for (uint256 i = 0; i < N; i++) {
+            sum += token.getVotes(members[i]);
+        }
         assertEq(sum, N * 1e18);
     }
 
     function invariant_NoMemberAboveSupplyAndNoOutsiderPower() public view {
-        for (uint256 i = 0; i < N; i++) assertLe(token.getVotes(members[i]), N * 1e18);
+        for (uint256 i = 0; i < N; i++) {
+            assertLe(token.getVotes(members[i]), N * 1e18);
+        }
         for (uint256 i = 0; i < outsiders.length; i++) {
             assertEq(token.balanceOf(outsiders[i]), 0);
             assertEq(token.getVotes(outsiders[i]), 0);

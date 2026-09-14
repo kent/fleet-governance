@@ -17,8 +17,7 @@ contract OperatorTest is FleetFixture {
         uint256 taskId = openTask();
         bytes memory data = actionCalldata(taskId, 0, 1, keccak256("path-a"), "", "take path a");
         string memory description = string.concat("choose path a", DESC_SUFFIX);
-        (uint256 pid, address[] memory t, uint256[] memory v, bytes[] memory c) =
-            proposeDecision(0, data, description);
+        (uint256 pid, address[] memory t, uint256[] memory v, bytes[] memory c) = proposeDecision(0, data, description);
 
         warpToActive(pid);
         vote(0, pid, FOR, "for");
@@ -45,7 +44,9 @@ contract OperatorTest is FleetFixture {
         // proposer's one-proposal-per-task slot is still occupied. See docs/compatibility-notes.md,
         // "A Queued but unexecutable proposal holds its proposer's slot until someone cancels it".
         assertEq(uint8(stateOf(pid)), uint8(IGovernor.ProposalState.Queued));
-        assertTrue(timelock.isOperationPending(timelock.hashOperationBatch(t, v, c, bytes32(0), timelockSalt(description))));
+        assertTrue(
+            timelock.isOperationPending(timelock.hashOperationBatch(t, v, c, bytes32(0), timelockSalt(description)))
+        );
 
         // The keeper cannot clear it: AgoraGovernor.cancel admits only the proposer, admin,
         // executor, and manager, and admin and manager are the zero address in this deployment.

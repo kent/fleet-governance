@@ -1,7 +1,7 @@
 {
   "addresses": {
     "governor": "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707",
-    "hook": "0x2Fa096005b0f85E26177C97c306AA0159e1c22C0",
+    "hook": "0xA8d43557A9D305D0B2F98BfEbe07dC0A8DB522c0",
     "ledger": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
     "registry": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
     "timelock": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
@@ -9,9 +9,9 @@
   },
   "chainId": 31337,
   "codeHashes": {
-    "governor": "0x4b7ff2e4ce31fecaa995882f79ff2445cf8ed44709979480a3781f806c0363f2",
-    "hook": "0x7f91d36f0daa179bbba06da0eb8c1e1be1c28f57ffdb407b3c34d2d9bed9be79",
-    "ledger": "0xd496488dcfae9cf875c918e39ad1cdf3790ed664400d2fd8bdc7aff188a721b2",
+    "governor": "0xfafb3c0159dcdc534750b417df76d953e00bc97cfb4d550ef4685835cc461515",
+    "hook": "0xfbf73b4911e3ace1a1cbac9da470012d0d1ce21490200095d4d6782d6655b151",
+    "ledger": "0x5b072ed9278354136f4baecd8a5c2377bc897a0eb3c9edb709f57a60e3aef23c",
     "registry": "0x2cb632e223fdcdd1efe1f145960d913217ad1e2108e1d6df210db48dcd027f5a",
     "timelock": "0x3686ca9db922aa4712623aaa7a85ed360db18c466ddcdb3d05397cd74731d163",
     "token": "0xc2ace618c2ca227f9d61f846bb106c3ac8785893affe4a9e6f1fc16ed8390a9b"
@@ -26,10 +26,10 @@
   "countingRule": "for-only-quorum",
   "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
   "deploymentBlock": 1,
-  "deploymentTimestamp": 1789372717,
+  "deploymentTimestamp": 1789373295,
   "guardian": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
   "hookPermissionMask": "0x22C0",
-  "hookSalt": "0x0000000000000000000000000000000000000000000000000000000000000155",
+  "hookSalt": "0x000000000000000000000000000000000000000000000000000000000003a07f",
   "members": [
     "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
     "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",

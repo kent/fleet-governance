@@ -67,7 +67,9 @@ contract TaskLedger {
     error LifetimeOutOfRange(uint64 lifetime, uint64 min, uint64 max);
     error ZeroAddress();
 
-    event TaskOpened(uint256 indexed taskId, address indexed operator, uint64 expiresAt, bytes32 charterHash, string charterText);
+    event TaskOpened(
+        uint256 indexed taskId, address indexed operator, uint64 expiresAt, bytes32 charterHash, string charterText
+    );
     event DecisionRecorded(
         uint256 indexed taskId,
         uint32 indexed index,
@@ -138,7 +140,12 @@ contract TaskLedger {
         maxTaskLifetime = maxTaskLifetime_;
     }
 
-    function openTask(string calldata charterText_, uint64 lifetime) external onlyOperator whenNotPaused returns (uint256 taskId) {
+    function openTask(string calldata charterText_, uint64 lifetime)
+        external
+        onlyOperator
+        whenNotPaused
+        returns (uint256 taskId)
+    {
         uint256 len = bytes(charterText_).length;
         if (len == 0 || len > MAX_CHARTER_BYTES) revert CharterTextLengthOutOfRange(len);
         if (lifetime < MIN_TASK_LIFETIME || lifetime > maxTaskLifetime) {
@@ -173,7 +180,9 @@ contract TaskLedger {
         Task storage task = _task(taskId);
         if (task.state != TaskState.Open) revert TaskNotOpen(taskId, task.state);
         if (block.timestamp >= task.expiresAt) revert TaskExpired(taskId);
-        if (expectedVersion != task.charterVersion) revert CharterVersionMismatch(expectedVersion, task.charterVersion);
+        if (expectedVersion != task.charterVersion) {
+            revert CharterVersionMismatch(expectedVersion, task.charterVersion);
+        }
         if (kind > uint8(DecisionKind.ESCALATE_TO_HUMAN)) revert InvalidDecisionKind(kind);
         if (bytes(summary).length > MAX_SUMMARY_BYTES) revert SummaryTooLong(bytes(summary).length);
 
@@ -187,7 +196,9 @@ contract TaskLedger {
             revert CharterTextNotAllowed();
         }
 
-        _finalizeDecision(task, taskId, kind, expectedVersion, payloadHash, summary, decisionKind, versionBefore, versionAfter);
+        _finalizeDecision(
+            task, taskId, kind, expectedVersion, payloadHash, summary, decisionKind, versionBefore, versionAfter
+        );
     }
 
     /// @dev Split out of recordDecision to keep that function's stack shallow enough for the
@@ -205,7 +216,9 @@ contract TaskLedger {
         uint32 versionBefore,
         uint32 versionAfter
     ) private {
-        if (decisionKind == DecisionKind.GRANT_EXCEPTION) exceptionVersion[taskId][payloadHash] = versionBefore;
+        if (decisionKind == DecisionKind.GRANT_EXCEPTION) {
+            exceptionVersion[taskId][payloadHash] = versionBefore;
+        }
         if (decisionKind == DecisionKind.STOP_TASK) task.state = TaskState.Stopped;
         _applyEscalation(task, taskId, payloadHash, decisionKind, versionBefore);
 
