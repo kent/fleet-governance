@@ -28,8 +28,12 @@ fleet report --run-id <id> [--report-dir <path>]
 fleet demo --rpc <url> [--fresh-anvil] [--readside] [--report-dir <path>] [--agora-next-base-url <url>]
 ```
 
-Run any command with `pnpm --filter @fleet/runner start -- <command> ...` from the repo root, or
-directly with `tsx apps/runner/src/cli.ts <command> ...`.
+Run any command with `pnpm --filter @fleet/runner start <command> ...` from the repo root (no `--`
+before the command: pnpm passes it through and commander reads it as the command name), or directly
+with `npx tsx apps/runner/src/cli.ts <command> ...`. `pnpm --filter` runs with `apps/runner` as the
+working directory, so pass absolute paths for `--experiment`, `--report-dir`, and friends, or use
+the `npx tsx` form, which keeps the repo root. Either form loads the gitignored repo-root `.env`
+first, so `OPENROUTER_API_KEY` and any `FLEET_*` key placed there is picked up.
 
 ### `fleet deploy` / `fleet verify`
 

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
+import { config as loadDotenv } from "dotenv";
 import { createPublicClient, http } from "viem";
 import { CharterV1, assertAllowedChain } from "@fleet/schemas";
 import { deployFleet, verifyDeployment } from "./deploy.js";
@@ -20,6 +21,18 @@ import { FleetClient, addressesFromManifest } from "@fleet/sdk";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(currentDir, "../../..");
+
+/**
+ * Loads the gitignored repo-root `.env` into `process.env` before any command runs, so `fleet`
+ * behaves the same however it is invoked: `pnpm --filter @fleet/runner start ...` runs with the
+ * package directory as the working directory, and `dotenv`'s own default only looks in the working
+ * directory, so without this an `OPENROUTER_API_KEY` sitting in the repo root is invisible to
+ * PREFLIGHT and a model-driven run refuses to start. The Runner UI already does the same thing in
+ * `lib/env.ts` for its routes and for the child it spawns. An explicitly exported variable always
+ * wins: `dotenv` never overwrites one that is already set. No value is read, logged, or returned
+ * here.
+ */
+loadDotenv({ path: path.join(repoRoot, ".env") });
 
 const logger = createLogger({ name: "fleet", level: process.env["LOG_LEVEL"] ?? "info" });
 
