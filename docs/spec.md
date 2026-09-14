@@ -443,7 +443,7 @@ struct Task {
     uint32 charterVersion;      // starts at 1
     bytes32 charterHash;        // keccak256 of current charterText bytes
     uint32 decisionCount;
-    bool escalated;
+    uint32 openEscalations;     // payloads currently escalated on this task
 }
 
 struct Decision {
@@ -472,7 +472,8 @@ function unpause() external onlyGuardian;
 function getTask(uint256 taskId) external view returns (Task memory);
 function charterText(uint256 taskId) external view returns (string memory);
 function getDecision(uint256 taskId, uint32 index) external view returns (Decision memory);
-function exceptionVersion(uint256 taskId, bytes32 payloadHash) external view returns (uint32); // 0 when none
+function exceptionVersion(uint256 taskId, bytes32 payloadHash) external view returns (uint32);  // 0 when none
+function escalationVersion(uint256 taskId, bytes32 payloadHash) external view returns (uint32); // 0 when none
 ```
 
 `recordDecision` requires the caller to be the timelock, the ledger unpaused, the task Open, `block.timestamp < expiresAt`, and `expectedVersion == task.charterVersion`. Then, by kind:
@@ -481,7 +482,7 @@ function exceptionVersion(uint256 taskId, bytes32 payloadHash) external view ret
 - `GRANT_EXCEPTION`: records the decision and sets `exceptionVersion[taskId][payloadHash] = task.charterVersion`. The gateway honours it only for the exact action descriptor and only while the charter version is unchanged, so an amendment retires every earlier exception. No charter change.
 - `AMEND_CHARTER`: requires `newCharterText` within bounds and `keccak256(newCharterText) == payloadHash`. Stores the new text, increments `charterVersion`, updates `charterHash`. Any Pending or Active proposal that named the old version can no longer execute, because its `expectedVersion` no longer matches.
 - `STOP_TASK`: sets state to Stopped. Further decisions revert.
-- `ESCALATE_TO_HUMAN`: sets `escalated = true`. The gateway blocks the disputed action until the operator records completion or a later decision. The chain records that the fleet asked for a human.
+- `ESCALATE_TO_HUMAN`: marks the disputed action's payload as escalated at the current charter version, by setting `escalationVersion[taskId][payloadHash]` and incrementing `openEscalations`. The gateway blocks that action until a later decision on the same payload or the task closes; unrelated actions continue. Escalating an already escalated payload is idempotent: the mark keeps the version it was first set at. A later `CHOOSE_PATH` or `GRANT_EXCEPTION` on the same payload is the fleet answering the question, so it clears the mark and decrements `openEscalations`. `AMEND_CHARTER` does not clear anything, because its `payloadHash` is the new charter's hash rather than an action payload, and `STOP_TASK` and `completeTask` leave the mappings as they are because the task is closed. The chain records that the fleet asked for a human.
 
 Every kind increments `decisionCount`, stores the `Decision`, and emits `DecisionRecorded(taskId, index, kind, versionBefore, versionAfter, payloadHash, actionId, summary)`. `AMEND_CHARTER` additionally emits `CharterAmended(taskId, version, charterHash, charterText)`.
 
@@ -611,10 +612,14 @@ descriptor = canonical(actionClass, target, argsHash)
 payloadHash = keccak256(descriptor)
 
 if paused(ledger) or task.state != Open or expired: BLOCK("task not open")
+if ledger.escalationVersion(taskId, payloadHash) != 0: BLOCK("escalated"), no draft
 if actionClass in charter.allowedActionClasses and target allowed by charter: ALLOW
 elif ledger.exceptionVersion(taskId, payloadHash) == charter.version: ALLOW (log as excepted)
 else: BLOCK("out of charter"), attach a draft decision proposal for the agent
 ```
+
+Escalation is per payload, like an exception. One disputed action waiting on a human holds up that
+action only; every other action on the task keeps running against the same charter.
 
 The gateway re-reads the ledger's charter version and pause state at most every block and on every block, fails closed on RPC failure, and logs every allow and block with block number, charter version, and payload hash. Those logs ship with the experiment record.
 
@@ -872,7 +877,7 @@ A written review of contract security, key custody, guardian controls, timelock 
 | Vote admission | Non-member, double vote, invalid support, empty and oversized reason, non-empty params, invalid and replayed signatures |
 | Thresholds | Every ballot profile for N equals 5 (`4^5 = 1,024` profiles) against the deployed contracts; expected result is `forVotes >= 3e18 && forVotes > againstVotes`; representative profiles for N equals 3, 7, and 10 including delegated concentrations |
 | Timelock | Unauthorized schedule, execute, and role change fail; guardian cancel works; governor queue and execute work |
-| Ledger | Only timelock writes; open, amend, exception, choose, stop, escalate transitions; version bump invalidates old proposals; exception is version-scoped; expiry checked directly; pause blocks open and record |
+| Ledger | Only timelock writes; open, amend, exception, choose, stop, escalate transitions; version bump invalidates old proposals; exception is version-scoped; escalation is per payload; expiry checked directly; pause blocks open and record |
 | Guardian | Pause, unpause, cancel queued; cannot propose, vote, execute, write, or change parameters |
 | Recovery | Dropped and replaced transactions, worker restart, duplicate keeper execution, index rebuild |
 | Input attacks | Description and calldata mismatch; prompt injection in task data; Markdown with HTML; malformed JSON; fabricated receipt; fake `#proposalTypeId` marker |

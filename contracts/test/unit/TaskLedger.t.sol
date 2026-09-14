@@ -164,12 +164,48 @@ contract TaskLedgerTest is Test {
         ledger.recordDecision(id, 0, 1, bytes32(0), "", "x");
     }
 
-    function test_EscalateSetsFlagAndNextDecisionClearsIt() public {
+    function test_EscalationIsPerPayloadAndUnrelatedDecisionsLeaveItOpen() public {
         uint256 id = _open();
-        _record(id, 4, 1, bytes32(0), "", "escalate");
-        assertTrue(ledger.getTask(id).escalated);
-        _record(id, 0, 1, keccak256("p"), "", "choose");
-        assertFalse(ledger.getTask(id).escalated);
+        bytes32 disputed = keccak256("network_fetch|examples.internal");
+        _record(id, 4, 1, disputed, "", "escalate");
+        assertEq(ledger.escalationVersion(id, disputed), 1);
+        assertEq(ledger.getTask(id).openEscalations, 1);
+
+        // a decision on a different payload is a different question; the escalation stays open
+        _record(id, 0, 1, keccak256("unrelated path"), "", "choose");
+        assertEq(ledger.escalationVersion(id, disputed), 1);
+        assertEq(ledger.getTask(id).openEscalations, 1);
+
+        // nor does an amendment clear it: an amendment's payloadHash is the charter hash
+        string memory newCharter = '{"goal":"new"}';
+        _record(id, 2, 1, keccak256(bytes(newCharter)), newCharter, "amend");
+        assertEq(ledger.getTask(id).charterVersion, 2);
+        assertEq(ledger.escalationVersion(id, disputed), 1);
+        assertEq(ledger.getTask(id).openEscalations, 1);
+
+        // escalating the same payload again keeps the version it was first escalated at
+        _record(id, 4, 2, disputed, "", "escalate again");
+        assertEq(ledger.escalationVersion(id, disputed), 1);
+        assertEq(ledger.getTask(id).openEscalations, 1);
+    }
+
+    function test_DecisionOnTheSamePayloadClearsThatEscalation() public {
+        uint256 id = _open();
+        bytes32 a = keccak256("a");
+        bytes32 b = keccak256("b");
+        _record(id, 4, 1, a, "", "escalate a");
+        _record(id, 4, 1, b, "", "escalate b");
+        assertEq(ledger.getTask(id).openEscalations, 2);
+
+        _record(id, 0, 1, a, "", "choose a, human answered");
+        assertEq(ledger.escalationVersion(id, a), 0);
+        assertEq(ledger.escalationVersion(id, b), 1);
+        assertEq(ledger.getTask(id).openEscalations, 1);
+
+        _record(id, 1, 1, b, "", "grant b instead");
+        assertEq(ledger.escalationVersion(id, b), 0);
+        assertEq(ledger.exceptionVersion(id, b), 1);
+        assertEq(ledger.getTask(id).openEscalations, 0);
     }
 
     function test_ExpiryBlocksRecordingAndExpireTaskIsPermissionless() public {

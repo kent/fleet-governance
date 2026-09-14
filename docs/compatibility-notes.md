@@ -603,6 +603,27 @@ hook itself overrides.** Any future hook that calls back into `AgoraGovernor` ha
 own rules to whatever comes back, or read the raw inputs (`proposalVotes`, `proposalSnapshot`,
 `proposalDeadline`) and decide for itself.
 
+## Final review: `afterInvariant` runs once before the campaign, with nothing done yet
+
+Foundry 1.7.1 calls a test contract's `afterInvariant()` after each run of an invariant campaign
+**and once more before the first run**, with the handler in its post-`setUp` state. Confirmed by
+having `afterInvariant` append its counters to a file (file writes survive the state resets between
+runs) during a 64-run campaign: the file held 66 records, the first of them all zeroes and the last
+one duplicated.
+
+That makes the obvious use of `afterInvariant`, asserting that the campaign actually exercised
+something, fail on every campaign unless it is guarded. `TaskLedgerInvariant.afterInvariant`
+(`contracts/test/invariant/TaskLedgerInvariant.t.sol`) guards on a `totalCalls` counter the handler
+bumps on every entry point, and returns early when it is zero.
+
+Two more things to know before writing such an assertion. It is a **per-run** assertion, not a
+per-campaign one: handler storage is reset between runs (a 64-run, depth-32 campaign reports 2,048
+handler calls in total but `afterInvariant` sees 32), so whatever it asserts has to be reachable
+inside a single run, which is why these invariants raise `depth` to 64 with an inline
+`/// forge-config: default.invariant.depth = 64`. And when it does fail, the shrinker reduces the
+sequence to a single call and reports that, because a one-call sequence also fails the assertion;
+the reported counterexample is therefore not the sequence that actually broke anything.
+
 ## Final review: two smaller notes
 
 **A Queued but unexecutable proposal holds its proposer's slot until someone cancels it.** If a

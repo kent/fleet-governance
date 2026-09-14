@@ -33,7 +33,8 @@ contract TaskLedger {
         uint32 charterVersion;
         bytes32 charterHash;
         uint32 decisionCount;
-        bool escalated;
+        /// @dev Number of distinct payloads currently escalated on this task. See escalationVersion.
+        uint32 openEscalations;
     }
 
     struct Decision {
@@ -101,6 +102,10 @@ contract TaskLedger {
     mapping(uint256 taskId => Decision[]) private _decisions;
     /// @notice Charter version at which an exception for this exact action payload was granted; 0 when none.
     mapping(uint256 taskId => mapping(bytes32 payloadHash => uint32 version)) public exceptionVersion;
+    /// @notice Charter version at which this exact action payload was escalated to a human; 0 when the
+    ///         payload is not currently escalated. Escalation is per payload, like an exception: it holds
+    ///         up the disputed action only, and a later decision on the same payload clears it.
+    mapping(uint256 taskId => mapping(bytes32 payloadHash => uint32 version)) public escalationVersion;
 
     modifier onlyOperator() {
         if (msg.sender != operator) revert NotOperator(msg.sender);
@@ -151,7 +156,7 @@ contract TaskLedger {
             charterVersion: 1,
             charterHash: charterHash,
             decisionCount: 0,
-            escalated: false
+            openEscalations: 0
         });
         _charterTexts[taskId] = charterText_;
         emit TaskOpened(taskId, msg.sender, expiresAt, charterHash, charterText_);
@@ -202,7 +207,7 @@ contract TaskLedger {
     ) private {
         if (decisionKind == DecisionKind.GRANT_EXCEPTION) exceptionVersion[taskId][payloadHash] = versionBefore;
         if (decisionKind == DecisionKind.STOP_TASK) task.state = TaskState.Stopped;
-        task.escalated = decisionKind == DecisionKind.ESCALATE_TO_HUMAN;
+        _applyEscalation(task, taskId, payloadHash, decisionKind, versionBefore);
 
         bytes32 actionId = ActionId.compute(address(this), taskId, kind, expectedVersion, payloadHash);
         uint32 index = task.decisionCount;
@@ -218,6 +223,35 @@ contract TaskLedger {
         d.recordedAt = uint64(block.timestamp);
         emit DecisionRecorded(taskId, index, decisionKind, versionBefore, versionAfter, payloadHash, actionId, summary);
         if (decisionKind == DecisionKind.STOP_TASK) emit TaskStopped(taskId, index);
+    }
+
+    /// @dev Escalation is per payload, mirroring exceptions, so one disputed action waiting on a human
+    ///      does not stop the rest of the task. ESCALATE_TO_HUMAN marks this payload at the current
+    ///      charter version, and is idempotent: escalating an already escalated payload keeps the version
+    ///      it was first escalated at and does not double-count. A later CHOOSE_PATH or GRANT_EXCEPTION on
+    ///      the same payload is the fleet answering the question, so it clears the mark.
+    ///      AMEND_CHARTER never clears: its payloadHash is the new charter's hash, not an action payload.
+    ///      STOP_TASK never clears either, and completeTask leaves the mappings untouched, because the
+    ///      task is closed and nothing more can be recorded against it.
+    function _applyEscalation(
+        Task storage task,
+        uint256 taskId,
+        bytes32 payloadHash,
+        DecisionKind decisionKind,
+        uint32 versionBefore
+    ) private {
+        if (decisionKind == DecisionKind.ESCALATE_TO_HUMAN) {
+            if (escalationVersion[taskId][payloadHash] == 0) {
+                escalationVersion[taskId][payloadHash] = versionBefore;
+                task.openEscalations += 1;
+            }
+        } else if (
+            decisionKind != DecisionKind.AMEND_CHARTER && decisionKind != DecisionKind.STOP_TASK
+                && escalationVersion[taskId][payloadHash] != 0
+        ) {
+            escalationVersion[taskId][payloadHash] = 0;
+            task.openEscalations -= 1;
+        }
     }
 
     /// @dev Split out of recordDecision to keep that function's stack shallow enough for the
