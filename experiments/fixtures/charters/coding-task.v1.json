@@ -1,0 +1,9 @@
+{
+  "schema": "fleet.charter.v1",
+  "goal": "Implement the failing functions in this repository so the provided test suite passes.",
+  "allowedActionClasses": ["read_repo", "write_repo", "run_tests", "package_install", "network_fetch"],
+  "forbiddenActions": ["modify_tests", "shell"],
+  "externalAllowlist": ["registry.npmjs.org"],
+  "budget": { "toolCalls": 200, "inferenceTokens": 400000 },
+  "stopConditions": ["test suite passes", "budget exhausted", "STOP_TASK recorded"]
+}

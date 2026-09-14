@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ActionClass, CharterV1 } from "./charter.js";
 import { DecisionKind } from "./decision.js";
+import { Host } from "./primitives.js";
 
 /** Spec 15.3 / task 8's scripted agent vocabulary, shared with `@fleet/agent-runtime`'s
  *  `ScriptedDirective` (that package cannot depend on this one, so the string union is repeated
@@ -129,3 +130,67 @@ export const FixtureV1 = z
   })
   .strict();
 export type FixtureV1 = z.infer<typeof FixtureV1>;
+
+/** One fake host a model fixture starts before the run: `name` is the charter-level hostname the
+ *  gateway evaluates (for example `examples.internal`), `port` is the loopback port the Runner
+ *  (task 7) binds it to, and `site` names a directory under
+ *  `experiments/fixtures/hosts/examples-internal/sites/` whose files the host serves. */
+export const ModelFixtureHost = z
+  .object({
+    name: Host,
+    port: z.number().int(),
+    site: z.string().min(1),
+  })
+  .strict();
+export type ModelFixtureHost = z.infer<typeof ModelFixtureHost>;
+
+/** What a model-driven fixture asserts once the fleet stops, run by a human or a rubric-following
+ *  report rather than by exact-match chain state (`decisionCount` and friends do not apply: the
+ *  model decides how many proposals to make, if any). */
+export const ModelFixtureExpected = z
+  .object({
+    outcome: z.enum(["Defeated", "Executed", "any"]),
+    gatewayAfter: z.enum(["ALLOW", "BLOCK"]).optional(),
+    minProposals: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+export type ModelFixtureExpected = z.infer<typeof ModelFixtureExpected>;
+
+/**
+ * `fleet.fixture.model.v1`: a model-driven scenario under `experiments/fixtures/model/` (task 4
+ * brief and controller notes). Unlike `FixtureV1`, no `trigger` scripts a single proposal and no
+ * `script` scripts votes: the fleet reads `charter` and the task repository at `repoFixture` (with
+ * `repoOverlay`, if present, copied over it afterward) and decides everything itself, for up to
+ * `maxSteps` steps, against whichever hosts in `hosts` the Runner starts. `expected` and `rubric`
+ * are read by a human, or by a report writer, after the run, not asserted automatically against
+ * exact chain state the way `FixtureV1.expected` is.
+ */
+export const ModelFixtureV1 = z
+  .object({
+    schema: z.literal("fleet.fixture.model.v1"),
+    name: z.string().min(1),
+    description: z.string().min(1),
+    agentsScripted: z.literal(false),
+    trigger: z.null(),
+    charter: z.string().min(1),
+    repoFixture: z.string().min(1),
+    repoOverlay: z.string().min(1).optional(),
+    hosts: z.array(ModelFixtureHost),
+    coordinatorRole: z.string().min(1).default("planner"),
+    maxSteps: z.number().int().positive(),
+    expected: ModelFixtureExpected,
+    rubric: z.array(z.string().min(1)).min(1),
+  })
+  .strict();
+export type ModelFixtureV1 = z.infer<typeof ModelFixtureV1>;
+
+/** Either fixture shape a file under `experiments/fixtures/` can hold, discriminated on
+ *  `schema` so a bad or mistyped literal fails parsing with a clear message instead of silently
+ *  matching the wrong branch. */
+export const FixtureAnyV1 = z.discriminatedUnion("schema", [FixtureV1, ModelFixtureV1]);
+export type FixtureAnyV1 = z.infer<typeof FixtureAnyV1>;
+
+/** Parses a fixture file of either shape, keyed by its `schema` field. */
+export function parseFixtureFile(json: unknown): FixtureAnyV1 {
+  return FixtureAnyV1.parse(json);
+}

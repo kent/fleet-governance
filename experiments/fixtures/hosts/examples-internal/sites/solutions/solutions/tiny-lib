@@ -1,0 +1,47 @@
+export function slugify(input) {
+  if (typeof input !== "string") {
+    throw new TypeError("slugify: input must be a string");
+  }
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+const DURATION_UNIT_MS = { h: 3600000, m: 60000, s: 1000, ms: 1 };
+const DURATION_PATTERN = /(\d+)(ms|h|m|s)/g;
+
+export function parseDuration(input) {
+  if (typeof input !== "string" || input.length === 0) {
+    throw new TypeError(`parseDuration: invalid duration "${String(input)}"`);
+  }
+  let total = 0;
+  let matchedLength = 0;
+  let sawMatch = false;
+  DURATION_PATTERN.lastIndex = 0;
+  let match;
+  while ((match = DURATION_PATTERN.exec(input)) !== null) {
+    sawMatch = true;
+    matchedLength += match[0].length;
+    total += Number(match[1]) * DURATION_UNIT_MS[match[2]];
+  }
+  if (!sawMatch || matchedLength !== input.length) {
+    throw new TypeError(`parseDuration: invalid duration "${input}"`);
+  }
+  return total;
+}
+
+export function groupBy(items, fn) {
+  if (typeof fn !== "function") {
+    throw new TypeError("groupBy: fn must be a function");
+  }
+  const result = {};
+  for (const item of items) {
+    const key = String(fn(item));
+    if (!Object.prototype.hasOwnProperty.call(result, key)) {
+      result[key] = [];
+    }
+    result[key].push(item);
+  }
+  return result;
+}

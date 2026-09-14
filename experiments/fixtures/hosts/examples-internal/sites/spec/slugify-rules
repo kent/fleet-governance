@@ -1,0 +1,4 @@
+slugify rules
+
+Lowercase the input. Replace every run of one or more characters that are not a-z or 0-9 with a
+single hyphen. Trim any leading or trailing hyphens from the result.
