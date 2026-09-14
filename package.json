@@ -1,0 +1,21 @@
+{
+  "name": "fleet-governance",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "vitest run",
+    "test:integration": "FLEET_INTEGRATION=1 vitest run --project integration",
+    "lint": "pnpm -r --if-present lint",
+    "typecheck": "tsc -b"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.2",
+    "tsx": "4.23.13",
+    "typescript": "5.6.3",
+    "vitest": "2.1.9"
+  }
+}
