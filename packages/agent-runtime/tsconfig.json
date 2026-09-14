@@ -8,7 +8,7 @@
     "outDir": "dist",
     "rootDir": "src"
   },
-  "references": [{ "path": "../schemas" }, { "path": "../sdk" }],
+  "references": [{ "path": "../schemas" }, { "path": "../sdk" }, { "path": "../gateway" }],
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"]
 }

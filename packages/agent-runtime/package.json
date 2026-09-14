@@ -20,6 +20,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@fleet/gateway": "workspace:*",
     "@fleet/schemas": "workspace:*",
     "@fleet/sdk": "workspace:*",
     "pg": "8.23.0",

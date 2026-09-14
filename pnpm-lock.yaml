@@ -109,6 +109,9 @@ importers:
 
   packages/agent-runtime:
     dependencies:
+      '@fleet/gateway':
+        specifier: workspace:*
+        version: link:../gateway
       '@fleet/schemas':
         specifier: workspace:*
         version: link:../schemas
