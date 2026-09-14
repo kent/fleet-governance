@@ -4,6 +4,7 @@
     { "path": "packages/abi" },
     { "path": "packages/schemas" },
     { "path": "packages/sdk" },
-    { "path": "packages/gateway" }
+    { "path": "packages/gateway" },
+    { "path": "packages/agent-runtime" }
   ]
 }

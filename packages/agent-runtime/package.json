@@ -1,0 +1,31 @@
+{
+  "name": "@fleet/agent-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc && mkdir -p dist/migrations && cp src/migrations/*.sql dist/migrations/",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fleet/schemas": "workspace:*",
+    "@fleet/sdk": "workspace:*",
+    "pg": "8.23.0",
+    "viem": "2.56.5"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1"
+  }
+}
