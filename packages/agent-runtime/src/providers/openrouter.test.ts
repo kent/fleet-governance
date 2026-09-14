@@ -378,6 +378,47 @@ describe("OpenRouterProvider (against a local fake HTTP server)", () => {
     if (presentResult.ok) expect(presentResult.value).toEqual({ c: { d: "x" } });
   });
 
+  it("fix round 2 F2 follow-up: a repeated sub-schema instance is inlined (no $ref anywhere), so the second occurrence's forced-nullable tracking works too", async () => {
+    // z.object({ a: Shared, b: Shared }): the same ZodObject instance used for two properties.
+    // The default zod-to-json-schema strategy would emit `{"$ref":"#/properties/a"}` for `b`,
+    // which requireEveryPropertyEverywhere's tree-walk (and its ForcedNullableNode tracking)
+    // does not follow, so `b`'s own optional field would not be tracked as forced there.
+    const Shared = z.object({ x: z.string(), y: z.number().optional() }).strict();
+    const SharedTwice = z.object({ a: Shared, b: Shared }).strict();
+
+    let seenBody: Record<string, unknown> | undefined;
+    const handle = await startFakeServer((request, res, body) => {
+      seenBody = JSON.parse(body);
+      jsonResponse(res, 200, {
+        model: "m",
+        choices: [
+          {
+            // b's optional `y` comes back explicit null, the strict-mode-required-but-nullable
+            // shape a model produces for "omitted"; only correct if `b`'s own schema (not a
+            // $ref to a's) was walked and tracked.
+            message: { content: '{"a":{"x":"one","y":1},"b":{"x":"two","y":null}}' },
+            finish_reason: "stop",
+          },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      });
+    });
+    activeServer = handle;
+
+    const provider = new OpenRouterProvider({ apiKey: FAKE_API_KEY, baseUrl: handle.url });
+    const result = await provider.complete({ system: "s", user: "u", schema: SharedTwice, maxTokens: 100, timeoutMs: 2000 });
+
+    const responseFormat = seenBody?.response_format as Record<string, unknown>;
+    const jsonSchema = (responseFormat.json_schema as Record<string, unknown>).schema;
+    expect(JSON.stringify(jsonSchema)).not.toContain("$ref");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value).toEqual({ a: { x: "one", y: 1 }, b: { x: "two" } });
+      expect("y" in result.value.b).toBe(false);
+    }
+  });
+
   it("fix round 1 F3: skips the 429 retry when fewer than 5s remain on the shared deadline (never a fresh timeoutMs per attempt)", async () => {
     let callCount = 0;
     let currentTime = 1_000_000;

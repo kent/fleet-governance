@@ -260,7 +260,18 @@ function stripForcedNulls(value: unknown, tracking: ForcedNullableNode | undefin
 }
 
 function buildJsonSchema(schema: z.ZodType<unknown>): { schema: Record<string, unknown>; forcedNullable: ForcedNullableNode } {
-  const generated = zodToJsonSchema(schema) as Record<string, unknown>;
+  // $refStrategy: "none" (fix round 2, F2 follow-up): when a zod schema reuses the same
+  // sub-schema instance in two places (e.g. `z.object({ a: Shared, b: Shared })`), the default
+  // strategy emits a `$ref` for the repeat occurrence instead of a second inline copy. Neither
+  // `forceNoAdditionalPropertiesEverywhere` nor `requireEveryPropertyEverywhere` (nor its
+  // `ForcedNullableNode` tracking) follows `$ref`, so the repeated occurrence would keep whatever
+  // `required`/nullability the *first* occurrence happened to get and would not be tracked as
+  // forced at its own position; a legitimate `null` for an optional field there would then fail
+  // to be stripped and the whole response would be reported malformed. Strict mode has no use for
+  // `$defs`/`definitions` (the schema is sent inline in one request body every time), so there is
+  // no downside to always inlining: this makes `$ref` impossible to emit in the first place,
+  // rather than teaching every tree-walker here to resolve it.
+  const generated = zodToJsonSchema(schema, { $refStrategy: "none" }) as Record<string, unknown>;
   delete generated.$schema;
   forceNoAdditionalPropertiesEverywhere(generated);
   const forcedNullable = emptyForcedNullableNode();
