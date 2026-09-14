@@ -35,14 +35,21 @@ if [ ! -f "$manifest" ]; then
   exit 1
 fi
 
-# shellcheck disable=SC1091
-[ -f "$infra_dir/.env" ] && set -a && source "$infra_dir/.env" && set +a
+# Read the ports out of infra/.env one key at a time, never exported: this
+# script runs `docker compose exec`, which interpolates docker-compose.yml
+# the same way `up` does, and an exported TOKEN_ADDRESS/GOVERNOR_ADDRESS
+# from a stale .env read would take precedence over the file Compose reads
+# itself. See infra/scripts/env-lib.sh's header.
+ENV_FILE="$infra_dir/.env"
+# shellcheck source=env-lib.sh
+source "$script_dir/env-lib.sh"
 
-RPC_URL=${RPC_URL:-http://127.0.0.1:${ANVIL_PORT:-8545}}
-DAO_NODE_URL=${DAO_NODE_URL:-http://localhost:${DAO_NODE_PORT:-8000}}
-CPLS_URL=${CPLS_URL:-http://localhost:${CPLS_PORT:-8001}}
-FAKE_GCS_URL=${FAKE_GCS_URL:-http://localhost:${FAKE_GCS_PORT:-4443}}
-GCS_BUCKET_NAME=${GCS_BUCKET_NAME:-fleet-archive-dev}
+RPC_URL=${RPC_URL:-http://127.0.0.1:$(read_env_value ANVIL_PORT 8545)}
+DAO_NODE_URL=${DAO_NODE_URL:-http://localhost:$(read_env_value DAO_NODE_PORT 8000)}
+CPLS_URL=${CPLS_URL:-http://localhost:$(read_env_value CPLS_PORT 8001)}
+AGORA_NEXT_URL=${AGORA_NEXT_URL:-http://localhost:$(read_env_value AGORA_NEXT_PORT 3000)}
+FAKE_GCS_URL=${FAKE_GCS_URL:-http://localhost:$(read_env_value FAKE_GCS_PORT 4443)}
+GCS_BUCKET_NAME=${GCS_BUCKET_NAME:-$(read_env_value GCS_BUCKET_NAME fleet-archive-dev)}
 CHAIN_ID=$(jq -r '.chainId' "$manifest")
 
 LEDGER=$(jq -r '.addresses.ledger' "$manifest")

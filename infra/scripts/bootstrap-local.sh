@@ -33,13 +33,34 @@ worktree_root="$(cd "$script_dir/../.." && pwd)"
 infra_dir="$worktree_root/infra"
 main_root="$(dirname "$(git -C "$worktree_root" rev-parse --path-format=absolute --git-common-dir)")"
 contracts_dir="$main_root/contracts"
+manifest="$worktree_root/deployments/31337/latest.json"
 
 [ -f "$infra_dir/.env" ] || cp "$infra_dir/.env.example" "$infra_dir/.env"
-# shellcheck disable=SC1091
-set -a && source "$infra_dir/.env" && set +a
+
+# Read the handful of values this script itself needs out of infra/.env,
+# one key at a time, into plain (never exported) shell variables. Nothing
+# docker-compose.yml interpolates may enter this script's environment:
+# Compose prefers the shell environment over the project's .env file, and
+# step 3 below rewrites TOKEN_ADDRESS/GOVERNOR_ADDRESS/DAO_NODE_START_BLOCK
+# in that file after this point. Exporting them here would pin every later
+# `compose up` to whatever was in .env at startup, which on a fresh clone
+# is .env.example's zero-address placeholders. See env-lib.sh's header and
+# the `compose config` guard at the end of step 3.
+ENV_FILE="$infra_dir/.env"
+# shellcheck source=env-lib.sh
+source "$script_dir/env-lib.sh"
+
+ANVIL_PORT=$(read_env_value ANVIL_PORT 8545)
+POSTGRES_PORT=$(read_env_value POSTGRES_PORT 55432)
+DAO_NODE_PORT=$(read_env_value DAO_NODE_PORT 8000)
+CPLS_PORT=$(read_env_value CPLS_PORT 8001)
+FAKE_GCS_PORT=$(read_env_value FAKE_GCS_PORT 4443)
+AGORA_NEXT_PORT=$(read_env_value AGORA_NEXT_PORT 3000)
+GCS_CREDENTIALS_FILE=$(read_env_value GCS_CREDENTIALS_FILE "")
+GCS_BUCKET_NAME=$(read_env_value GCS_BUCKET_NAME fleet-archive-dev)
 
 compose_files=(-f "$infra_dir/docker-compose.yml")
-if [ -z "${GCS_CREDENTIALS_FILE:-}" ]; then
+if [ -z "$GCS_CREDENTIALS_FILE" ]; then
   echo "bootstrap-local: GCS_CREDENTIALS_FILE unset; using the offline fake-gcs overlay."
   compose_files+=(-f "$infra_dir/docker-compose.offline.yml")
   OFFLINE=1
@@ -51,13 +72,6 @@ fi
 compose() {
   docker compose "${compose_files[@]}" --project-directory "$infra_dir" "$@"
 }
-
-ANVIL_PORT=${ANVIL_PORT:-8545}
-DAO_NODE_PORT=${DAO_NODE_PORT:-8000}
-CPLS_PORT=${CPLS_PORT:-8001}
-AGORA_NEXT_PORT=${AGORA_NEXT_PORT:-3000}
-FAKE_GCS_PORT=${FAKE_GCS_PORT:-4443}
-GCS_BUCKET_NAME=${GCS_BUCKET_NAME:-fleet-archive-dev}
 
 # --- 0. Build every image once, up front ------------------------------------
 
@@ -110,16 +124,44 @@ rm -f "$tmp_manifest"
   FLEET_MANIFEST_OUT="$tmp_manifest" \
   forge script script/DeployFleet.s.sol --rpc-url "http://127.0.0.1:$ANVIL_PORT" --broadcast
 )
-mkdir -p "$worktree_root/deployments/31337"
-mv "$tmp_manifest" "$worktree_root/deployments/31337/latest.json"
-echo "bootstrap-local: wrote $worktree_root/deployments/31337/latest.json"
-jq '.addresses' "$worktree_root/deployments/31337/latest.json"
+mkdir -p "$(dirname "$manifest")"
+mv "$tmp_manifest" "$manifest"
+echo "bootstrap-local: wrote $manifest"
+jq '.addresses' "$manifest"
 
 # --- 3. Configure DAO Node and Agora Next with the real addresses ---------
 
 echo "== [3/7] writing DAO Node config and Agora Next deployment file =="
 bash "$script_dir/write-daonode-config.sh"
 bash "$script_dir/write-agora-next-deployment.sh"
+
+# Guard: everything dao-node and cpls are about to be started with comes
+# from Compose's own interpolation of infra/.env, which write-daonode-config.sh
+# has just rewritten. Assert that what Compose actually renders matches the
+# manifest before starting anything, rather than discovering a stale
+# zero-address deployment several minutes later as an empty proposal list.
+# This is the check that would have caught the "script exported .env at
+# startup, then rewrote the file" bug: an exported TOKEN_ADDRESS wins over
+# the file, so `compose config` would still show the placeholder here.
+expected_token=$(jq -r '.addresses.token' "$manifest")
+expected_governor=$(jq -r '.addresses.governor' "$manifest")
+rendered=$(compose config --format json)
+for svc in dao-node cpls; do
+  for pair in "TOKEN_ADDRESS:$expected_token" "GOVERNOR_ADDRESS:$expected_governor"; do
+    key=${pair%%:*}
+    expected=${pair#*:}
+    actual=$(echo "$rendered" | jq -r --arg svc "$svc" --arg key "$key" '.services[$svc].environment[$key] // ""')
+    if [ "$actual" != "$expected" ]; then
+      echo "bootstrap-local: compose would start $svc with $key=$actual, but the manifest says $expected." >&2
+      echo "bootstrap-local: Compose prefers the shell environment over $infra_dir/.env." >&2
+      echo "bootstrap-local: unset $key in this shell (or stop exporting it) and re-run; aborting." >&2
+      exit 1
+    fi
+  done
+done
+echo "bootstrap-local: compose config check OK:"
+echo "$rendered" | jq -r '.services["dao-node"].environment | "  dao-node  TOKEN_ADDRESS=\(.TOKEN_ADDRESS) GOVERNOR_ADDRESS=\(.GOVERNOR_ADDRESS) DAO_NODE_START_BLOCK=\(.DAO_NODE_START_BLOCK)"'
+echo "$rendered" | jq -r '.services["cpls"].environment | "  cpls      TOKEN_ADDRESS=\(.TOKEN_ADDRESS) GOVERNOR_ADDRESS=\(.GOVERNOR_ADDRESS)"'
 
 # --- 4. Bring up the read side ---------------------------------------------
 
