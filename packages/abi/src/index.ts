@@ -4464,6 +4464,30 @@ export const taskLedgerAbi = [
   },
   {
     "type": "function",
+    "name": "escalationVersion",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "payloadHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "version",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "exceptionVersion",
     "inputs": [
       {
@@ -4622,9 +4646,9 @@ export const taskLedgerAbi = [
             "internalType": "uint32"
           },
           {
-            "name": "escalated",
-            "type": "bool",
-            "internalType": "bool"
+            "name": "openEscalations",
+            "type": "uint32",
+            "internalType": "uint32"
           }
         ]
       }
