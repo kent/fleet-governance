@@ -5,6 +5,8 @@
     { "path": "packages/schemas" },
     { "path": "packages/sdk" },
     { "path": "packages/gateway" },
-    { "path": "packages/agent-runtime" }
+    { "path": "packages/agent-runtime" },
+    { "path": "apps/keeper" },
+    { "path": "apps/worker" }
   ]
 }
