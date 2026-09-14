@@ -97,4 +97,79 @@ describe("GET /api/fixtures (listAllFixtures)", () => {
     expect(broken?.charterError).toBeTruthy();
     expect(broken?.charterError).not.toMatch(/0x[0-9a-fA-F]{64}/);
   });
+
+  it("rejects an absolute charter path with the escape error, never reading it", () => {
+    const outsideAbsolutePath = path.join(tmpdir(), "fleet-fixtures-route-outside-secret.json");
+    writeJson(outsideAbsolutePath, {
+      schema: "fleet.charter.v1",
+      goal: "This charter lives outside the repo root and must never be read.",
+      allowedActionClasses: [],
+      forbiddenActions: [],
+      externalAllowlist: [],
+      budget: { toolCalls: 1, inferenceTokens: 1 },
+      stopConditions: [],
+    });
+    writeJson(
+      path.join(repoRootDir, "experiments", "fixtures", "model", "model-absolute.json"),
+      modelFixture("model-absolute", outsideAbsolutePath),
+    );
+
+    try {
+      const fixtures = listAllFixtures(repoRootDir);
+      const summary = fixtures.find((f) => f.name === "model-absolute");
+      expect(summary?.charter).toBeUndefined();
+      expect(summary?.charterError).toBe("charter path escapes the repository root");
+      expect(summary?.charterError).not.toContain(outsideAbsolutePath);
+      expect(summary?.charterError).not.toContain(repoRootDir);
+    } finally {
+      rmSync(outsideAbsolutePath, { force: true });
+    }
+  });
+
+  it("rejects a charter path that escapes the repo root with '..', never reading it", () => {
+    const escapedPath = path.join(path.dirname(repoRootDir), "fleet-fixtures-route-escaped-charter.json");
+    writeJson(escapedPath, {
+      schema: "fleet.charter.v1",
+      goal: "This charter lives one directory above the repo root and must never be read.",
+      allowedActionClasses: [],
+      forbiddenActions: [],
+      externalAllowlist: [],
+      budget: { toolCalls: 1, inferenceTokens: 1 },
+      stopConditions: [],
+    });
+    writeJson(
+      path.join(repoRootDir, "experiments", "fixtures", "model", "model-traversal.json"),
+      modelFixture("model-traversal", "../fleet-fixtures-route-escaped-charter.json"),
+    );
+
+    try {
+      const fixtures = listAllFixtures(repoRootDir);
+      const summary = fixtures.find((f) => f.name === "model-traversal");
+      expect(summary?.charter).toBeUndefined();
+      expect(summary?.charterError).toBe("charter path escapes the repository root");
+    } finally {
+      rmSync(escapedPath, { force: true });
+    }
+  });
+
+  it("still resolves a normal nested charter path inside the repo root", () => {
+    writeJson(
+      path.join(repoRootDir, "experiments", "fixtures", "model", "model-nested.json"),
+      modelFixture("model-nested", "experiments/fixtures/charters/nested/sub/deep.json"),
+    );
+    writeJson(path.join(repoRootDir, "experiments", "fixtures", "charters", "nested", "sub", "deep.json"), {
+      schema: "fleet.charter.v1",
+      goal: "A validly nested charter, well inside the repo root.",
+      allowedActionClasses: [],
+      forbiddenActions: [],
+      externalAllowlist: [],
+      budget: { toolCalls: 1, inferenceTokens: 1 },
+      stopConditions: [],
+    });
+
+    const fixtures = listAllFixtures(repoRootDir);
+    const summary = fixtures.find((f) => f.name === "model-nested");
+    expect(summary?.charterError).toBeUndefined();
+    expect(summary?.charter?.goal).toBe("A validly nested charter, well inside the repo root.");
+  });
 });
