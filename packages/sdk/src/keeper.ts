@@ -59,6 +59,17 @@ export class Keeper {
     }
 
     if (state === ProposalState.Queued) {
+      // `state === Queued && block.timestamp >= proposalEta` is equivalent to
+      // `timelock.isOperationReady(id)` for every operation this governor ever schedules, so
+      // reading it here avoids a second contract (and the salt/hashOperationBatch bookkeeping
+      // needed to compute `id` independently). The pinned Agora governor's `queue()` is the only
+      // path that ever calls the timelock's `scheduleBatch`, always with `delay ==
+      // timelock.getMinDelay()`, so `proposalEta` (recorded when `queue()` ran) is exactly the
+      // timelock's own `_timestamps[id]`, and "ready" on the timelock is defined as `timestamp >
+      // 0 && timestamp <= block.timestamp` (unless canceled, which here reads back as a
+      // non-`Queued` governor state). The governor's `state()` folds that same timelock state in
+      // for a `Queued` proposal, so `state`+`proposalEta` and `isOperationReady` can never
+      // disagree for a proposal this keeper is looking at.
       const timing = await this.client.getProposalTiming(proposalId);
       if (timing.eta === 0n) return "waiting";
       const now = await this.client.timestamp();

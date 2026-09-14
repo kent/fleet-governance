@@ -122,12 +122,18 @@ export class NonceManager {
     const release = (): void => {
       if (settled) return;
       settled = true;
-      void this.withLock(account, async () => {
+      this.withLock(account, async () => {
         const state = await this.store.get(account);
         const pending = state.pending.map((p) =>
           p.nonce === nonce ? { nonce, txHash: null, action: "released" } : p,
         );
         await this.store.set(account, { next: state.next, pending });
+      }).catch((err: unknown) => {
+        // release() is synchronous and fire-and-forget by design (see the doc comment on
+        // NonceReservation.release), so a failure here has no caller to report back to; log it
+        // rather than let it vanish as an unhandled rejection.
+        // eslint-disable-next-line no-console
+        console.error(`NonceManager: release() of nonce ${nonce} for ${account} failed:`, err);
       });
     };
 
@@ -136,12 +142,18 @@ export class NonceManager {
 
   /**
    * Reconciles local bookkeeping against the chain's own pending nonce count
-   * (`eth_getTransactionCount(account, "pending")`). Any locally tracked nonce the chain no
-   * longer knows about (it was evicted from the mempool without confirming, i.e. dropped) is
-   * freed back up (`action: "released"`) instead of left as a permanent gap; any nonce the chain
-   * has already accounted for (mined, or still sitting in the mempool) is dropped from local
-   * tracking, since this manager no longer needs to hold it. `next` never regresses below what
-   * the chain reports.
+   * (`eth_getTransactionCount(account, "pending")`). Any nonce the chain has already accounted
+   * for (mined, or still sitting in the mempool) is below `chainNext` and is dropped from local
+   * tracking, since this manager no longer needs to hold it.
+   *
+   * Of what remains (`nonce >= chainNext`), only `"sent"` entries are touched: a `"sent"` entry
+   * the chain no longer knows about was broadcast and then evicted from the mempool without
+   * confirming (dropped), so it is freed back up (`action: "released"`) instead of left as a
+   * permanent gap. A `"reserved"` entry is left completely untouched: it was never broadcast, so
+   * the chain's pending count says nothing about it, and releasing it here would hand its nonce
+   * out to a second caller while the first reservation's holder can still legitimately go on to
+   * commit it. An already-`"released"` entry is likewise left as-is (it is already available for
+   * reuse). `next` never regresses below what the chain reports.
    */
   async reconcile(account: Address): Promise<void> {
     await this.withLock(account, async () => {
@@ -149,7 +161,9 @@ export class NonceManager {
       const chainNext = await this.publicClient.getTransactionCount({ address: account, blockTag: "pending" });
       const pending = state.pending
         .filter((p) => p.nonce >= chainNext)
-        .map((p): PendingNonce => ({ nonce: p.nonce, txHash: null, action: "released" }));
+        .map((p): PendingNonce =>
+          p.action === "sent" ? { nonce: p.nonce, txHash: null, action: "released" } : p,
+        );
       const next = Math.max(state.next, chainNext);
       await this.store.set(account, { next, pending });
     });

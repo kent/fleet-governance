@@ -315,6 +315,37 @@ describe("FleetSigner policy rejections against a fake transport", () => {
     ).rejects.toThrow(PolicyViolation);
     expect(fake.calls).toEqual([]);
   });
+
+  it("rejects a summary over 1024 bytes before making any RPC call at all", async () => {
+    const fake = await startFakeRpc({});
+    close = fake.close;
+
+    const signer = new FleetSigner({
+      privateKey: PRIVATE_KEY,
+      rpcUrl: fake.url,
+      policy: POLICY,
+      nonces: new NonceManager(new MemoryNonceStore(), fake.url),
+    });
+
+    await expect(
+      signer.propose({
+        taskId: 1n,
+        kind: "GRANT_EXCEPTION",
+        expectedVersion: 1,
+        payloadHash: SAMPLE_HASH,
+        newCharterText: "",
+        summary: "x".repeat(1025),
+        description: "ok #proposalTypeId=0",
+      }),
+    ).rejects.toThrow(PolicyViolation);
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("does not reject an empty summary: TaskLedger and the spec only bound it from above", () => {
+    // summary's lower bound changed from 1 to 0 bytes (review finding 2): the ledger and spec
+    // only say "at most 1,024 bytes", so an empty summary is not a policy violation.
+    expect(() => assertSize("summary", "", 0, 1024)).not.toThrow();
+  });
 });
 
 describe("FleetSigner end to end against a fake transport", () => {

@@ -195,6 +195,42 @@ describe("NonceManager", () => {
     expect([third.nonce, fourth.nonce].sort()).toEqual([0, 1]);
   });
 
+  it("reconcile does not release a reservation that has not been sent yet, so its nonce is never handed out twice", async () => {
+    const store = new MemoryNonceStore();
+    const manager = new NonceManager(store, url);
+
+    const first = await manager.reserve(ACCOUNT); // bootstrap reconcile sees pending count 0 -> nonce 0
+    expect(first.nonce).toBe(0);
+
+    // The chain still reports pending count 0: nothing has been broadcast for this reservation
+    // yet (it has not been committed). A naive reconcile that releases everything >= chainNext
+    // would free nonce 0 here even though `first` can still legitimately commit it.
+    await manager.reconcile(ACCOUNT);
+
+    const second = await manager.reserve(ACCOUNT);
+    expect(second.nonce).toBe(1);
+
+    // The original reservation is untouched by the reconcile and still commits successfully.
+    await expect(first.commit(`0x${"ab".repeat(32)}` as Hex)).resolves.toBeUndefined();
+    const state = await store.get(ACCOUNT);
+    expect(state.pending).toEqual(
+      expect.arrayContaining([
+        { nonce: 0, txHash: `0x${"ab".repeat(32)}`, action: "sent" },
+        { nonce: 1, txHash: null, action: "reserved" },
+      ]),
+    );
+  });
+
+  it("five concurrent reserve() calls on one account yield five distinct nonces", async () => {
+    const manager = new NonceManager(new MemoryNonceStore(), url);
+
+    const reservations = await Promise.all(Array.from({ length: 5 }, () => manager.reserve(ACCOUNT)));
+
+    const nonces = reservations.map((r) => r.nonce).sort((a, b) => a - b);
+    expect(nonces).toEqual([0, 1, 2, 3, 4]);
+    expect(new Set(nonces).size).toBe(5);
+  });
+
   it("reconcile advances next when the chain reports a higher pending count than local state", async () => {
     pendingCount.set(ACCOUNT.toLowerCase(), 3);
     const store = new MemoryNonceStore();

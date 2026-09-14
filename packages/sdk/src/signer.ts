@@ -238,7 +238,9 @@ export class FleetSigner {
   }): Promise<{ txHash: Hex; proposalId: bigint }> {
     assertSize("description", input.description, 1, 4096);
     assertSize("newCharterText", input.newCharterText, 0, 8192);
-    assertSize("summary", input.summary, 1, 1024);
+    // TaskLedger (and the spec) only bound summary from above ("at most 1,024 bytes"); an empty
+    // summary is a content-quality concern for the caller, not a policy violation here.
+    assertSize("summary", input.summary, 0, 1024);
     await this.assertChain();
 
     const calldata = encodeRecordDecision({
