@@ -16,7 +16,7 @@
     "{\"role\":\"budget\",\"provider\":\"scripted\",\"model\":\"scripted-v1\",\"promptVersion\":\"1\",\"operator\":\"local\"}",
     "{\"role\":\"safety\",\"provider\":\"scripted\",\"model\":\"scripted-v1\",\"promptVersion\":\"1\",\"operator\":\"local\"}"
   ],
-  "fleetManifest": "{\"experiment\":\"local-5\",\"constitution\":\"fleet.constitution.v1\",\"harness\":\"dev\"}",
+  "fleetManifest": "{\"experiment\":\"local-hf-replay\",\"constitution\":\"fleet.constitution.v1\",\"harness\":\"dev\"}",
   "operator": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
   "guardian": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
   "votingDelay": 15,

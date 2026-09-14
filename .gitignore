@@ -10,7 +10,8 @@ infra/.env
 .DS_Store
 contracts/.fleet-manifest-tmp.json
 deployments/demo-latest.json
-deployments/experiment-latest.json
+deployments/*/run-*.json
+deployments/.fleet-it-*
 experiments/configs/*
 !experiments/configs/.gitkeep
 experiments/reports/
