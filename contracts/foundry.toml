@@ -12,6 +12,9 @@ fs_permissions = [
   { access = "read-write", path = "./" },
   { access = "read-write", path = "../deployments" },
 ]
+# Silences solc warning 5740 (Unreachable code), raised inside the vendored ERC20.sol
+# because FleetVotes._approve always reverts by design; see docs/compatibility-notes.md.
+ignored_warnings_from = ["lib/agora-governor/lib/openzeppelin-contracts"]
 
 [fuzz]
 runs = 256

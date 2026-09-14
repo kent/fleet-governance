@@ -120,3 +120,14 @@ scanning stdout/stderr for the strings "error" or "not found"** (or any other su
 match), because `solar`'s non-fatal diagnostic noise will produce false failures under that
 approach. Treat the lines above as benign tool noise from `solar`, not a real compilation or
 test failure, unless a later Foundry release changes this behavior.
+
+## Task 3: solc warning 5740 (Unreachable code) from vendored `ERC20.sol`
+
+`FleetVotes._approve` unconditionally reverts by spec, which makes solc's static analysis flag
+the `return true;` after the internal `_approve` call inside the vendored, unmodified
+`ERC20.approve()` (`lib/agora-governor/lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol`)
+as unreachable (warning 5740); since the cause is our required revert, not a defect in the
+submodule, it is suppressed via `[profile.default] ignored_warnings_from =
+["lib/agora-governor/lib/openzeppelin-contracts"]` in `contracts/foundry.toml` (confirmed
+honoured by Foundry 1.7.1, verified with `forge config`), rather than by changing the revert
+behavior or editing vendored code.
