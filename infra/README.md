@@ -98,8 +98,8 @@ each script's header comment.
   (`ArchiveProposalVotesList`, `"use client"`) fetching
   `/api/archive/votes/<id>` after hydration: it will not appear in a
   plain `curl` of `/proposals/<id>`'s initial HTML even though the data
-  is correct (verified directly against that API route, and with a real
-  browser); see `docs/compatibility-notes.md`.
+  is correct (verified directly against that API route, the same one the
+  browser calls after hydration); see `docs/compatibility-notes.md`.
 
 ## Where the archive lives
 

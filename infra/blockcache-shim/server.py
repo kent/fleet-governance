@@ -14,8 +14,22 @@ points cpls's BLOCKCACHE_URL at it.
 
 Endpoints implemented (see blockcache.py for the exact shapes each of
 these callers expects back):
-  GET  /exact_blocktime/<chain_id>/<block_number>       -> {"ts": <unix seconds>}
-  GET  /estimated_blocktime/<chain_id>/<block_number>    -> {"ts": <unix seconds>}
+  GET  /exact_blocktime/<chain_id>/<block_number>
+       -> {"ts": <unix seconds>} if that block has actually been mined,
+          else {"msg": "block not found"} (no "ts" key at all).
+          BlockCacheClient.return_ts() (blockcache.py lines 52-60) maps
+          exactly this shape to its BlockNotFound exception, which
+          get_blocktime() (lines 75-79) catches to fall back to
+          /estimated_blocktime; a "ts" key must never be present in this
+          response unless the block is real, or that fallback never
+          triggers and an estimate gets silently treated as exact. See
+          docs/compatibility-notes.md, Task 6, "blockcache-shim's
+          /exact_blocktime always answered, so CPLS's estimate fallback
+          never ran".
+  GET  /estimated_blocktime/<chain_id>/<block_number>
+       -> {"ts": <unix seconds>}, always: the real block's timestamp if
+          it exists, else an estimate extrapolated from the chain's fixed
+          block time. This is the only endpoint that may extrapolate.
   POST /contract_call/<chain_id>/<address>                -> {"result": "0x..."}
                      body: {block_number, data, method_signature}; data is
                      only the ABI-encoded arguments (blockcache.py's own
@@ -26,9 +40,7 @@ these callers expects back):
 Anything else: 404.
 
 Every response CPLS's caller can't use gracefully is still wrapped so this
-shim never itself hangs or 500s: an eth_call revert becomes {"result": "0x"},
-and a block that doesn't exist yet gets its timestamp estimated from the
-chain's fixed block time rather than erroring.
+shim never itself hangs or 500s: an eth_call revert becomes {"result": "0x"}.
 """
 import json
 import os
@@ -67,7 +79,21 @@ def latest_block():
     return rpc("eth_getBlockByNumber", ["latest", False])
 
 
-def blocktime(block_number):
+def exact_blocktime(block_number):
+    """The real block's timestamp, or None if that block has not been
+    mined yet. Never extrapolates: callers must turn None into the
+    "block not found" shape blockcache.py's return_ts() checks for, not
+    into an estimate."""
+    block = get_block(block_number)
+    if block is None:
+        return None
+    return int(block["timestamp"], 16)
+
+
+def estimated_blocktime(block_number):
+    """The real block's timestamp if it exists, else an estimate
+    extrapolated from the chain's fixed block time. Always returns a
+    value; this is the only function that may extrapolate."""
     block = get_block(block_number)
     if block is not None:
         return int(block["timestamp"], 16)
@@ -90,13 +116,33 @@ class Handler(BaseHTTPRequestHandler):
         print("blockcache-shim: " + (fmt % args))
 
     def do_GET(self):
-        m = re.fullmatch(r"/(exact|estimated)_blocktime/(\d+)/(\d+)", self.path)
+        m = re.fullmatch(r"/exact_blocktime/(\d+)/(\d+)", self.path)
         if m:
             try:
-                ts = blocktime(int(m.group(3)))
+                ts = exact_blocktime(int(m.group(2)))
+            except Exception as e:  # noqa: BLE001
+                # A genuine RPC failure (not "block doesn't exist yet",
+                # which eth_getBlockByNumber reports as a null result, not
+                # an error) still has to come back as the "not found"
+                # shape: blockcache.py's return_ts() only understands
+                # {"ts": ...} or {"msg": "block not found"}; anything else
+                # raises an unhandled exception on the CPLS side instead
+                # of falling back to /estimated_blocktime.
+                self._send(404, {"msg": "block not found", "error": str(e)})
+                return
+            if ts is None:
+                self._send(404, {"msg": "block not found"})
+            else:
+                self._send(200, {"ts": ts})
+            return
+
+        m = re.fullmatch(r"/estimated_blocktime/(\d+)/(\d+)", self.path)
+        if m:
+            try:
+                ts = estimated_blocktime(int(m.group(2)))
                 self._send(200, {"ts": ts})
             except Exception as e:  # noqa: BLE001
-                self._send(200, {"msg": "block not found", "error": str(e)})
+                self._send(500, {"msg": "block not found", "error": str(e)})
             return
 
         m = re.fullmatch(r"/transaction/(\d+)/(\d+)/(\d+)", self.path)

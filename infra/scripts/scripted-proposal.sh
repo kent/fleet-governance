@@ -62,7 +62,12 @@ MEMBER_KEYS=(
 )
 OPERATOR_KEY=0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e
 
-WEIGHT=1000000000000000000 # 1e18, every member's fixed voting power
+# topic0 for VoteCast(address indexed voter, uint256 proposalId, uint8 support,
+# uint256 weight, string reason): keccak256("VoteCast(address,uint256,uint8,uint256,string)").
+# Used to pick the right log out of each castVoteWithReason receipt below,
+# rather than assuming logs[0] (this call emits exactly one log today, but
+# picking it out explicitly does not depend on that staying true).
+VOTE_CAST_TOPIC0=0xb8e138887d0aa13bab447e82de9d5c1777041ecd21ca36ba824ff1e6c07ddda4
 
 state() {
   cast call "$GOVERNOR" "state(uint256)(uint8)" "$PID" --rpc-url "$RPC_URL" | awk '{print $1}'
@@ -123,13 +128,21 @@ sync_stage() {
     "curl -fsS '$FAKE_GCS_URL/storage/v1/b/$GCS_BUCKET_NAME/o' | jq -r '.items[]?.name' | grep -q '^data/fleet/votes/$PID\\.ndjson\\.gz\$'"
 }
 
+# fleet.votes is a cache of on-chain fact, not a second source of truth: every
+# column here is either read straight off the VoteCast event/receipt this
+# script just got back from the chain (transaction_hash, block_number, voter,
+# support, weight, reason), a deployment constant read from the manifest
+# (chain_id), or the governor's own address (contract, matching CPLS's
+# `contract = gov_addr.lower()` filter). params is NULL: this governor has no
+# voting module that uses it (see cpls/sync_daonode.py's `approval = ...`
+# check), so there is nothing to read.
 insert_vote_row() {
-  local voter=$1 support=$2 reason=$3 tx=$4 block=$5
+  local voter=$1 support=$2 reason=$3 tx=$4 block=$5 weight=$6
   local voter_lower reason_escaped
   voter_lower=$(echo "$voter" | tr '[:upper:]' '[:lower:]')
   reason_escaped=${reason//\'/\'\'}
   compose exec -T postgres psql -U agora -d agora_web3 -v ON_ERROR_STOP=1 -c \
-    "INSERT INTO fleet.votes (proposal_id, transaction_hash, block_number, chain_id, voter, support, weight, reason, params, contract) VALUES ('$PID', '$tx', $block, $CHAIN_ID, '$voter_lower', '$support', $WEIGHT, '$reason_escaped', NULL, '$GOVERNOR_LOWER');" \
+    "INSERT INTO fleet.votes (proposal_id, transaction_hash, block_number, chain_id, voter, support, weight, reason, params, contract) VALUES ('$PID', '$tx', $block, $CHAIN_ID, '$voter_lower', '$support', $weight, '$reason_escaped', NULL, '$GOVERNOR_LOWER');" \
     >/dev/null
 }
 
@@ -186,15 +199,25 @@ echo "scripted-proposal: state now Active: $(state)"
 
 cast_vote() {
   local member_idx=$1 support=$2 reason=$3
-  local receipt tx block
+  local receipt tx block log_data weight
   receipt=$(cast send "$GOVERNOR" "castVoteWithReason(uint256,uint8,string)" "$PID" "$support" "$reason" \
     --private-key "${MEMBER_KEYS[$member_idx]}" --rpc-url "$RPC_URL" --json)
   tx=$(echo "$receipt" | jq -r '.transactionHash')
   block=$(( $(echo "$receipt" | jq -r '.blockNumber') ))
+  # Read the real weight back off the VoteCast event this transaction
+  # actually emitted, rather than assuming it: voter is indexed (topics[1]),
+  # proposalId/support/weight/reason are the non-indexed data, ABI-encoded
+  # the same way a function's return values would be, so decode-abi's
+  # "output" mode (no --input) reads them directly. weight is the third
+  # line of that decode (the event's fourth argument overall, after the
+  # indexed voter).
+  log_data=$(echo "$receipt" | jq -r --arg topic0 "$VOTE_CAST_TOPIC0" \
+    '.logs[] | select(.topics[0] == $topic0) | .data')
+  weight=$(cast decode-abi "x()(uint256,uint8,uint256,string)" "$log_data" | sed -n '3p' | awk '{print $1}')
   local voter
   voter=$(cast wallet address --private-key "${MEMBER_KEYS[$member_idx]}")
-  insert_vote_row "$voter" "$support" "$reason" "$tx" "$block"
-  echo "scripted-proposal: member $member_idx voted (support=$support) tx=$tx block=$block"
+  insert_vote_row "$voter" "$support" "$reason" "$tx" "$block" "$weight"
+  echo "scripted-proposal: member $member_idx voted (support=$support, weight=$weight) tx=$tx block=$block"
 }
 
 echo "== casting five votes: For, For, Against, For, Against =="

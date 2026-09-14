@@ -1325,6 +1325,54 @@ is left exactly as it started (confirmed with `git status --short contracts/`
 before and after); the same precedent Task 5's controller notes already used for
 `forge build` there.
 
+### docker compose up --build recreates Anvil out from under a deployed fleet
+
+**Symptom.** Deploying the fleet (`forge script`, against the already-running
+compose `anvil`), then bringing up `dao-node`/`cpls`/`agora-next` with
+`docker compose up -d --build dao-node cpls agora-next fake-gcs`, silently wiped
+the chain: `scripted-proposal.sh`'s first `cast send` (`openTask`) reported
+`status=0x1` (a transaction sent to an address with no code neither reverts nor
+does anything; the EVM has nothing to execute, so the receipt is trivially a
+success), but the very next `cast call` (`taskCount()`) failed outright:
+`Error: contract 0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9 does not have any
+code`. `cast code <ledger>` against the running stack confirmed it directly:
+`0x` (empty) where the just-deployed ledger's bytecode should have been, and
+`docker inspect infra-anvil-1 --format '{{.State.StartedAt}}'` showed a
+container barely seconds old, `cast block-number` showing a block count far
+lower than the amount of real wall-clock time already elapsed (a fresh chain,
+not the one the deploy script had just broadcast to).
+
+**Root cause.** Every service here shares one Docker build context
+(`context: ..`, this entire worktree, in every `infra/*/Dockerfile`'s compose
+entry). `docker compose up --build <subset>` resolves the full dependency
+graph of the named services (here, `anvil` is a transitive dependency of
+`dao-node`/`blockcache-shim`) and rebuilds every image in that graph, not
+just the ones named on the command line. Anvil's own `Dockerfile` does not
+`COPY` anything from that shared context (`FROM ghcr.io/foundry-rs/foundry:v1.7.1`
+plus a bare `ENTRYPOINT`), so its build is a 100% cache hit every time, but
+BuildKit still produces a *new* image (attestation/provenance metadata and
+build timestamps differ even across a fully cached rebuild), so Compose sees
+a changed image ID for the `anvil` service and recreates the container to
+match it, silently, with no explicit "Recreate" line surviving in a piped,
+non-TTY log capture in every case observed (`docker inspect`'s `CreatedAt` was
+the reliable signal, not the compose CLI's own progress text). Anvil keeps
+its whole chain state in memory with no volume (unlike `postgres`, which
+Compose also may recreate the container for, but whose data survives via
+`postgres-data`), so any recreation is a full reset to genesis.
+
+**Fix: build once, up never rebuilds again.** `bootstrap-local.sh`'s step 0
+(`compose build anvil dao-node cpls agora-next blockcache-shim`) builds every
+image exactly once, before any container exists. Every later step uses plain
+`compose up -d <services>` with no `--build` flag at all, so no image ever
+changes again during the run and nothing gets recreated to "match" a newer
+one. Verified directly: with the fix in place, re-running
+`docker compose up -d dao-node cpls agora-next blockcache-shim fake-gcs`
+against an already-deployed fleet left `cast code <ledger>` returning the
+real bytecode and `cast block-number` continuing to climb from where it had
+been, both before and after the command; without it (the version of
+`bootstrap-local.sh` that still passed `--build` to that same `up` call), the
+ledger's code and every prior block were gone.
+
 ### DAO Node's realtime client silently never starts: `NUM_ARCHIVE_CLIENTS` off-by-one
 
 With only `NUM_REALTIME_CLIENTS`/`NUM_POLLING_CLIENTS` set (Task 3's mitigation for
@@ -1415,10 +1463,71 @@ which are only Agora Next's own delegate-page query, `getVotes.ts`; a second,
 genuinely different `fleet.votes`-shaped need this task's own testing was the first
 to exercise). `infra/scripts/scripted-proposal.sh` inserts one row per real
 on-chain vote itself, right after casting it (`insert_vote_row`, via
-`docker compose exec postgres psql`), using `support` as the raw numeric
-`0`/`1`/`2` (matching what `src/lib/voteUtils.ts`'s `parseSupport` expects for the
-non-Optimism, non-approval-module default case) and `contract` as the governor
-address lowercased (matching `gov_addr.lower()`'s filter).
+`docker compose exec postgres psql`). This table is a cache of on-chain fact,
+not a second source of truth for anything the script itself decided: every
+column is either read straight back off the chain (the transaction's own
+receipt or its `VoteCast` event), or a deployment constant read from the
+manifest. `support` is stored as the raw numeric `0`/`1`/`2`, matching what
+`src/lib/voteUtils.ts`'s `parseSupport` expects for the non-Optimism,
+non-approval-module default case.
+
+| Column | Source |
+| --- | --- |
+| `proposal_id` | `cast call ... getProposalId(...)`, the governor's own deterministic hash of this proposal's targets/values/calldatas/description; not a chain event, but a chain-computed value, re-derived the same way DAO Node and the chain itself would |
+| `transaction_hash` | the `castVoteWithReason` transaction's own receipt (`.transactionHash`) |
+| `block_number` | the same receipt (`.blockNumber`) |
+| `chain_id` | deployment constant, read from `deployments/31337/latest.json`'s `.chainId` (not hardcoded) |
+| `voter` | `cast wallet address --private-key <member's key>`; deterministic from the same key the vote was signed with, so it is exactly that transaction's `msg.sender` |
+| `support` | the value passed as the `support` argument to `castVoteWithReason`; a script input, and by construction exactly what the chain recorded (the same value the transaction that became this receipt was sent with) |
+| `weight` | **read back from the `VoteCast` event** the vote's own receipt emitted (`voter` is `topics[1]`; `proposalId, support, weight, reason` are the non-indexed `data`, ABI-decoded with `cast decode-abi`, matching the ABI's own field order: `weight` is the event's fourth argument). Not a constant: earlier versions of this script hardcoded `1e18` here (every member's voting power in this deployment, but a coincidence of fixture data, not something the script should assume); see "the vote weight bridge column was a hardcoded constant" below |
+| `reason` | the value passed as the `reason` argument to `castVoteWithReason`; a script input, exactly what the chain recorded for the same reason `support` is |
+| `params` | always `NULL`: this governor has no voting module that uses it (`cpls/sync_daonode.py`'s `approval = proposal['voting_module_name'] == 'approval'` check is `false` for every fleet proposal), so there is nothing to read back |
+| `contract` | deployment constant, the governor's own address (from the manifest), lowercased to match `gov_addr.lower()`'s filter |
+
+### The vote weight bridge column was a hardcoded constant
+
+The first version of `insert_vote_row` set `weight` to a literal
+`1000000000000000000` (1e18) for every row, reasoning that every member of
+this fixed five-member fleet holds exactly one vote's worth of `FleetVotes`
+and nothing here ever changes that. That reasoning happens to be true for
+this deployment, but the column exists to carry the real, chain-recorded
+weight of each vote (delegation could, in general, make different members'
+weights differ even in a small fleet), and a script that inserts a plausible
+constant instead of reading the fact back off the chain undermines the
+"cache of on-chain fact, not a second source of truth" property every other
+column in this table already has. Fixed: `cast_vote()` now decodes the real
+`weight` off each vote's own `VoteCast` event (see the table above) and
+passes it through to `insert_vote_row`. Verified after the fix, comparing
+the inserted row against the chain directly:
+
+```
+$ PID=70719344765219781223949422325111121206638320504507403755309964502293377655188
+$ docker compose exec -T postgres psql -U agora -d agora_web3 -t -A -c \
+  "SELECT voter, weight FROM fleet.votes WHERE proposal_id = '$PID' ORDER BY block_number;"
+0x70997970c51812dc3a010c7d01b50e0d17dc79c8|1000000000000000000
+0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc|1000000000000000000
+0x90f79bf6eb2c4f870365e785982e1f101e93b906|1000000000000000000
+0x15d34aaf54267db7d7c367839aaf71a00a2c6a65|1000000000000000000
+0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc|1000000000000000000
+
+$ TOKEN=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+$ for v in 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC \
+  0x90F79bf6EB2c4f870365E785982E1f101E93b906 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65 \
+  0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc; do
+    cast call $TOKEN "getVotes(address)(uint256)" $v --rpc-url http://127.0.0.1:8545
+  done
+1000000000000000000 [1e18]
+1000000000000000000 [1e18]
+1000000000000000000 [1e18]
+1000000000000000000 [1e18]
+1000000000000000000 [1e18]
+```
+
+Every inserted `weight` equals `token.getVotes(voter)` at the time of the
+vote, read two different ways (the `VoteCast` event's own recorded weight,
+and a direct call against the token), because the governor's snapshot
+voting power *is* `getVotes` at the proposal's snapshot block, and this
+fixed fleet never changes anyone's balance or delegation after deployment.
 
 `infra/postgres/gen-stub.ts` also needed a second, new stub for CPLS specifically
 (not Agora Next): `cpls/sync.py`'s `get_vp_snapshot_all_delegates_from_db()`
@@ -1462,6 +1571,53 @@ a CPLS sync between `queue` and `execute` (it syncs at proposed, voted, and
 executed; see that script's comment at the queue step). The shim's `/contract_call`
 would handle this correctly too (verified separately), so a future task that wants
 a "Queued" archive snapshot can add that sync back safely.
+
+### blockcache-shim's /exact_blocktime always answered, so CPLS's estimate fallback never ran
+
+The first version of `infra/blockcache-shim/server.py` shared one `blocktime()`
+helper between `/exact_blocktime` and `/estimated_blocktime`: for a block that
+had not been mined yet, that helper extrapolated an estimate and returned it as
+`{"ts": <estimate>}` from *both* routes. `BlockCacheClient.return_ts()`
+(`cpls/blockcache.py` lines 52-60) treats any response carrying a truthy `ts`
+key as authoritative and returns it directly; it only raises `BlockNotFound`
+(which `get_blocktime()`, lines 75-79, catches to retry against
+`/estimated_blocktime`) when `ts` is absent and `msg == 'block not found'`. With
+the shared helper, `/exact_blocktime` never produced that shape for an unmined
+block, so the fallback path was dead code: every "not yet mined" lookup was
+silently served an estimate mislabeled as exact.
+
+Fixed by splitting into two functions: `exact_blocktime()` returns the real
+block's timestamp or `None` (never extrapolates); `estimated_blocktime()` is
+the only one that may extrapolate, always returning a value. The HTTP layer
+turns `None` into `{"msg": "block not found"}` with no `ts` key at all, on a
+`404`, for `/exact_blocktime` only.
+
+Verified directly against the running shim, for both a real (already-mined)
+block and a block far in the future of the chain's current tip (chain tip
+was block 850 at the time):
+
+```
+$ docker exec infra-blockcache-shim-1 python3 -c "
+import urllib.request, json
+for path in ['/exact_blocktime/31337/1', '/exact_blocktime/31337/1850', '/estimated_blocktime/31337/1850']:
+    try:
+        with urllib.request.urlopen('http://localhost:8002' + path, timeout=5) as r:
+            print(path, r.status, r.read().decode())
+    except urllib.error.HTTPError as e:
+        print(path, e.code, e.read().decode())
+"
+/exact_blocktime/31337/1 200 {"ts": 1789376041}
+/exact_blocktime/31337/1850 404 {"msg": "block not found"}
+/estimated_blocktime/31337/1850 200 {"ts": 1789379742}
+```
+
+`/exact_blocktime` on the real block returns `{"ts": ...}`; on the future
+block it returns exactly `{"msg": "block not found"}`, no `ts` key, which
+`return_ts()` maps to `BlockNotFound`. `/estimated_blocktime` on the same
+future block returns an actual `{"ts": ...}` estimate. `infra/blockcache-shim`
+has no test layout of its own (a single-file stdlib HTTP server, no pytest
+config or fixtures anywhere under that directory), so this curl-equivalent
+transcript is the verification for this fix, not a unit test.
 
 ### `/v1/vote_record/<id>` is `{vote_record: [...], has_more: bool}`, not a bare array
 
@@ -1528,13 +1684,25 @@ the browser, after hydration, via `useArchiveProposalVotes`'s React Query hook.
 This is architectural, not a bug: a plain `curl` of `/proposals/<id>`'s initial
 HTML will never contain the individual votes or their reasons, no matter how
 correct the archive pipeline is, since that content is never part of the
-server-rendered response. Verified the data itself is correct two ways instead:
-directly against the underlying route
-(`curl localhost:3000/api/archive/votes/<id>`, returns all five votes with their
-exact reason text, including the "Charter forbids..." Against reason) and with a
-real browser (see the M0 evidence block below). The proposal's own status
-("Executed") and FOR/AGAINST vote *totals* (`3`/`2`) *are* server-rendered (they
-come from the proposal object itself, not the separate votes list), and did show
+server-rendered response (confirmed: `grep -c "Charter forbids"` against that
+HTML is `0`). What this task actually verified instead, directly against the
+same route the browser calls after hydration
+(`curl localhost:3000/api/archive/votes/<id>`): all five votes come back with
+their exact reason text, including the Against reason the brief's acceptance
+check looks for:
+
+```
+$ curl -s "http://localhost:3000/api/archive/votes/$PID" | jq -r '.data[].reason' | grep -c "Charter forbids"
+1
+$ curl -s "http://localhost:3000/api/archive/votes/$PID" | jq -r '.data[2].reason'
+AGAINST. Charter forbids fetching from non-allowlisted hosts and the proposal offers no evidence the host is trustworthy; the task remains solvable from the repository. [flags: scope, provenance; confidence: 0.82]
+```
+
+This task did not open the page in an actual browser; that would be the
+strongest possible confirmation this renders for a real user, but it was not
+performed, so it is not claimed here. The proposal's own status ("Executed")
+and FOR/AGAINST vote *totals* (`3`/`2`) *are* server-rendered (they come from
+the proposal object itself, not the separate votes list), and did show
 correctly in a plain `curl` of `/proposals/<id>`.
 
 ### `npm run dev`'s memory-threshold self-restart can interrupt an in-flight archive-object first-fetch
