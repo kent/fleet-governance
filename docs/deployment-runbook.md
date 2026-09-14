@@ -65,8 +65,8 @@ the bucket name, and the credentials file path. See section 5 for every key.
 ## 4. Deploy and verify
 
 Create `deployments/configs/sepolia-5.json`, a `fleet.deploy.v1` config, either by hand or from
-the Runner UI's config panel. The Runner UI runs on port 3100 once built (Agora Next owns port
-3000); it is not built as of this runbook (Task 5). Its shape matches
+the Runner UI's config panel. The Runner UI runs on port 3100 (Agora Next owns port 3000): start
+it with `pnpm --filter @fleet/runner dev` and open `http://localhost:3100`. Its shape matches
 `deployments/configs/local-5.json`:
 
 ```json
@@ -293,7 +293,7 @@ On suspected signer compromise, an unsafe pending decision, or an integration bu
 
 | Step | Command |
 | --- | --- |
-| Pause the ledger | Runner UI's guardian controls (Task 5, not yet built) or `cast send <ledger-address> "pause()" --private-key $FLEET_GUARDIAN_KEY --rpc-url <RPC_HTTP_URL>` |
+| Pause the ledger | The Runner UI's guardian controls on a run page (`http://localhost:3100/runs/<runId>`), which log the action as a human intervention, or `cast send <ledger-address> "pause()" --private-key $FLEET_GUARDIAN_KEY --rpc-url <RPC_HTTP_URL>` |
 | Stop affected workers | stop the `apps/worker` / `apps/keeper` processes for the affected agents |
 | Preserve records | keep `experiments/reports/<runId>/` and every bucket object; do not delete either |
 | Cancel a queued timelock operation that must not survive an unpause | `cast send <timelock-address> "cancel(bytes32)" <operationId> --private-key $FLEET_GUARDIAN_KEY --rpc-url <RPC_HTTP_URL>` |
