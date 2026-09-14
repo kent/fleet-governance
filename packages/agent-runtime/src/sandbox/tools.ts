@@ -154,10 +154,16 @@ export class ToolRouter {
       // forbidden_action arm), so its own GRANT_EXCEPTION draft has to actually mean something.
       // Check the exact payload the draft carries against the exception registry before
       // committing to the block; a granted exception lets the write proceed as basis:"exception",
-      // logged that way, exactly like a charter-based exception would.
+      // logged that way, exactly like a charter-based exception would. Scoped to the current
+      // charter version, matching evaluate.ts's own exception check (spec 10.2, evaluate.ts:166):
+      // an exception granted under charter version 1 dies the moment the charter is amended to
+      // version 2, so a mere nonzero exceptionVersion is not enough on its own.
       const forbidden = this.forbiddenTestWriteVerdict(descriptor);
       const exceptionVersion = await snapshot.exceptionVersion(forbidden.payloadHash);
-      verdict = exceptionVersion !== 0 ? { verdict: "ALLOW", basis: "exception", payloadHash: forbidden.payloadHash } : forbidden;
+      verdict =
+        exceptionVersion === snapshot.charterVersion
+          ? { verdict: "ALLOW", basis: "exception", payloadHash: forbidden.payloadHash }
+          : forbidden;
     }
 
     this.logSink(this.buildLogRecord(snapshot, descriptor, verdict));

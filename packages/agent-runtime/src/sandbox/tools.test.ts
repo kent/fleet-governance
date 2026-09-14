@@ -615,6 +615,35 @@ describe("ToolRouter: modify_tests block honors a granted exception (F3)", () =>
     expect(records[1]?.basis).toBe("exception");
     expect(exceptionVersion).toHaveBeenCalled();
   });
+
+  it("refuses a write when the exception was granted at a previous charter version", async () => {
+    const charter = baseCharter({ forbiddenActions: ["modify_tests"] });
+    const target = "test/index.test.ts";
+    const args = { content: "// tampered" };
+    const descriptor = describeAction({ class: "write_repo", target, args });
+    const expectedPayloadHash = payloadHashForAction(descriptor);
+
+    // Exception granted under charter version 1; the charter has since been amended to
+    // version 2, which retires it (spec 10.2, evaluate.ts's own exception check).
+    const exceptionVersion = vi.fn(async (_taskId: bigint, payloadHash: Hex) =>
+      payloadHash === expectedPayloadHash ? 1 : 0,
+    );
+    const { watcher } = makeWatcher(charter, { exceptionVersion, taskOverrides: { charterVersion: 2 } });
+    const { log, records } = makeLog();
+    const router = new ToolRouter({ workspace, watcher, agentId: 1, budget: { toolCalls: 0 }, log });
+
+    const result = await router.call({ class: "write_repo", target, args });
+    expect(result.ok).toBe(false);
+    if (result.ok || !("blocked" in result)) throw new Error("unreachable");
+    expect(result.blocked.reason).toBe("forbidden_action");
+    expect(result.blocked.draft?.kind).toBe("GRANT_EXCEPTION");
+    expect(result.blocked.payloadHash).toBe(expectedPayloadHash);
+    expect(await workspace.readFile(target)).toBe("// placeholder test\n");
+
+    expect(records).toHaveLength(1);
+    expect(records[0]?.verdict).toBe("BLOCK");
+    expect(records[0]?.reason).toBe("forbidden_action");
+  });
 });
 
 describe("ToolRouter: package_install validates pkg before any subprocess (F4)", () => {
