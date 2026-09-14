@@ -1,0 +1,149 @@
+import type { Hex } from "viem";
+import type { ToolCall } from "./sandbox/tools.js";
+
+/**
+ * One step on the shared task board (spec 10.3): the tool call the coordinator intends to take
+ * next, why, and where it came from. `source` is `"model"` for a step the coordinator's provider
+ * chose and `"adopted_path"` for one this code published deterministically because a `CHOOSE_PATH`
+ * decision was recorded for it; no model call happens for the second kind, which is what makes an
+ * adopted path auditable as a consequence of the vote rather than of a prompt.
+ */
+export type Step = {
+  agentId: number;
+  tool: ToolCall;
+  why: string;
+  seq: number;
+  publishedAt: number;
+  source: "model" | "adopted_path";
+};
+
+/**
+ * A follower's objection alternative, waiting on the fleet's vote. The board carries these so the
+ * coordinator (a different `TaskLoop` instance in the same process) can recognize the alternative
+ * behind a recorded `CHOOSE_PATH` payload hash and publish it as the next step. `proposalId` is
+ * null when no proposal was actually submitted (a duplicate suppressed locally, say).
+ */
+export type PendingAlternative = {
+  agentId: number;
+  step: Step;
+  alternative: ToolCall;
+  payloadHash: Hex;
+  charterVersion: number;
+  proposalId: bigint | null;
+};
+
+type Waiter = { afterSeq: number; resolve: (step: Step | null) => void };
+
+/**
+ * The fleet's shared step board: offchain, in process (every agent loop for one task runs inside
+ * one Runner process in v1), and logged into the experiment record as `history()`.
+ *
+ * One writer (the coordinator) publishes; every follower reads. `waitForNext` is the follower's
+ * side of that: it resolves with the first step after `afterSeq`, whether that step is already on
+ * the board or arrives later, and resolves `null` when the run is aborted or the board is closed,
+ * so a follower never blocks forever on a coordinator that has already stopped.
+ */
+export class StepBoard {
+  private readonly steps: Step[] = [];
+  private readonly waiters: Waiter[] = [];
+  private readonly alternatives: PendingAlternative[] = [];
+  private closed = false;
+
+  /**
+   * Adds a step to the board and wakes every follower waiting for it. Returns the stamped step so
+   * the caller can log exactly what went on the board (a small widening of the brief's `void`).
+   * Throws when `seq` does not advance: followers identify steps by sequence number, so a repeated
+   * or decreasing one would silently make a step invisible to whoever had already passed it.
+   */
+  publish(step: { agentId: number; tool: ToolCall; why: string; seq: number; source?: Step["source"] }): Step {
+    const last = this.steps[this.steps.length - 1];
+    if (last && step.seq <= last.seq) {
+      throw new Error(`StepBoard.publish: seq ${step.seq} does not advance past the last published seq ${last.seq}`);
+    }
+    const published: Step = {
+      agentId: step.agentId,
+      tool: step.tool,
+      why: step.why,
+      seq: step.seq,
+      publishedAt: Date.now(),
+      source: step.source ?? "model",
+    };
+    this.steps.push(published);
+
+    const woken = this.waiters.filter((w) => published.seq > w.afterSeq);
+    for (const waiter of woken) {
+      this.waiters.splice(this.waiters.indexOf(waiter), 1);
+      waiter.resolve(published);
+    }
+    return published;
+  }
+
+  latest(): Step | null {
+    return this.steps[this.steps.length - 1] ?? null;
+  }
+
+  /** A copy: the board's own record of the run cannot be edited by a reader. */
+  history(): Step[] {
+    return [...this.steps];
+  }
+
+  /**
+   * Resolves with the earliest step whose `seq` is greater than `afterSeq`, waiting for one to be
+   * published if none is on the board yet. Resolves `null` if `signal` is or becomes aborted, or
+   * if the board is closed: a follower treats null as "stop waiting", never as a step.
+   */
+  waitForNext(afterSeq: number, signal: AbortSignal): Promise<Step | null> {
+    const already = this.steps.find((s) => s.seq > afterSeq);
+    if (already) return Promise.resolve(already);
+    if (this.closed || signal.aborted) return Promise.resolve(null);
+
+    return new Promise<Step | null>((resolve) => {
+      const waiter: Waiter = {
+        afterSeq,
+        resolve: (step) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(step);
+        },
+      };
+      const onAbort = (): void => {
+        const index = this.waiters.indexOf(waiter);
+        if (index !== -1) this.waiters.splice(index, 1);
+        waiter.resolve(null);
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      this.waiters.push(waiter);
+    });
+  }
+
+  /** Wakes every waiting follower with `null` and makes every later wait return `null` at once.
+   *  The Runner calls this when the task is over, so a follower loop cannot outlive the run. */
+  close(): void {
+    this.closed = true;
+    while (this.waiters.length > 0) {
+      const waiter = this.waiters.shift();
+      waiter?.resolve(null);
+    }
+  }
+
+  /** Records the alternative behind a `CHOOSE_PATH` proposal, so the coordinator can adopt it if
+   *  and when that decision is recorded on chain. */
+  recordAlternative(alternative: PendingAlternative): void {
+    this.alternatives.push(alternative);
+  }
+
+  /** The alternatives still waiting on a decision, oldest first. */
+  pendingAlternatives(): PendingAlternative[] {
+    return [...this.alternatives];
+  }
+
+  /** Removes every pending alternative with this payload hash, once one has been adopted, so a
+   *  standing `CHOOSE_PATH` decision cannot make the coordinator publish the same path forever. */
+  markAdopted(payloadHash: Hex): void {
+    const target = payloadHash.toLowerCase();
+    for (let i = this.alternatives.length - 1; i >= 0; i--) {
+      if ((this.alternatives[i]?.payloadHash ?? "").toLowerCase() === target) {
+        this.alternatives.splice(i, 1);
+      }
+    }
+  }
+}

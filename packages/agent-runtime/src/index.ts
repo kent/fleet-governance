@@ -11,3 +11,6 @@ export * from "./providers/claude-cli.js";
 export * from "./providers/openrouter.js";
 export * from "./providers/env.js";
 export * from "./providers/prompts.js";
+export * from "./coordinator.js";
+export * from "./divergence.js";
+export * from "./taskloop.js";

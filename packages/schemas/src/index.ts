@@ -3,6 +3,7 @@ export * from "./canonical.js";
 export * from "./quorum.js";
 export * from "./charter.js";
 export * from "./decision.js";
+export * from "./agent.js";
 export * from "./vote.js";
 export * from "./deploy.js";
 export * from "./manifest.js";
