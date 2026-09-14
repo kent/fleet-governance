@@ -62,6 +62,10 @@ GCS_CREDENTIALS_FILE=$(read_env_value GCS_CREDENTIALS_FILE "")
 GCS_BUCKET_NAME=$(read_env_value GCS_BUCKET_NAME fleet-archive-dev)
 
 compose_files=(-f "$infra_dir/docker-compose.yml")
+# OFFLINE is exported on purpose (it is not a Compose-interpolated variable):
+# scripted-proposal.sh reads it to decide whether to wait for each archive
+# object on fake-gcs's JSON API or on the public storage.googleapis.com URL.
+export OFFLINE
 if [ -z "$GCS_CREDENTIALS_FILE" ]; then
   echo "bootstrap-local: GCS_CREDENTIALS_FILE unset; using the offline fake-gcs overlay."
   compose_files+=(-f "$infra_dir/docker-compose.offline.yml")

@@ -134,9 +134,19 @@ key path, and bring the stack up with the base file only (no
 ```bash
 cd infra
 docker compose down -v
+# Build every image once, before anything is started, and never pass
+# --build to `compose up` again afterwards. Every service shares one build
+# context, so `up --build <subset>` re-evaluates the build for the whole
+# dependency graph; even a 100% cache hit produces a new image ID, which
+# makes Compose recreate the already-running anvil container to match it and
+# wipe the chain the fleet was just deployed to (anvil has no volume). This
+# is the sequence bootstrap-local.sh uses, for that reason. See
+# ../docs/compatibility-notes.md, Task 6, "docker compose up --build
+# recreates Anvil out from under a deployed fleet".
+docker compose build anvil dao-node cpls agora-next blockcache-shim
 docker compose up -d anvil postgres
 # ...deploy + write-*-config.sh as bootstrap-local.sh does...
-docker compose up -d --build dao-node cpls agora-next
+docker compose up -d dao-node cpls agora-next blockcache-shim
 ```
 
 `cpls`'s `GOOGLE_APPLICATION_CREDENTIALS` and `agora-next`'s

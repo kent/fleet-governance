@@ -2093,6 +2093,55 @@ Grepping the whole page for a status word proves nothing: "queued",
 "succeeded" and "executed" each appear several times in the same HTML (the
 lifecycle timeline, the vote panel, the RSC payload).
 
+### The vote bridge inserted duplicate rows on a second run
+
+`fleet.votes` had no uniqueness constraint (02/03 are generated from b3's
+Prisma views, which carry none). A second bootstrap run against a Postgres
+volume that survived, `docker compose down` without `-v`, recomputes the
+same proposal ids (a fresh Anvil redeploys deterministically to the same
+addresses, and the same description hashes to the same id) and inserted a
+second copy of every vote. CPLS reads its `num_of_votes` and its whole vote
+list straight out of that table, so the duplicates would reach the archive
+and the Agora Next vote list.
+
+`infra/postgres/init/04-fleet-indexes.sql` adds a unique index on
+`(contract, proposal_id, voter)`, which is the governor's own rule
+(`GovernorAlreadyCastVote`), and the bridge inserts with
+`ON CONFLICT DO NOTHING`. Demonstrated against a live volume, first the old
+behaviour, then the new:
+
+```
+before: 5
+-- simulating a second run WITHOUT the index --
+INSERT 0 5
+after duplicate insert: 10
+-- cleaning up and applying 04-fleet-indexes.sql --
+DELETE 5
+CREATE INDEX
+after cleanup+index: 5
+-- simulating a second run WITH the index and ON CONFLICT DO NOTHING --
+INSERT 0 0
+after second run: 5
+```
+
+### The archive-object wait assumed fake-gcs, so real-GCS mode could not finish
+
+`scripted-proposal.sh`'s `sync_stage` waited for each sync's
+`data/fleet/votes/<id>.ndjson.gz` on the fake-gcs JSON API unconditionally.
+With `GCS_CREDENTIALS_FILE` set, fake-gcs is not started at all (the offline
+overlay is not layered), so that wait could only ever time out. It now
+branches on `OFFLINE`, which `bootstrap-local.sh` exports and which the
+script derives from `GCS_CREDENTIALS_FILE` when run on its own, and polls
+the same public object URL Agora Next reads:
+
+```
+$ curl -fsI "https://storage.googleapis.com/<bucket>/data/fleet/votes/<id>.ndjson.gz"
+```
+
+`curl -fsI` succeeds only when the object is publicly readable, which is
+also exactly the bucket policy Agora Next needs (see "Switching to a real
+GCS bucket" in `infra/README.md`).
+
 ### Agora Next's For-only status arm and `FleetHook.beforeVoteSucceeded` differ only at For equal to Against
 
 `FleetHook.beforeVoteSucceeded` is `forVotes >= governor.quorum(proposalId)

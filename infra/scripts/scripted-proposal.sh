@@ -70,6 +70,17 @@ FAKE_GCS_URL=${FAKE_GCS_URL:-http://localhost:$(read_env_value FAKE_GCS_PORT 444
 GCS_BUCKET_NAME=${GCS_BUCKET_NAME:-$(read_env_value GCS_BUCKET_NAME fleet-archive-dev)}
 CHAIN_ID=$(jq -r '.chainId' "$manifest")
 
+# Whether the archive store is the offline fake-gcs container or real GCS.
+# bootstrap-local.sh exports OFFLINE; run on its own, this script decides it
+# the same way bootstrap-local.sh does, from GCS_CREDENTIALS_FILE.
+if [ -z "${OFFLINE:-}" ]; then
+  if [ -z "$(read_env_value GCS_CREDENTIALS_FILE "")" ]; then
+    OFFLINE=1
+  else
+    OFFLINE=0
+  fi
+fi
+
 OUTCOME=${OUTCOME:-succeed}
 case "$OUTCOME" in
   succeed|defeat) ;;
@@ -162,12 +173,24 @@ trigger_cpls_job() {
   done
 }
 
+# Waits for the archive object CPLS has just written, which is how this
+# script knows a sync really landed rather than merely reporting completed.
+# Offline that means the fake-gcs JSON API (its object listing); against
+# real GCS it means the public object URL Agora Next itself reads, since
+# fake-gcs is not running at all then. Same bounded timeout either way.
+# Without this split the real-GCS path waited on a fake-gcs URL nothing was
+# listening on and timed out every time.
 sync_stage() {
-  local label=$1
+  local label=$1 object="data/fleet/votes/$PID.ndjson.gz"
   echo "== syncing CPLS after stage: $label =="
   trigger_cpls_job
-  bash "$script_dir/wait-for.sh" "archive votes/$PID object after $label" 30 \
-    "curl -fsS '$FAKE_GCS_URL/storage/v1/b/$GCS_BUCKET_NAME/o' | jq -r '.items[]?.name' | grep -q '^data/fleet/votes/$PID\\.ndjson\\.gz\$'"
+  if [ "$OFFLINE" = "1" ]; then
+    bash "$script_dir/wait-for.sh" "archive $object after $label (fake-gcs)" 30 \
+      "curl -fsS '$FAKE_GCS_URL/storage/v1/b/$GCS_BUCKET_NAME/o' | jq -r '.items[]?.name' | grep -q '^data/fleet/votes/$PID\\.ndjson\\.gz\$'"
+  else
+    bash "$script_dir/wait-for.sh" "archive $object after $label (real GCS)" 30 \
+      "curl -fsI 'https://storage.googleapis.com/$GCS_BUCKET_NAME/$object'"
+  fi
 }
 
 # fleet.votes is a cache of on-chain fact, not a second source of truth: every
@@ -178,13 +201,20 @@ sync_stage() {
 # `contract = gov_addr.lower()` filter). params is NULL: this governor has no
 # voting module that uses it (see cpls/sync_daonode.py's `approval = ...`
 # check), so there is nothing to read.
+#
+# ON CONFLICT DO NOTHING against the unique index on
+# (contract, proposal_id, voter) in infra/postgres/init/04-fleet-indexes.sql:
+# a second bootstrap run against a surviving Postgres volume recomputes the
+# same proposal ids (the deploy is deterministic on a fresh Anvil) and would
+# otherwise insert a second copy of every vote, which CPLS would count and
+# archive. One vote per voter per proposal is the governor's own rule.
 insert_vote_row() {
   local voter=$1 support=$2 reason=$3 tx=$4 block=$5 weight=$6
   local voter_lower reason_escaped
   voter_lower=$(echo "$voter" | tr '[:upper:]' '[:lower:]')
   reason_escaped=${reason//\'/\'\'}
   compose exec -T postgres psql -U agora -d agora_web3 -v ON_ERROR_STOP=1 -c \
-    "INSERT INTO fleet.votes (proposal_id, transaction_hash, block_number, chain_id, voter, support, weight, reason, params, contract) VALUES ('$PID', '$tx', $block, $CHAIN_ID, '$voter_lower', '$support', $weight, '$reason_escaped', NULL, '$GOVERNOR_LOWER');" \
+    "INSERT INTO fleet.votes (proposal_id, transaction_hash, block_number, chain_id, voter, support, weight, reason, params, contract) VALUES ('$PID', '$tx', $block, $CHAIN_ID, '$voter_lower', '$support', $weight, '$reason_escaped', NULL, '$GOVERNOR_LOWER') ON CONFLICT DO NOTHING;" \
     >/dev/null
 }
 
