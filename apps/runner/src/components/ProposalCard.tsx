@@ -48,7 +48,7 @@ export default function ProposalCard(props: ProposalCardProps) {
 
       <section aria-label="Onchain">
         <p>
-          <strong>Onchain kind:</strong> {props.kind ?? "unknown"}
+          <strong>Onchain kind:</strong> {props.kind ?? "kind not yet indexed"}
         </p>
         <p>
           <strong>Onchain status:</strong> {props.status}

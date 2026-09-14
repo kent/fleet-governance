@@ -148,7 +148,9 @@ describe("buildRunState", () => {
   it("assembles the live view from an injected chain client when the chain is reachable", async () => {
     writeJson(path.join(dir, "experiments", "configs", "run-1.json"), experimentConfig("run-1"));
     writeJson(path.join(dir, "deployments", "configs", "run-1.deploy.json"), deployConfig());
-    writeJson(path.join(dir, "deployments", "experiment-latest.json"), manifest());
+    // fix round 1, F6: `fleet run` writes `deployments/<chainId>/latest.json`, not the old fixed
+    // `deployments/experiment-latest.json`; local-anvil (this fixture's target.kind) is chain id 31337.
+    writeJson(path.join(dir, "deployments", "31337", "latest.json"), manifest());
     writeJson(path.join(dir, "experiments", "reports", "run-1", "run-state.json"), {
       runId: "run-1",
       stage: "AGENTS_RUNNING",
@@ -201,6 +203,7 @@ describe("buildRunState", () => {
         buildClient: () => fakeClient,
         listProposalIds: async () => [555n],
         listDecisionEvents: async (_client, proposalId) => [
+          { type: "DecisionProposed", proposalId: proposalId.toString(), kind: "GRANT_EXCEPTION", blockNumber: "9", logIndex: 0, txHash: `0x${"bb".repeat(32)}` },
           { type: "ProposalCreated", proposalId: proposalId.toString(), blockNumber: "10", logIndex: 0, txHash: `0x${"cc".repeat(32)}` },
           { type: "VoteCast", proposalId: proposalId.toString(), blockNumber: "12", logIndex: 1, txHash: `0x${"dd".repeat(32)}` },
         ],
@@ -213,6 +216,7 @@ describe("buildRunState", () => {
     expect(state.chain.reachable).toBe(true);
     expect(state.charter).toEqual({ source: "chain", version: 2, text: JSON.stringify(CHARTER), parsed: CHARTER });
     expect(state.chainEvents).toEqual([
+      { type: "DecisionProposed", proposalId: "555", kind: "GRANT_EXCEPTION", blockNumber: "9", logIndex: 0, txHash: `0x${"bb".repeat(32)}` },
       { type: "ProposalCreated", proposalId: "555", blockNumber: "10", logIndex: 0, txHash: `0x${"cc".repeat(32)}` },
       { type: "VoteCast", proposalId: "555", blockNumber: "12", logIndex: 1, txHash: `0x${"dd".repeat(32)}` },
     ]);
@@ -222,6 +226,9 @@ describe("buildRunState", () => {
     expect(proposal.proposalId).toBe("555");
     expect(proposal.taskId).toBe("1");
     expect(proposal.status).toBe("Active");
+    // Fix round 1, F2: the live proposal's kind is correlated from its own `DecisionProposed`
+    // event (already fetched via `listDecisionEvents`), not hardcoded null.
+    expect(proposal.kind).toBe("GRANT_EXCEPTION");
     expect(proposal.source).toBe("chain");
     expect(proposal.tally).toEqual({
       forTokens: "2000000000000000000",
@@ -250,6 +257,47 @@ describe("buildRunState", () => {
     expect(state.agents[0]?.lastGatewayDecision?.verdict).toBe("ALLOW");
     expect(state.gatewayRecords).toHaveLength(1);
     expect(state.agents[1]?.lastStep).toBeNull();
+  }, 15000);
+
+  // Fix round 1, F2: "keep null only when no such event was found": a live proposal whose
+  // DecisionProposed event has not been indexed yet still renders, with kind null.
+  it("leaves a live proposal's kind null when no DecisionProposed event is found for it", async () => {
+    writeJson(path.join(dir, "experiments", "configs", "run-3.json"), experimentConfig("run-3"));
+    writeJson(path.join(dir, "deployments", "configs", "run-3.deploy.json"), deployConfig());
+    writeJson(path.join(dir, "deployments", "31337", "latest.json"), manifest());
+    writeJson(path.join(dir, "experiments", "reports", "run-3", "run-state.json"), {
+      runId: "run-3",
+      stage: "AGENTS_RUNNING",
+      updatedAt: "2026-09-14T00:00:00.000Z",
+      payload: { taskId: "1", proposalId: "555" },
+    });
+
+    const fakeClient: RunStateChainClient = {
+      chainId: 31337,
+      addresses: { governor: ADDR.governor as Address, hook: ADDR.hook as Address },
+      publicClient: { getBlockNumber: async () => 20n, getBalance: async () => 7n },
+      getTask: async () => ({ charterVersion: 1, charterText: "{}", charter: null }),
+      getProposalState: async () => 0,
+      getProposalVotes: async () => ({ against: 0n, for: 0n, abstain: 0n }),
+      listVotes: async () => [],
+      getProposalCreated: async () => ({ description: "not yet decodable" }),
+    };
+
+    const state = await buildRunState(
+      "run-3",
+      baseDeps({
+        buildClient: () => fakeClient,
+        listProposalIds: async () => [555n],
+        // No DecisionProposed event in this list: only ProposalCreated indexed so far.
+        listDecisionEvents: async (_client, proposalId) => [
+          { type: "ProposalCreated", proposalId: proposalId.toString(), blockNumber: "10", logIndex: 0, txHash: `0x${"cc".repeat(32)}` },
+        ],
+      }),
+    );
+
+    expect(state.proposals).toHaveLength(1);
+    expect(state.proposals[0]?.kind).toBeNull();
+    expect(state.proposals[0]?.source).toBe("chain");
   }, 15000);
 
   it("falls back to record.json when the chain client throws", async () => {

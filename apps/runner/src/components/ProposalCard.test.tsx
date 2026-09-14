@@ -84,4 +84,9 @@ describe("ProposalCard", () => {
     render(<ProposalCard {...baseProps({ agoraLink: null })} />);
     expect(screen.queryByRole("link", { name: /view on agora next/i })).toBeNull();
   });
+
+  it('renders "kind not yet indexed" rather than "unknown" when kind is null (fix round 1, F2)', () => {
+    render(<ProposalCard {...baseProps({ kind: null })} />);
+    expect(screen.getByLabelText("Onchain").textContent).toContain("kind not yet indexed");
+  });
 });

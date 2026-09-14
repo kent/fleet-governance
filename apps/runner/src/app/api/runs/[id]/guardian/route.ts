@@ -1,4 +1,5 @@
 import { handleGuardianAction } from "../../../../../lib/guardian-route.js";
+import { parseRunId } from "../../../../../lib/run-id.js";
 
 /**
  * `POST /api/runs/[id]/guardian`: pause, unpause, or cancel a queued proposal, labeled a human
@@ -7,7 +8,11 @@ import { handleGuardianAction } from "../../../../../lib/guardian-route.js";
  * generated route types reject any export besides the HTTP method handlers).
  */
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
-  const { id } = await context.params;
+  const { id: rawId } = await context.params;
+  const id = parseRunId(rawId);
+  if (id === null) {
+    return Response.json({ error: "invalid run id" }, { status: 400 });
+  }
   let body: unknown;
   try {
     body = await request.json();

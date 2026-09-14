@@ -1,58 +1,22 @@
-import { readFileSync, readdirSync, realpathSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { CharterV1, parseFixtureFile } from "@fleet/schemas";
 import type { CharterV1 as CharterV1Type } from "@fleet/schemas";
+import { resolveConfinedPath } from "./fs-safety.js";
 
 const CHARTER_ESCAPE_ERROR = "charter path escapes the repository root";
-
-function isEnoent(err: unknown): boolean {
-  return err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT";
-}
 
 /**
  * Confines a fixture's `charter` field to `repoRootDir`, defense in depth against a fixture whose
  * `charter` is absolute or contains a `..` segment (fixtures are repo-controlled data, but this
- * route reads whatever they name under `experiments/fixtures`), mirroring
- * `packages/agent-runtime/src/sandbox/workspace.ts`'s `Workspace.resolvePath`: resolve lexically
- * first, reject if `path.relative` from the lexically-resolved repo root starts with `".."` or is
- * itself absolute, then separately (real path to real path, so a symlinked ancestor of
- * `repoRootDir` itself cannot produce a false escape) walk up from the resolved path to its
- * deepest existing ancestor and require that ancestor's `realpath` to still fall under the root's
- * own `realpath`, so a symlink anywhere along the way that points outside the root is caught too,
- * not just a lexical `..`. Returns the resolved path to read, or `null` when it escapes (the
- * caller reports `CHARTER_ESCAPE_ERROR`, never the resolved or original path, matching how
- * `Workspace` never echoes a host path back).
+ * route reads whatever they name under `experiments/fixtures`). `fs-safety.ts`'s
+ * `resolveConfinedPath` does the actual lexical-plus-symlink-real-path check (shared with fix
+ * round 1's run id confinement, `run-id.ts`'s `resolveConfinedRunDir`); this wraps it only to keep
+ * the fixed `CHARTER_ESCAPE_ERROR` message at the one call site that reports it (never the
+ * resolved or original path, matching how `Workspace.resolvePath` never echoes a host path back).
  */
 function resolveConfinedCharterPath(repoRootDir: string, charterPath: string): string | null {
-  // Lexical check first, against `repoRootDir` itself only `path.resolve`d (not `realpath`d: a
-  // symlinked ancestor of `repoRootDir`, e.g. macOS's /var -> /private/var under `os.tmpdir()`,
-  // must not make an otherwise-valid path look like it escapes just because one side of the
-  // comparison is real and the other lexical).
-  const lexicalRoot = path.resolve(repoRootDir);
-  const resolved = path.resolve(repoRootDir, charterPath);
-
-  const rel = path.relative(lexicalRoot, resolved);
-  if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
-
-  // Then the symlink-aware check: realpath of the deepest existing ancestor must still fall
-  // under the root's own realpath, entirely real-to-real so it is unaffected by the above.
-  const realRoot = realpathSync(repoRootDir);
-  const rootWithSep = realRoot.endsWith(path.sep) ? realRoot : realRoot + path.sep;
-  let ancestor = resolved;
-  for (;;) {
-    try {
-      const real = realpathSync(ancestor);
-      if (real !== realRoot && !(real + path.sep).startsWith(rootWithSep)) return null;
-      break;
-    } catch (err) {
-      if (!isEnoent(err)) throw err;
-      const parent = path.dirname(ancestor);
-      if (parent === ancestor) return null;
-      ancestor = parent;
-    }
-  }
-
-  return resolved;
+  return resolveConfinedPath(repoRootDir, charterPath);
 }
 
 /**

@@ -4,7 +4,6 @@ import type { Address } from "viem";
 import type { CharterV1 as CharterV1Type, ManifestV1 as ManifestV1Type } from "@fleet/schemas";
 import pg from "pg";
 import type { RunRecordDocument } from "../pipeline/record.js";
-import { openRunStore } from "../pipeline/state.js";
 import { GatewayLogLine, InterventionLine, RUN_FILES, StepLine, readJsonl } from "../pipeline/runfiles.js";
 import type { GatewayLogLineType, InterventionLineType, StepLineType } from "../pipeline/runfiles.js";
 import { readEnvValue } from "../readside.js";
@@ -14,6 +13,7 @@ import { agoraProposalUrl } from "./links.js";
 import { loadRunnerEnv } from "./env.js";
 import { repoRoot } from "./paths.js";
 import { resolveRunContext } from "./run-context.js";
+import { openRunStoreSafe } from "./safe-stores.js";
 import type { HealthView } from "./health.js";
 import { probeHealth } from "./health.js";
 
@@ -146,6 +146,7 @@ function proposalViewFromChain(
   proposalId: bigint,
   members: readonly Address[],
   agoraNextBaseUrl: string | undefined,
+  kind: string | null,
 ): Promise<ProposalView> {
   return Promise.all([
     client.getProposalState(proposalId),
@@ -168,7 +169,10 @@ function proposalViewFromChain(
     return {
       proposalId: proposalId.toString(),
       taskId: taskId.toString(),
-      kind: null,
+      // Fix round 1, F2: correlated from this same proposal's `DecisionProposed` event (the
+      // caller already fetched it via `listDecisionEvents`), not hardcoded. Stays `null` only when
+      // that event has not been indexed yet; `ProposalCard` renders that as "kind not yet indexed".
+      kind,
       status: PROPOSAL_STATE_NAMES[state] ?? `unknown(${state})`,
       rawDescription: created.description,
       tally: {
@@ -227,7 +231,7 @@ function proposalViewFromRecord(record: RunRecordDocument, proposalId: string, a
 export async function buildRunState(runId: string, deps: RunStateDeps = defaultRunStateDeps()): Promise<RunStateView> {
   const { runDir, experiment, deployConfig, record, manifest } = await resolveRunContext(runId, deps.repoRootDir, deps.env["RUNNER_PG_URL"]);
 
-  const pipelineStore = await openRunStore({ pgUrl: deps.env["RUNNER_PG_URL"], runDir });
+  const pipelineStore = await openRunStoreSafe({ pgUrl: deps.env["RUNNER_PG_URL"], runDir });
   const stageRecord = await pipelineStore.get(runId);
   const payload = stageRecord?.payload;
 
@@ -268,10 +272,28 @@ export async function buildRunState(runId: string, deps: RunStateDeps = defaultR
   const proposals: ProposalView[] = [];
   const chainEvents: ChainEventView[] = [];
   for (const proposalId of proposalIds) {
+    // Fix round 1, F2: fetch this proposal's trace events first, so its `DecisionProposed.kind`
+    // is available to pass into `proposalViewFromChain` rather than hardcoding `kind: null`.
+    // Independent of whether the proposal card itself ends up sourced from chain or record.json: a
+    // failure listing this one proposal's trace events should not discard events already gathered
+    // for others, nor a proposal view that otherwise succeeded.
+    let proposalEvents: ChainEventView[] = [];
+    if (client && taskId !== null) {
+      try {
+        proposalEvents = await deps.listDecisionEvents(client, BigInt(proposalId));
+      } catch {
+        // the record.json-wide fallback below covers this when nothing could be listed live
+      }
+    }
+    const kindFromChain =
+      (proposalEvents.find((e) => e["type"] === "DecisionProposed") as { kind?: string } | undefined)?.kind ?? null;
+
     let pushedFromChain = false;
     if (client && taskId !== null) {
       try {
-        proposals.push(await proposalViewFromChain(client, taskId, BigInt(proposalId), members, experiment?.display.agoraNextBaseUrl));
+        proposals.push(
+          await proposalViewFromChain(client, taskId, BigInt(proposalId), members, experiment?.display.agoraNextBaseUrl, kindFromChain),
+        );
         pushedFromChain = true;
       } catch {
         // fall through to the record.json fallback below
@@ -280,16 +302,7 @@ export async function buildRunState(runId: string, deps: RunStateDeps = defaultR
     if (!pushedFromChain && record) {
       proposals.push(proposalViewFromRecord(record, proposalId, experiment?.display.agoraNextBaseUrl));
     }
-    // Independent of whether the proposal card itself came from chain or record.json: a failure
-    // listing this one proposal's trace events should not discard events already gathered for
-    // others, nor a proposal view that otherwise succeeded.
-    if (client && taskId !== null) {
-      try {
-        chainEvents.push(...(await deps.listDecisionEvents(client, BigInt(proposalId))));
-      } catch {
-        // the record.json-wide fallback below covers this when nothing could be listed live
-      }
-    }
+    chainEvents.push(...proposalEvents);
   }
   if (chainEvents.length === 0 && record) {
     chainEvents.push(...(record.events as unknown as ChainEventView[]));

@@ -1,8 +1,9 @@
 import path from "node:path";
-import { openRunStore } from "../../../../../pipeline/state.js";
 import { buildRunEventsStream } from "../../../../../lib/sse.js";
 import { loadRunnerEnv } from "../../../../../lib/env.js";
 import { repoRoot } from "../../../../../lib/paths.js";
+import { parseRunId, resolveConfinedRunDir } from "../../../../../lib/run-id.js";
+import { openRunStoreSafe } from "../../../../../lib/safe-stores.js";
 
 /**
  * `GET /api/runs/[id]/events`: Server-Sent Events for the live run view (task 6 controller notes).
@@ -12,10 +13,19 @@ import { repoRoot } from "../../../../../lib/paths.js";
  */
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
   loadRunnerEnv();
-  const { id } = await context.params;
-  const runDir = path.join(repoRoot, "experiments", "reports", id);
+  const { id: rawId } = await context.params;
+  const id = parseRunId(rawId);
+  if (id === null) {
+    return Response.json({ error: "invalid run id" }, { status: 400 });
+  }
+
+  const reportsDir = path.join(repoRoot, "experiments", "reports");
+  const runDir = resolveConfinedRunDir(reportsDir, id);
+  if (runDir === null) {
+    return Response.json({ error: "invalid run id" }, { status: 400 });
+  }
   const logPath = path.join(runDir, "run.log");
-  const pipelineStore = await openRunStore({ pgUrl: process.env["RUNNER_PG_URL"], runDir });
+  const pipelineStore = await openRunStoreSafe({ pgUrl: process.env["RUNNER_PG_URL"], runDir });
 
   const stream = buildRunEventsStream({
     logPath,

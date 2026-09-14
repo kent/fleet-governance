@@ -75,7 +75,7 @@ export default function Timeline({ chainEvents, gatewayRecords, interventions }:
             <span>
               <strong>Gateway decision:</strong> {item.record.verdict} for agent {item.record.agentId} (
               {item.record.descriptor.class} {item.record.descriptor.target})
-              {item.record.reason ? ` — ${item.record.reason}` : ""}
+              {item.record.reason ? `, reason: ${item.record.reason}` : ""}
             </span>
           )}
           {item.register === "human-intervention" && (

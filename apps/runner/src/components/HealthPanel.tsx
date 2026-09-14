@@ -23,13 +23,13 @@ export default function HealthPanel(props: HealthPanelProps) {
       <ul>
         <li data-status={statusWord(props.daoNode.ok)}>
           <strong>DAO Node:</strong> {statusWord(props.daoNode.ok)}
-          {props.daoNode.lagBlocks !== null ? ` (lag ${props.daoNode.lagBlocks} blocks)` : ""} — {props.daoNode.detail}
+          {props.daoNode.lagBlocks !== null ? ` (lag ${props.daoNode.lagBlocks} blocks)` : ""}, {props.daoNode.detail}
         </li>
         <li data-status={statusWord(props.cpls.ok)}>
-          <strong>CPLS:</strong> {statusWord(props.cpls.ok)} — {props.cpls.detail}
+          <strong>CPLS:</strong> {statusWord(props.cpls.ok)}, {props.cpls.detail}
         </li>
         <li data-status={statusWord(props.agoraNext.ok)}>
-          <strong>Agora Next:</strong> {statusWord(props.agoraNext.ok)} — {props.agoraNext.detail}
+          <strong>Agora Next:</strong> {statusWord(props.agoraNext.ok)}, {props.agoraNext.detail}
         </li>
         <li>
           <strong>Keeper last action:</strong> {props.keeperLastAction ?? "no keeper activity logged yet"}

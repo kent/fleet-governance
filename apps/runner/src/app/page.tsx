@@ -30,7 +30,7 @@ export default async function HomePage() {
           <ul>
             {runs.map((run) => (
               <li key={run.runId}>
-                {run.runId} ({run.createdAt}) — <a href={`/runs/${run.runId}`}>live view</a> ·{" "}
+                {run.runId} ({run.createdAt}), <a href={`/runs/${run.runId}`}>live view</a> ·{" "}
                 <a href={`/runs/${run.runId}/report`}>report</a>
               </li>
             ))}

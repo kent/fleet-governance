@@ -19,6 +19,78 @@ function writeJson(filePath: string, value: unknown): void {
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+function validExperiment(name: string) {
+  return {
+    schema: "fleet.experiment.v1",
+    name,
+    target: { kind: "local-anvil", rpcHttp: "http://127.0.0.1:8545", rpcWs: "ws://127.0.0.1:8545" },
+    fleet: {
+      members: [
+        { role: "a", provider: "scripted", model: "m", promptVersion: "1", operatorLabel: "local" },
+        { role: "b", provider: "scripted", model: "m", promptVersion: "1", operatorLabel: "local" },
+      ],
+      tokenName: "Fleet Vote",
+      tokenSymbol: "FLEET",
+    },
+    governance: { votingDelay: 1, votingPeriod: 1, timelockDelay: 1, quorumNumerator: 6000, proposalThreshold: "0", maxTaskLifetime: 1 },
+    task: {
+      charter: {
+        schema: "fleet.charter.v1",
+        goal: "g",
+        allowedActionClasses: ["read_repo"],
+        forbiddenActions: [],
+        externalAllowlist: [],
+        budget: { toolCalls: 1, inferenceTokens: 1 },
+        stopConditions: [],
+      },
+      lifetime: 1,
+      repoFixture: "x",
+    },
+    scenario: { fixture: "hf-replay", agentsScripted: true },
+    capture: { reportDir: "experiments/reports" },
+    display: {},
+  };
+}
+
+function fakeManifest(deployer: string) {
+  return {
+    schema: "fleet.manifest.v1",
+    chainId: 31337,
+    deploymentBlock: 1,
+    deploymentTimestamp: 1,
+    deployer,
+    addresses: {
+      registry: "0x1000000000000000000000000000000000000001",
+      token: "0x1000000000000000000000000000000000000002",
+      timelock: "0x1000000000000000000000000000000000000003",
+      ledger: "0x1000000000000000000000000000000000000004",
+      hook: "0x1000000000000000000000000000000000000005",
+      governor: "0x1000000000000000000000000000000000000006",
+    },
+    hookSalt: `0x${"11".repeat(32)}`,
+    members: ["0x100000000000000000000000000000000000000a"],
+    operator: "0x100000000000000000000000000000000000000b",
+    guardian: "0x100000000000000000000000000000000000000c",
+    tokenName: "Fleet Vote",
+    tokenSymbol: "FLEET",
+    configPath: "deployments/configs/x.json",
+    params: { votingDelay: 1, votingPeriod: 1, proposalThreshold: "0", quorumNumerator: 6000, timelockDelay: 1, maxTaskLifetime: 1 },
+    countingRule: "for-only-quorum",
+    hookPermissionMask: "0x22C0",
+    configHash: `0x${"22".repeat(32)}`,
+    compiler: { solc: "0.8.24", evm: "cancun", optimizerRuns: 200 },
+    pins: { agoraGovernor: "abc", openzeppelin: "def" },
+    codeHashes: {
+      registry: `0x${"33".repeat(32)}`,
+      token: `0x${"33".repeat(32)}`,
+      timelock: `0x${"33".repeat(32)}`,
+      ledger: `0x${"33".repeat(32)}`,
+      hook: `0x${"33".repeat(32)}`,
+      governor: `0x${"33".repeat(32)}`,
+    },
+  };
+}
+
 describe("resolveRunContext", () => {
   it("resolves nothing for a run with no files written yet", async () => {
     const ctx = await resolveRunContext("run-none", dir, undefined);
@@ -86,5 +158,40 @@ describe("resolveRunContext", () => {
     const ctx = await resolveRunContext("run-ui", dir, undefined);
     expect(ctx.uiRow?.experimentPath).toBe(customPath);
     expect(ctx.experiment?.name).toBe("run-ui");
+  });
+
+  // Fix round 1, F6: `fleet run` writes `deployments/<chainId>/run-<runId>.json` and
+  // `deployments/<chainId>/latest.json`, derived from the experiment's own `target.kind`, not the
+  // old fixed `deployments/experiment-latest.json` (which `fleet run` no longer writes at all).
+  it("resolves the manifest from deployments/<chainId>/latest.json before any record.json exists", async () => {
+    writeJson(path.join(dir, "experiments", "configs", "run-live.json"), validExperiment("run-live"));
+    writeJson(path.join(dir, "deployments", "31337", "latest.json"), fakeManifest("0x1000000000000000000000000000000000000009"));
+
+    const ctx = await resolveRunContext("run-live", dir, undefined);
+    expect(ctx.record).toBeNull();
+    expect(ctx.manifest?.chainId).toBe(31337);
+    expect(ctx.manifest?.deployer).toBe("0x1000000000000000000000000000000000000009");
+  });
+
+  it("prefers the per-run manifest copy over latest.json when both exist", async () => {
+    writeJson(path.join(dir, "experiments", "configs", "run-live2.json"), validExperiment("run-live2"));
+    writeJson(path.join(dir, "deployments", "31337", "latest.json"), fakeManifest("0x100000000000000000000000000000000000dead"));
+    writeJson(path.join(dir, "deployments", "31337", "run-run-live2.json"), fakeManifest("0x100000000000000000000000000000000000beef"));
+
+    const ctx = await resolveRunContext("run-live2", dir, undefined);
+    expect(ctx.manifest?.deployer).toBe("0x100000000000000000000000000000000000beef");
+  });
+
+  it("returns no manifest when neither the per-run copy nor latest.json exists yet", async () => {
+    writeJson(path.join(dir, "experiments", "configs", "run-live3.json"), validExperiment("run-live3"));
+    const ctx = await resolveRunContext("run-live3", dir, undefined);
+    expect(ctx.manifest).toBeNull();
+  });
+
+  // Fix round 1, F1: defense in depth beyond every route's own `parseRunId` gate. A route already
+  // rejects these before ever calling `resolveRunContext`; this proves the library itself refuses
+  // too, for any caller that skips the route.
+  it.each(["..", "../../etc/passwd", "a/b", "a%2fb", ""])("throws rather than resolving a path for the invalid id %j", async (badId) => {
+    await expect(resolveRunContext(badId, dir, undefined)).rejects.toThrow("invalid run id");
   });
 });
