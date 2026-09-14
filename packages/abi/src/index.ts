@@ -1830,6 +1830,518 @@ export const agoraGovernorAbi = [
   }
 ] as const;
 
+export const fleetExecutorAbi = [
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "hook_",
+        "type": "address",
+        "internalType": "contract FleetHook"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "MAX_CALLDATA_BYTES",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PERMIT_DOMAIN",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "activeTaskId",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "consumed",
+    "inputs": [
+      {
+        "name": "payloadHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "execute",
+    "inputs": [
+      {
+        "name": "permit",
+        "type": "tuple",
+        "internalType": "struct FleetExecutor.Permit",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "charterVersion",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "target",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "targetCodeHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "dataHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "nonce",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ]
+      },
+      {
+        "name": "data",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "result",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "hashPermit",
+    "inputs": [
+      {
+        "name": "permit",
+        "type": "tuple",
+        "internalType": "struct FleetExecutor.Permit",
+        "components": [
+          {
+            "name": "taskId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "charterVersion",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "actor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "target",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "targetCodeHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "dataHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "nonce",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "hook",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract FleetHook"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "ledger",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract TaskLedger"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "registry",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract FleetRegistry"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "revoke",
+    "inputs": [
+      {
+        "name": "payloadHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "revoked",
+    "inputs": [
+      {
+        "name": "payloadHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "usedNonces",
+    "inputs": [
+      {
+        "name": "actor",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "nonce",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "PermitExecuted",
+    "inputs": [
+      {
+        "name": "payloadHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "taskId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "actor",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "target",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "nonce",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dataHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "resultHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PermitRevocation",
+    "inputs": [
+      {
+        "name": "payloadHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "guardian",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AlreadyConsumed",
+    "inputs": [
+      {
+        "name": "payloadHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CalldataMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CharterVersionMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "Escalated",
+    "inputs": [
+      {
+        "name": "payloadHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "Expired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FleetNotInitialized",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LedgerPaused",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NonceAlreadyUsed",
+    "inputs": [
+      {
+        "name": "actor",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "nonce",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NotActor",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NotApproved",
+    "inputs": [
+      {
+        "name": "payloadHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NotGuardian",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NotMember",
+    "inputs": [
+      {
+        "name": "actor",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PermitRevoked",
+    "inputs": [
+      {
+        "name": "payloadHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReentrantExecution",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TargetCallFailed",
+    "inputs": [
+      {
+        "name": "reason",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TargetCodeMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TaskNotOpen",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  }
+] as const;
+
 export const fleetHookAbi = [
   {
     "type": "constructor",
@@ -2934,6 +3446,11 @@ export const fleetHookAbi = [
   },
   {
     "type": "error",
+    "name": "FleetNotInitialized",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "GovernorHookMismatch",
     "inputs": [
       {
@@ -3169,6 +3686,11 @@ export const fleetHookAbi = [
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "TokenRegistryMismatch",
+    "inputs": []
   }
 ] as const;
 
@@ -3177,14 +3699,14 @@ export const fleetRegistryAbi = [
     "type": "constructor",
     "inputs": [
       {
-        "name": "members_",
-        "type": "address[]",
-        "internalType": "address[]"
+        "name": "n",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
-        "name": "agentManifests_",
-        "type": "string[]",
-        "internalType": "string[]"
+        "name": "membershipHash_",
+        "type": "bytes32",
+        "internalType": "bytes32"
       },
       {
         "name": "fleetManifest_",
@@ -3197,6 +3719,32 @@ export const fleetRegistryAbi = [
   {
     "type": "function",
     "name": "MAX_AGENT_MANIFEST_BYTES",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_BATCH_MANIFEST_BYTES",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_BATCH_MEMBERS",
     "inputs": [],
     "outputs": [
       {
@@ -3286,6 +3834,19 @@ export const fleetRegistryAbi = [
   },
   {
     "type": "function",
+    "name": "expectedMemberCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "fleetManifest",
     "inputs": [],
     "outputs": [
@@ -3331,6 +3892,32 @@ export const fleetRegistryAbi = [
   },
   {
     "type": "function",
+    "name": "initialized",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "initializer",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isMember",
     "inputs": [
       {
@@ -3370,6 +3957,55 @@ export const fleetRegistryAbi = [
         "name": "",
         "type": "address[]",
         "internalType": "address[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "membershipHash",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "registerMembers",
+    "inputs": [
+      {
+        "name": "startIndex",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "members_",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "agentManifests_",
+        "type": "string[]",
+        "internalType": "string[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "registeredHash",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"
@@ -3425,6 +4061,49 @@ export const fleetRegistryAbi = [
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "MembershipCommitted",
+    "inputs": [
+      {
+        "name": "count",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "membershipHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MembershipInitialized",
+    "inputs": [
+      {
+        "name": "count",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "membershipHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AlreadyInitialized",
+    "inputs": []
+  },
+  {
     "type": "error",
     "name": "DuplicateMember",
     "inputs": [
@@ -3434,6 +4113,11 @@ export const fleetRegistryAbi = [
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidBatch",
+    "inputs": []
   },
   {
     "type": "error",
@@ -3469,6 +4153,16 @@ export const fleetRegistryAbi = [
   },
   {
     "type": "error",
+    "name": "MembershipHashMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotInitializer",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotMember",
     "inputs": [
       {
@@ -3484,6 +4178,22 @@ export const fleetRegistryAbi = [
     "inputs": [
       {
         "name": "agentId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "WrongStartIndex",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "supplied",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -3530,6 +4240,19 @@ export const fleetVotesAbi = [
       }
     ],
     "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "MAX_BATCH_MEMBERS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -3850,6 +4573,71 @@ export const fleetVotesAbi = [
   },
   {
     "type": "function",
+    "name": "initializeVotes",
+    "inputs": [
+      {
+        "name": "count",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "initialized",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "initializedAt",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint48",
+        "internalType": "uint48"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "initializer",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "mintedMembers",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "name",
     "inputs": [],
     "outputs": [
@@ -4098,6 +4886,30 @@ export const fleetVotesAbi = [
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "VotesInitialized",
+    "inputs": [
+      {
+        "name": "memberCount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "timestamp",
+        "type": "uint48",
+        "indexed": false,
+        "internalType": "uint48"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AlreadyInitialized",
+    "inputs": []
+  },
+  {
     "type": "error",
     "name": "ApprovalsDisabled",
     "inputs": []
@@ -4275,6 +5087,11 @@ export const fleetVotesAbi = [
   },
   {
     "type": "error",
+    "name": "InvalidBatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidDelegatee",
     "inputs": [
       {
@@ -4291,6 +5108,16 @@ export const fleetVotesAbi = [
   },
   {
     "type": "error",
+    "name": "NotInitialized",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotInitializer",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotMember",
     "inputs": [
       {
@@ -4299,6 +5126,11 @@ export const fleetVotesAbi = [
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RegistryNotInitialized",
+    "inputs": []
   },
   {
     "type": "error",
@@ -4340,6 +5172,121 @@ export const fleetVotesAbi = [
         "name": "expiry",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  }
+] as const;
+
+export const governedArtifactStoreAbi = [
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "executor_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "artifacts",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "digest",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "revision",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "executor",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "publish",
+    "inputs": [
+      {
+        "name": "digest",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "ArtifactPublished",
+    "inputs": [
+      {
+        "name": "taskId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "digest",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "revision",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "EmptyArtifact",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidExecutor",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoActiveExecution",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotExecutor",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   }

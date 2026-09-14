@@ -6,7 +6,8 @@ import { readEnvValue, readside, setEnvValue } from "./readside.js";
 
 const currentDir = path.dirname(new URL(import.meta.url).pathname);
 const repoRoot = path.resolve(currentDir, "../../..");
-const realManifestPath = path.join(repoRoot, "deployments", "31337", "latest.json");
+// A committed historical manifest, never the mutable latest.json written by experiment runs.
+const realManifestPath = path.join(repoRoot, "deployments", "31337", "1789373295.json");
 const abiSourceDir = path.join(repoRoot, "packages", "abi", "abis");
 
 describe("readEnvValue / setEnvValue", () => {
@@ -80,7 +81,7 @@ describe("readside (temp-dir fakes, no Docker)", () => {
     expect(envText).toContain("ANVIL_PORT=8545");
     expect(envText).toContain("TOKEN_ADDRESS=0xe7f1725e7734ce288f8367e1bb143e90bb3f0512");
     expect(envText).toContain("GOVERNOR_ADDRESS=0x5fc8d32690cc91d4c39d9d3abcbd16989f875707");
-    expect(envText).toContain("DAO_NODE_START_BLOCK=3");
+    expect(envText).toContain("DAO_NODE_START_BLOCK=1");
 
     expect(existsSync(result.tokenAbiFile)).toBe(true);
     expect(existsSync(result.governorAbiFile)).toBe(true);

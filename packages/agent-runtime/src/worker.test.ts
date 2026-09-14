@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Address, Hex } from "viem";
+import { keccak256 } from "viem";
 import { canonicalize } from "@fleet/schemas";
 import type { ActionDescriptor, CharterV1, DecisionV1 } from "@fleet/schemas";
 import {
@@ -9,6 +10,7 @@ import {
   encodeRecordDecision,
   payloadHashForAction,
   payloadHashForCharter,
+  decisionForExecution,
 } from "@fleet/sdk";
 import type { FleetClient, FleetSigner, NonceManager, ProposalCreatedView, TaskView } from "@fleet/sdk";
 import { MemoryJobStore } from "./jobs.js";
@@ -22,7 +24,7 @@ import type { WorkerConfig } from "./worker.js";
 const GOVERNOR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as Address;
 const LEDGER = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as Address;
 const AGENT_ACCOUNT = "0xcccccccccccccccccccccccccccccccccccccc" as Address;
-const PROPOSER_ACCOUNT = "0xdddddddddddddddddddddddddddddddddddddd" as Address;
+const PROPOSER_ACCOUNT = `0x${"dd".repeat(20)}` as Address;
 const OPERATOR = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" as Address;
 const TX_HASH = ("0x" + "44".repeat(32)) as Hex;
 const BLOCK_HASH = ("0x" + "55".repeat(32)) as Hex;
@@ -146,7 +148,7 @@ function makeFakeClient(opts: FakeClientOpts = {}): FleetClient {
     },
     getProposalCreated: async () => opts.proposal ?? makeProposal(),
     getTask: async () => makeTask(),
-    listMembers: async () => members,
+    getMember: async (account: Address) => members.find(m => m.account.toLowerCase() === account.toLowerCase()) ?? null,
     getProposalState: async () => proposalState,
     getProposalTiming: async () => ({ snapshot: 0n, deadline, eta: 0n }),
     timestamp: async () => now,
@@ -185,7 +187,7 @@ function makeLiveClockClient(opts: { deadlineOffsetMs: bigint }): FleetClient {
     },
     getProposalCreated: async () => makeProposal(),
     getTask: async () => makeTask(),
-    listMembers: async () => members,
+    getMember: async (account: Address) => members.find(m => m.account.toLowerCase() === account.toLowerCase()) ?? null,
     getProposalState: async () => ProposalState.Active,
     getProposalTiming: async () => ({ snapshot: 0n, deadline, eta: 0n }),
     timestamp: async () => BigInt(Date.now()),
@@ -359,6 +361,30 @@ describe("Worker: configured agent id against the registry (final review I4)", (
 });
 
 describe("Worker: verification mismatch (spec 8.2 / 10.4 to 10.8)", () => {
+  it("validates an execution target at the recorded block and refuses changed code or an unregistered actor", async () => {
+    const executor = "0x1111111111111111111111111111111111111111";
+    const target = "0x2222222222222222222222222222222222222222";
+    for (const scenario of ["valid", "changed-code", "unknown-actor", "expired"] as const) {
+      const decision = decisionForExecution({ permit: { schema: "fleet.execution-permit.v1", chainId: 31337,
+        executor, ledger: LEDGER, taskId: TASK_ID.toString(), charterVersion: 1,
+        actor: scenario === "unknown-actor" ? OPERATOR : PROPOSER_ACCOUNT, target, targetCodeHash: keccak256("0x6000"),
+        data: "0x11223344", nonce: "0", deadline: scenario === "expired" ? "1" : "2000000" },
+      proposerAgentId: PROPOSER_AGENT_ID, summary: "Publish artifact", rationale: "One exact publication" });
+      const proposal = { ...makeProposal(), description: buildDecisionDescription(decision, "engineer"),
+        calldatas: [encodeRecordDecision({ taskId: TASK_ID, kind: "GRANT_EXCEPTION", expectedVersion: 1,
+          payloadHash: decision.payloadHash as Hex, newCharterText: "", summary: decision.summary })] };
+      const client = makeFakeClient({ proposal });
+      client.addresses.executor = executor;
+      const getCode = vi.fn(async () => scenario === "changed-code" ? "0x6001" as Hex : "0x6000" as Hex);
+      client.publicClient.getCode = getCode;
+      client.publicClient.getBlock = vi.fn(async () => ({ number: 1234n, hash: BLOCK_HASH, timestamp: 500000n })) as never;
+      const { worker, signer } = makeWorker({ script: { [AGENT_ID]: "FOR" }, client });
+      const job = await worker.handleProposal(PROPOSAL_ID);
+      expect(job.state).toBe(scenario === "valid" ? "voted" : "refused_for_on_mismatch");
+      expect(getCode).toHaveBeenCalledWith({ address: target, blockNumber: 1234n });
+      expect(signer.castVoteWithReason).toHaveBeenCalledTimes(scenario === "valid" ? 1 : 0);
+    }
+  });
   it("refuses to cast FOR when verification fails, recording refused_for_on_mismatch", async () => {
     // Proposer is not among the registered members the fake client returns, so
     // verifyDescriptionAgainstCalldata's proposer lookup cannot resolve -> verificationOk=false.

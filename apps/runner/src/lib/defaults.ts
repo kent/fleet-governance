@@ -1,3 +1,4 @@
+import { InferenceLimits } from "@fleet/schemas";
 import type { CharterV1 as CharterV1Type, ExperimentConfigV1 as ExperimentConfigV1Type } from "@fleet/schemas";
 
 /**
@@ -40,6 +41,9 @@ export function defaultMember(role: string): ExperimentConfigV1Type["fleet"]["me
 export const FORM_DEFAULTS: ExperimentConfigV1Type = {
   schema: "fleet.experiment.v1",
   name: "local-run",
+  inference: InferenceLimits.parse({ budget: { maxTokens: 400000, maxCostUsd: 1,
+    prices: { [DEFAULT_OPENROUTER_MODEL]: { inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.2 } },
+  } }),
   target: { kind: "local-anvil", rpcHttp: "http://localhost:8545", rpcWs: "ws://localhost:8545" },
   fleet: {
     members: FLEET_ROLE_DEFAULTS.map((role) => defaultMember(role)),

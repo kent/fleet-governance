@@ -35,6 +35,19 @@
   },
   {
     "type": "function",
+    "name": "MAX_BATCH_MEMBERS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "UNIT",
     "inputs": [],
     "outputs": [
@@ -352,6 +365,71 @@
   },
   {
     "type": "function",
+    "name": "initializeVotes",
+    "inputs": [
+      {
+        "name": "count",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "initialized",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "initializedAt",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint48",
+        "internalType": "uint48"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "initializer",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "mintedMembers",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "name",
     "inputs": [],
     "outputs": [
@@ -600,6 +678,30 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "VotesInitialized",
+    "inputs": [
+      {
+        "name": "memberCount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "timestamp",
+        "type": "uint48",
+        "indexed": false,
+        "internalType": "uint48"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AlreadyInitialized",
+    "inputs": []
+  },
+  {
     "type": "error",
     "name": "ApprovalsDisabled",
     "inputs": []
@@ -777,6 +879,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidBatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidDelegatee",
     "inputs": [
       {
@@ -793,6 +900,16 @@
   },
   {
     "type": "error",
+    "name": "NotInitialized",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotInitializer",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotMember",
     "inputs": [
       {
@@ -801,6 +918,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RegistryNotInitialized",
+    "inputs": []
   },
   {
     "type": "error",

@@ -1,0 +1,17 @@
+{
+  "runId": "execution-5-1789411395881",
+  "mode": "scripted",
+  "memberCount": 5,
+  "proposalCount": 2,
+  "voteCount": 10,
+  "deploymentTransactionCount": 16,
+  "maxDeploymentGas": "5228116",
+  "deploymentGas": "16789903",
+  "outcomeDistribution": {
+    "Defeated": 1,
+    "Executed": 1
+  },
+  "allPassed": true,
+  "chainRecaptureMatches": true,
+  "runtimeMs": 5898
+}

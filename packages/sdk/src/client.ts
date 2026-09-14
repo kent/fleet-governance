@@ -293,6 +293,21 @@ export class FleetClient {
     });
   }
 
+  /** Resolve one identity without loading the entire electorate for every voter. */
+  async getMember(account: Address): Promise<{ agentId: number; account: Address; manifest: string } | null> {
+    const member = await this.publicClient.readContract({
+      address: this.addresses.registry, abi: fleetRegistryAbi, functionName: "isMember", args: [account],
+    });
+    if (!member) return null;
+    const id = await this.publicClient.readContract({
+      address: this.addresses.registry, abi: fleetRegistryAbi, functionName: "idOf", args: [account],
+    });
+    const manifest = await this.publicClient.readContract({
+      address: this.addresses.registry, abi: fleetRegistryAbi, functionName: "agentManifest", args: [id],
+    });
+    return { agentId: Number(id), account, manifest };
+  }
+
   async listMembers(): Promise<{ agentId: number; account: Address; manifest: string }[]> {
     const count = await this.publicClient.readContract({
       address: this.addresses.registry,
@@ -300,8 +315,10 @@ export class FleetClient {
       functionName: "memberCount",
     });
     const agentIds = Array.from({ length: Number(count) }, (_, i) => i);
-    return Promise.all(
-      agentIds.map(async (agentId) => {
+    const result: { agentId: number; account: Address; manifest: string }[] = [];
+    // Bound RPC fan-out for fleets with thousands of identities. Preserve agent-id order.
+    for (let start = 0; start < agentIds.length; start += 32) {
+      const batch = await Promise.all(agentIds.slice(start, start + 32).map(async (agentId) => {
         const [account, manifest] = await Promise.all([
           this.publicClient.readContract({
             address: this.addresses.registry,
@@ -317,8 +334,10 @@ export class FleetClient {
           }),
         ]);
         return { agentId, account, manifest };
-      }),
-    );
+      }));
+      result.push(...batch);
+    }
+    return result;
   }
 
   /** Reads the governor's `ProposalCreated` log for `proposalId`. Every field on the event is

@@ -604,6 +604,22 @@ function fakeModelRunResult(overrides: Partial<ModelRunResult> = {}): ModelRunRe
 }
 
 describe("buildRecord over a model run", () => {
+  it("uses complete attempt accounting without double-counting vote-job usage", async () => {
+    const record = await buildRecord({
+      client: fakeClient(RECEIPTS), runId: "run-model", config: {}, configHash: `0x${"11".repeat(32)}`, manifest,
+      results: [fakeModelRunResult({ inference: {
+        scope: "all_provider_completions", callsStarted: 5, callsCompleted: 5, callsDenied: 2,
+        inputTokens: 1200, outputTokens: 400, unknownUsageCalls: 1, reportedCostUsd: 0.005,
+        unknownCostCalls: 2, peakConcurrency: 3, maxConcurrency: 8, maxCalls: 100, reservedVoteCalls: 20,
+        budget: { maxTokens: 5000, effectiveMaxTokens: 4000, maxCostUsd: 1, reservedVoteTokens: 1000, reservedVoteCostUsd: 0.2,
+          chargedTokens: 2000, chargedCostUsd: 0.007, chargedTaskTokens: 1500, chargedTaskCostUsd: 0.006, reservationBreached: false },
+      } })], timings: {}, versions: {},
+    });
+    expect(record.metrics).toMatchObject({ inferenceTokensTotal: 1600, inferenceCalls: 5, inferenceCallsDenied: 2,
+      inferenceUnknownUsageCalls: 1, inferenceReportedCostUsd: 0.005, inferenceUnknownCostCalls: 2, inferenceAccountingIncomplete: true,
+      inferenceBudgetRuns: 1, inferenceChargedTokens: 2000, inferenceChargedCostUsd: 0.007, inferenceReservationBreached: false });
+  });
+
   it("carries the task, the fleet's steps, objections, loops, rubric and expectation evaluation", async () => {
     const record = await buildRecord({
       client: fakeClient(RECEIPTS),

@@ -5,6 +5,9 @@ dist/
 .next/
 *.tsbuildinfo
 .env
+.env.*
+!.env.example
+!.env.*.example
 infra/.env
 *.log
 .DS_Store
@@ -15,3 +18,4 @@ deployments/.fleet-it-*
 experiments/configs/*
 !experiments/configs/.gitkeep
 experiments/reports/
+docs/evidence/**/*.gz

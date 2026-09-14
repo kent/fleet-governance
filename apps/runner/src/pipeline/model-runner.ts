@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import { setMaxListeners } from "node:events";
 import { cp } from "node:fs/promises";
 import path from "node:path";
 import { createWalletClient, defineChain, http, publicActions } from "viem";
 import type { Address, Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { InferenceLimits, RuntimeLimits } from "@fleet/schemas";
 import type { ActionDescriptor, DecisionKind, DecisionV1, ModelFixtureV1, VoteV1 } from "@fleet/schemas";
 import { fleetHookAbi } from "@fleet/abi";
 import {
@@ -15,6 +17,8 @@ import {
   ProposalState,
   getDecisionTrace,
   parseDecisionDescription,
+  WorkPool,
+  mapConcurrent,
 } from "@fleet/sdk";
 import type { DecisionTrace, FleetAddresses, FleetClient, SignerPolicy } from "@fleet/sdk";
 import {
@@ -29,7 +33,10 @@ import {
   decisionToProposeInput,
   forceMalformedProvider,
   pickCoordinator,
+  InferenceScheduler,
+  assertOpenRouterBudgetKey,
 } from "@fleet/agent-runtime";
+import type { InferenceSummary } from "@fleet/agent-runtime";
 import { ClaudeCliProvider, OpenRouterProvider, readOpenRouterApiKey } from "@fleet/agent-runtime";
 import type { JobRecord, JobState, Provider, RecordedDecision, TaskLoopEvent, TaskLoopResult } from "@fleet/agent-runtime";
 import { LedgerWatcher, evaluateAction } from "@fleet/gateway";
@@ -45,6 +52,7 @@ import type { ExpectedEvaluation } from "./model-expected.js";
 import { RUN_FILES, appendJsonl, readJsonl } from "./runfiles.js";
 import { GatewayLogLine, ObjectionLine, StepLine } from "./runfiles.js";
 import type { GatewayLogLineType, LoopEventLineType, ObjectionLineType, StepLineType } from "./runfiles.js";
+import { openInferenceJournal } from "./inference-journal.js";
 
 /** How long a fake host gets to print `listening <port>` before the run gives up on it. */
 const HOST_READY_TIMEOUT_MS = 10_000;
@@ -141,6 +149,7 @@ export type ModelRunResult = {
   expected: ExpectedEvaluation;
   rubric: string[];
   forcedMalformedAgents: number[];
+  inference?: InferenceSummary;
   pass: boolean;
   mismatches: string[];
   timings: { startedAt: string; loopsEndedAt: string; finishedAt: string };
@@ -160,6 +169,8 @@ export type ModelRunContext = {
   /** Repository root, for resolving a fixture's repo, overlay, and host-site paths. */
   repoRoot: string;
   feeLimits?: { maxFeePerGasWei?: bigint; maxGas?: bigint };
+  inference?: InferenceLimits;
+  runtime?: RuntimeLimits;
   submissionMarginSec: number;
   env: NodeJS.ProcessEnv;
   log?: (message: string) => void;
@@ -306,7 +317,7 @@ function buildProvider(ctx: ModelRunContext, agentId: number, member: ModelRunMe
   if (ctx.providerFactory) return ctx.providerFactory(agentId, member);
   switch (member.provider) {
     case "openrouter":
-      return new OpenRouterProvider({ apiKey: readOpenRouterApiKey(ctx.env), model: member.model });
+      return new OpenRouterProvider({ apiKey: readOpenRouterApiKey(ctx.env), model: member.model, maxAttempts: 1 });
     case "claude-cli":
       return new ClaudeCliProvider({ model: member.model });
     case "scripted":
@@ -357,6 +368,27 @@ export async function runModelFixture(
   fixture: ModelFixtureV1,
   taskId: bigint,
 ): Promise<ModelRunResult> {
+  assertModelInferenceBudget(ctx.members, ctx.inference, Boolean(ctx.providerFactory));
+  if (!ctx.providerFactory && ctx.members.some(member => member.provider === "openrouter")) {
+    await assertOpenRouterBudgetKey(readOpenRouterApiKey(ctx.env), ctx.inference!.budget!.maxCostUsd);
+  }
+  const journal = openInferenceJournal(path.join(ctx.runDir, RUN_FILES.inference), `${ctx.chainId}:${ctx.addresses.ledger.toLowerCase()}:${taskId}`);
+  try { return await runModelFixtureOwned(ctx, fixture, taskId, journal); }
+  finally { journal.close(); }
+}
+
+export function assertModelInferenceBudget(members: readonly ModelRunMember[], inference: InferenceLimits | undefined, hasTestProvider = false): void {
+  const limits = InferenceLimits.parse(inference ?? {});
+  if (!hasTestProvider && members.some(member => member.provider !== "scripted")) {
+    if (!limits.budget) throw new RunnerEnvError("model runs require an explicit inference.budget with token, dollar and model-price limits");
+    for (const member of members) {
+      if (member.provider !== "openrouter") throw new RunnerEnvError("budgeted live inference currently requires OpenRouter; the Claude CLI cannot enforce output and price reservations");
+      if (!limits.budget.prices[member.model]) throw new RunnerEnvError(`inference.budget.prices is missing ${member.model}`);
+    }
+  }
+}
+
+async function runModelFixtureOwned(ctx: ModelRunContext, fixture: ModelFixtureV1, taskId: bigint, journal: ReturnType<typeof openInferenceJournal>): Promise<ModelRunResult> {
   const startedAt = new Date().toISOString();
   const log = ctx.log ?? ((): void => {});
   log(`model fixture ${fixture.name}: starting on task ${taskId.toString()}`);
@@ -365,9 +397,28 @@ export async function runModelFixture(
   const stepsPath = path.join(ctx.runDir, RUN_FILES.steps);
   const objectionsPath = path.join(ctx.runDir, RUN_FILES.objections);
   const loopEventsPath = path.join(ctx.runDir, RUN_FILES.loopEvents);
+  const inferenceLimits = InferenceLimits.parse(ctx.inference ?? {});
+  const runtimeLimits = RuntimeLimits.parse(ctx.runtime ?? {});
+  const toolPool = new WorkPool(runtimeLimits.toolConcurrency);
+  const votePool = new WorkPool(runtimeLimits.voteConcurrency);
+  const inference = new InferenceScheduler({
+    ...inferenceLimits,
+    history: journal.history,
+    journal: event => journal.append(event),
+    charterTokenLimit: async () => {
+      const task = await ctx.client.getTask(taskId);
+      if (!task.charter) throw new Error("task charter unavailable");
+      return task.charter.budget.inferenceTokens;
+    },
+  });
 
-  const hosts = await startHosts(fixture, ctx.repoRoot, log, ctx.spawnHost);
+  let hosts: RunningHosts | undefined;
   const jobStore = ctx.env["RUNNER_PG_URL"] ? new PgJobStore(ctx.env["RUNNER_PG_URL"]) : new MemoryJobStore();
+  const controller = new AbortController();
+  setMaxListeners(ctx.members.length + 2, controller.signal);
+  try {
+  const runningHosts = await startHosts(fixture, ctx.repoRoot, log, ctx.spawnHost);
+  hosts = runningHosts;
   if (jobStore instanceof PgJobStore) await jobStore.migrate();
 
   const forcedAgents = parseForcedMalformedAgents(ctx.env);
@@ -394,7 +445,6 @@ export async function runModelFixture(
   log(`model fixture ${fixture.name}: coordinator is agent ${coordinatorAgentId} (role "${roleFor(coordinatorAgentId)}", fixture asked for "${fixture.coordinatorRole}")`);
 
   const board = new StepBoard();
-  const controller = new AbortController();
 
   // Everything the run learns about proposals, votes and steps as it happens. Filled in by the
   // loop callbacks and the settlement phase alike, so a run that is cut short by the deadline
@@ -441,11 +491,12 @@ export async function runModelFixture(
     void driveVotes(proposalId);
   };
 
-  const votingDriven = new Set<string>();
-  const driveVotes = async (proposalId: bigint): Promise<void> => {
+  const votingDriven = new Map<string, Promise<void>>();
+  const driveVotes = (proposalId: bigint): Promise<void> => {
     const key = proposalId.toString();
-    if (votingDriven.has(key)) return;
-    votingDriven.add(key);
+    const existing = votingDriven.get(key);
+    if (existing) return existing;
+    const running = (async () => {
     try {
       const became = await waitForActive(ctx, proposalId, controller.signal);
       if (!became) {
@@ -454,16 +505,14 @@ export async function runModelFixture(
       }
       // In parallel, not one after another: each agent has its own signer and nonce manager, and
       // five sequential 60 second inferences would not fit inside a realistic voting period.
-      await Promise.allSettled(
-        rigs.map(async (rig) => {
+      await mapConcurrent(rigs, runtimeLimits.voteConcurrency, async (rig) => {
           try {
-            const job = await rig.worker.handleProposal(proposalId);
+            const job = await votePool.run(() => rig.worker.handleProposal(proposalId));
             log(`model fixture ${fixture.name}: agent ${rig.agentId} job on ${key} -> ${job.state}${job.lastError ? ` (${job.lastError})` : ""}`);
           } catch (err) {
             log(`model fixture ${fixture.name}: agent ${rig.agentId} worker on ${key} threw: ${errorMessage(err)}`);
           }
-        }),
-      );
+        });
       if (ctx.readSideSync) {
         await insertVoteRowsFromChain(ctx, proposalId);
         await syncStage(proposalId, "voted");
@@ -471,9 +520,11 @@ export async function runModelFixture(
     } catch (err) {
       log(`model fixture ${fixture.name}: driving votes for ${key} failed: ${errorMessage(err)}`);
     }
+    })();
+    votingDriven.set(key, running);
+    return running;
   };
 
-  try {
     for (let agentId = 0; agentId < ctx.members.length; agentId++) {
       const member = ctx.members[agentId]!;
       const key = ctx.keys.agentKeys[agentId];
@@ -497,14 +548,16 @@ export async function runModelFixture(
         agentId,
         budget: { toolCalls: 0 },
         log: (record: GatewayLogRecord) => appendJsonl(gatewayPath, record),
-        fetchImpl: withHostOverrides(fetch, hosts.overrides),
+        fetchImpl: withHostOverrides(fetch, runningHosts.overrides),
       });
 
-      const provider = buildProvider(ctx, agentId, member);
+      const rawProvider = buildProvider(ctx, agentId, member);
+      const provider = inference.wrap(rawProvider, { agentId, model: member.model, purpose: "task" }, controller.signal);
       const forcedMalformed = forcedAgents.includes(agentId);
       // Only the vote provider is forced. The agent keeps working the task normally; what the knob
       // demonstrates is that unusable model output cannot become a ballot.
-      const votingProvider = forcedMalformed ? forceMalformedProvider(provider, agentId) : provider;
+      const votingProvider = forcedMalformed ? forceMalformedProvider(rawProvider, agentId)
+        : inference.wrap(rawProvider, { agentId, model: member.model, purpose: "vote" });
       if (forcedMalformed) log(`model fixture ${fixture.name}: agent ${agentId}'s vote provider is forced to malformed (FLEET_FORCE_MALFORMED_AGENTS)`);
 
       const { signer, nonces } = newSigner(ctx, key);
@@ -521,7 +574,7 @@ export async function runModelFixture(
         agentId: registryMember.agentId,
         signer,
         client: ctx.client,
-        policy: new ModelPolicy({ provider: votingProvider, promptVersion: member.promptVersion }),
+        policy: new ModelPolicy({ provider: votingProvider, promptVersion: member.promptVersion, timeoutMs: inferenceLimits.requestTimeoutMs }),
         jobs: jobStore,
         nonces,
         submissionMarginSec: ctx.submissionMarginSec,
@@ -533,8 +586,10 @@ export async function runModelFixture(
         agentId,
         role,
         provider,
+        timeoutMs: inferenceLimits.requestTimeoutMs,
+        inferenceAvailable: () => inference.canStartTask(),
         tools: {
-          call: (tc) => router.call(tc),
+          call: (tc) => toolPool.run(() => router.call(tc), controller.signal).catch(error => ({ ok: false as const, error: errorMessage(error) })),
           usage: () => router.usage(),
           listFiles: () => workspace.listFiles(),
         },
@@ -638,9 +693,11 @@ export async function runModelFixture(
     log(`model fixture ${fixture.name}: every loop stopped; settling ${proposalOrder.length} proposal(s)`);
 
     await settle(ctx, proposalOrder, () => lastProposalAtMs, driveVotes, log);
+    await Promise.allSettled([...votingDriven.values()]);
     stopKeeper();
+    await inference.close();
 
-    return await assembleResult({
+    const result = await assembleResult({
       ctx,
       fixture,
       taskId,
@@ -657,9 +714,17 @@ export async function runModelFixture(
       startedAt,
       loopsEndedAt,
     });
+    const summary = inference.summary();
+    if (summary.budget?.reservationBreached) {
+      result.pass = false;
+      result.mismatches.push("provider reported usage above its inference reservation; further inference was stopped");
+    }
+    return { ...result, inference: summary };
   } finally {
     controller.abort();
-    await hosts.stop();
+    await inference.close();
+    await Promise.all([toolPool.close(), votePool.close()]);
+    await hosts?.stop();
     if (jobStore instanceof PgJobStore) await jobStore.close();
   }
 }

@@ -1102,6 +1102,11 @@
   },
   {
     "type": "error",
+    "name": "FleetNotInitialized",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "GovernorHookMismatch",
     "inputs": [
       {
@@ -1337,5 +1342,10 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "TokenRegistryMismatch",
+    "inputs": []
   }
 ]

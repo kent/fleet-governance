@@ -7,6 +7,7 @@ import { mnemonicToAccount } from "viem/accounts";
  *  key it prints at startup (and every address named in the task 8 controller notes) is this
  *  mnemonic's `m/44'/60'/0'/0/<index>` derivation. Test-only: never controls anything of value. */
 export const ANVIL_DEV_MNEMONIC = "test test test test test test test test test test test junk";
+const devAccountParent = mnemonicToAccount(ANVIL_DEV_MNEMONIC, { path: "m/44'/60'/0'/0" }).getHdKey();
 
 /**
  * Derives Anvil's default dev account `index`'s private key directly from `ANVIL_DEV_MNEMONIC`,
@@ -17,8 +18,8 @@ export const ANVIL_DEV_MNEMONIC = "test test test test test test test test test 
  * has deliberately reconfigured it.
  */
 export function anvilDevKey(index: number): Hex {
-  const account = mnemonicToAccount(ANVIL_DEV_MNEMONIC, { addressIndex: index });
-  const privateKey = account.getHdKey().privateKey;
+  if (!Number.isSafeInteger(index) || index < 0 || index >= 0x80000000) throw new Error("invalid Anvil account index");
+  const privateKey = devAccountParent.deriveChild(index).privateKey;
   if (!privateKey) {
     throw new Error(`could not derive a private key for Anvil dev account index ${index}`);
   }
@@ -28,10 +29,11 @@ export function anvilDevKey(index: number): Hex {
 /** The role -> Anvil dev account index mapping `fleet demo` uses (matches
  *  `deployments/configs/local-5.json`'s `members` order and the established convention from
  *  `apps/worker/src/fleet-smoke.integration.test.ts`: "agentId N registers to anvil account index
- *  N+1", operator at 6, guardian at 7, keeper at 9). */
+ *  N+1" for the first five agents, operator at 6, guardian at 7, keeper at 9). Larger fleets
+ *  start additional members at account 10 so no member also controls an administrative role. */
 export const DEMO_ACCOUNT_INDEX = {
   deployer: 0,
-  agent: (agentId: number): number => agentId + 1,
+  agent: (agentId: number): number => agentId < 5 ? agentId + 1 : agentId + 5,
   operator: 6,
   guardian: 7,
   keeper: 9,

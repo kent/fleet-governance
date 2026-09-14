@@ -67,6 +67,48 @@ function jsonResponse(res: ServerResponse, status: number, body: unknown): void 
 }
 
 describe("OpenRouterProvider (against a local fake HTTP server)", () => {
+  it("sends reserved price and output caps and disables hidden retries for budgeted requests", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const handle = await startFakeServer((_req, res, body) => { bodies.push(JSON.parse(body)); jsonResponse(res, 429, { error: "rate limit" }); });
+    activeServer = handle;
+    const provider = new OpenRouterProvider({ apiKey: FAKE_API_KEY, baseUrl: handle.url, maxAttempts: 2 });
+    const request = req({ user: "漢字 🧪" });
+    const inputTokens = provider.estimateInputTokens(request);
+    await provider.complete({ ...request, spending: { inputTokens, inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.2 } });
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toMatchObject({ max_tokens: 500, provider: { require_parameters: true, allow_fallbacks: false,
+      max_price: { prompt: 0.1, completion: 0.2, request: 0 } } });
+    expect(inputTokens).toBe(Buffer.byteLength(JSON.stringify({ messages: bodies[0]!.messages, response_format: bodies[0]!.response_format }), "utf8") + 4096);
+    expect(provider.estimateInputTokens(req({ schema: Schema.describe("x".repeat(10_000)) }))).toBeGreaterThan(inputTokens + 9000);
+  });
+
+  it("never reaches HTTP when the prompt exceeds its reservation", async () => {
+    let calls = 0;
+    const handle = await startFakeServer((_req, res) => { calls++; res.end(); });
+    activeServer = handle;
+    const provider = new OpenRouterProvider({ apiKey: FAKE_API_KEY, baseUrl: handle.url });
+    await expect(provider.complete(req({ spending: { inputTokens: 1, inputUsdPerMillion: 1, outputUsdPerMillion: 1 } }))).resolves.toMatchObject({ raw: "inference_input_reservation_mismatch", usage: { costUsd: 0 } });
+    expect(calls).toBe(0);
+  });
+
+  it("does not hide retries inside a scheduler-controlled attempt", async () => {
+    let calls = 0;
+    const handle = await startFakeServer((_req, res) => { calls++; jsonResponse(res, 429, { error: "rate limit" }); });
+    activeServer = handle;
+    const provider = new OpenRouterProvider({ apiKey: FAKE_API_KEY, baseUrl: handle.url, maxAttempts: 1 });
+    await expect(provider.complete(req())).resolves.toMatchObject({ ok: false, error: "provider" });
+    expect(calls).toBe(1);
+  });
+
+  it("preserves billed cost and distinguishes absent token counters from reported zero", async () => {
+    const handle = await startFakeServer((_req, res) => jsonResponse(res, 200, {
+      choices: [{ message: { content: "invalid JSON" } }], usage: { cost: 0.007 },
+    }));
+    activeServer = handle;
+    const provider = new OpenRouterProvider({ apiKey: FAKE_API_KEY, baseUrl: handle.url });
+    await expect(provider.complete(req())).resolves.toMatchObject({ ok: false, usage: { known: false, costUsd: 0.007 } });
+  });
+
   it("happy path: builds a strict json_schema request and parses choices[0].message.content", async () => {
     let seenBody: Record<string, unknown> | undefined;
     let seenAuth: string | undefined;

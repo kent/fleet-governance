@@ -57,6 +57,18 @@ const validManifest = {
 };
 
 describe("ManifestV1", () => {
+  it("requires both execution resource addresses and their code hashes, or none for historical manifests", () => {
+    const complete = { ...validManifest, addresses: { ...validManifest.addresses, executor: fakeAddress(30), artifactStore: fakeAddress(31) },
+      codeHashes: { ...validManifest.codeHashes, executor: fakeHex32(30), artifactStore: fakeHex32(31) } };
+    expect(ManifestV1.safeParse(complete).success).toBe(true);
+    for (const group of ["addresses", "codeHashes"] as const) {
+      for (const field of ["executor", "artifactStore"] as const) {
+        const partial = structuredClone(complete);
+        delete (partial[group] as Record<string, unknown>)[field];
+        expect(ManifestV1.safeParse(partial).success).toBe(false);
+      }
+    }
+  });
   it("parses a valid manifest", () => {
     expect(ManifestV1.parse(validManifest)).toEqual(validManifest);
   });

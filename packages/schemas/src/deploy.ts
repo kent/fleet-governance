@@ -1,3 +1,4 @@
+import { MAX_FLEET_MEMBERS } from "./limits.js";
 import { z } from "zod";
 import { Address, DecimalString } from "./primitives.js";
 
@@ -6,7 +7,7 @@ export const DeployConfigV1 = z
     schema: z.literal("fleet.deploy.v1"),
     tokenName: z.string(),
     tokenSymbol: z.string(),
-    members: z.array(Address).min(2).max(64),
+    members: z.array(Address).min(2).max(MAX_FLEET_MEMBERS),
     agentManifests: z.array(z.string()),
     fleetManifest: z.string(),
     operator: Address,

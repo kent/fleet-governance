@@ -6,7 +6,7 @@ import type { z } from "zod";
  * job record still gets a `Usage` value either way; see `ClaudeCliProvider`'s doc comment for the
  * one adapter where this happens routinely).
  */
-export type Usage = { inputTokens: number; outputTokens: number; model: string };
+export type Usage = { inputTokens: number; outputTokens: number; model: string; costUsd?: number; known?: boolean };
 
 /** One structured-output request: a system and user prompt, the zod schema the reply must
  *  satisfy, a token budget, and a per-call timeout in milliseconds (spec 10.6: 60 000 in
@@ -20,6 +20,8 @@ export type CompleteRequest<T> = {
   schema: z.ZodType<T>;
   maxTokens: number;
   timeoutMs: number;
+  /** Set by the shared budget owner. Adapters must enforce these limits or refuse the call. */
+  spending?: { inputTokens: number; inputUsdPerMillion: number; outputUsdPerMillion: number };
 };
 
 /**
@@ -50,6 +52,9 @@ export type CompleteResult<T> =
  *  logs; it is the same string space as `ExperimentConfigV1.fleet.members[].provider`. */
 export interface Provider {
   name: "scripted" | "claude-cli" | "openrouter";
+  /** Conservative text-input reservation, including the adapter's actual schema serialization.
+   * It is an estimate, not a server tokenizer or a guarantee about a provider's bill. */
+  estimateInputTokens?<T>(req: CompleteRequest<T>): number;
   complete<T>(req: CompleteRequest<T>): Promise<CompleteResult<T>>;
 }
 

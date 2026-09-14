@@ -1,3 +1,4 @@
+import { MAX_FLEET_MEMBERS } from "@fleet/schemas";
 import { loadRunnerEnv } from "../../../lib/env.js";
 import { classifyRequiredEnvVars, requiredEnvVarNames } from "../../../lib/required-env.js";
 import type { EnvVarSource } from "../../../lib/required-env.js";
@@ -18,7 +19,7 @@ export async function GET(request: Request): Promise<Response> {
   loadRunnerEnv();
   const url = new URL(request.url);
   const memberCountParam = Number.parseInt(url.searchParams.get("n") ?? "5", 10);
-  const memberCount = Number.isFinite(memberCountParam) ? Math.min(64, Math.max(0, memberCountParam)) : 5;
+  const memberCount = Number.isFinite(memberCountParam) ? Math.min(MAX_FLEET_MEMBERS, Math.max(0, Math.floor(memberCountParam))) : 5;
   const anyOpenRouter = url.searchParams.get("openrouter") === "1";
   const localAnvil = url.searchParams.get("target") === "local-anvil";
 

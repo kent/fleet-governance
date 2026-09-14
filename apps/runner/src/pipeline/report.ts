@@ -140,6 +140,18 @@ export function renderReport(
   }
   lines.push("");
 
+  if (record.execution) {
+    lines.push("## Contract execution", "", `Resource state read at block ${record.execution.blockNumber} (\`${record.execution.blockHash}\`).`, "");
+    lines.push("| Task | Artifact digest | Revision |", "| --- | --- | --- |");
+    for (const artifact of record.execution.artifacts) {
+      lines.push(`| ${escapeAgentText(artifact.taskId)} | ${escapeAgentText(artifact.digest)} | ${escapeAgentText(artifact.revision)} |`);
+    }
+    lines.push("");
+    if (record.execution.events.length === 0) lines.push("No contract resource execution or relevant revocation was recorded.", "");
+    for (const event of record.execution.events) lines.push(`- ${escapeAgentText(event.type)} at block ${event.blockNumber}, transaction \`${event.txHash}\`.`);
+    lines.push("");
+  }
+
   lines.push("## Costs", "");
   let totalFeeWei = 0n;
   for (const fee of record.fees) totalFeeWei += BigInt(fee.feeWei);
@@ -187,6 +199,18 @@ function renderModelSections(record: RunRecordDocument, opts: { agoraNextBaseUrl
 
   lines.push("## Run summary", "");
   lines.push(`Fixture: \`${escapeAgentText(fixtureName)}\`. Task: ${record.taskId ?? "(unknown)"}.`, "");
+  if (record.metrics["inferenceUnknownUsageCalls"] !== undefined) {
+    lines.push(`Inference: ${Number(record.metrics["inferenceCalls"] ?? 0)} provider calls started; ${Number(record.metrics["inferenceCallsDenied"] ?? 0)} requests denied before dispatch. ` +
+      `${Number(record.metrics["inferenceTokensTotal"] ?? 0)} tokens were reported; ${Number(record.metrics["inferenceUnknownUsageCalls"] ?? 0)} calls have unknown token usage. ` +
+      `Reported model cost: $${Number(record.metrics["inferenceReportedCostUsd"] ?? 0).toFixed(6)} USD; ${Number(record.metrics["inferenceUnknownCostCalls"] ?? 0)} calls have unknown cost.`, "");
+    if (record.metrics["inferenceAccountingIncomplete"]) lines.push("Inference accounting is incomplete. These totals are not a complete bill.", "");
+    if (Number(record.metrics["inferenceBudgetRuns"] ?? 0) > 0) {
+      lines.push(`Budget accounting: ${Number(record.metrics["inferenceChargedTokens"] ?? 0)} tokens and $${Number(record.metrics["inferenceChargedCostUsd"] ?? 0).toFixed(6)} USD remain charged, including reservations for unknown usage.`, "");
+      if (record.metrics["inferenceReservationBreached"]) lines.push("A provider reported usage above its reservation. Further inference was stopped; the run did not pass.", "");
+    }
+  } else {
+    lines.push("This historical record does not contain complete inference accounting.", "");
+  }
   lines.push("| Agent | Role | Coordinator | Provider | Model | Stop reason |");
   lines.push("| --- | --- | --- | --- | --- | --- |");
   for (const loop of loops) {

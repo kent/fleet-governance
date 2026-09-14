@@ -1,8 +1,10 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 
 export type RunTestsResult = { passed: boolean; output: string };
 
-type CommandResult = { code: number | null; output: string; timedOut: boolean };
+export type CommandResult = { code: number | null; output: string; timedOut: boolean };
 
 /**
  * Runs one command to completion, capturing combined stdout+stderr and enforcing `timeoutMs`
@@ -30,12 +32,15 @@ export function runCommand(cmd: string, args: string[], opts: { cwd?: string; ti
       resolvePromise(result);
     };
 
-    child.stdout?.on("data", (chunk: Buffer) => {
-      output += chunk.toString("utf8");
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      output += chunk.toString("utf8");
-    });
+    // Keep draining both pipes after the cap so a noisy child cannot deadlock on backpressure.
+    let capturedBytes = 0;
+    const capture = (chunk: Buffer): void => {
+      const remaining = Math.max(0, 1024 * 1024 - capturedBytes);
+      output += chunk.subarray(0, remaining).toString("utf8");
+      capturedBytes += Math.min(chunk.byteLength, remaining);
+    };
+    child.stdout?.on("data", capture);
+    child.stderr?.on("data", capture);
     child.on("error", (err) => {
       settle({ code: null, output: `${output}\n${err.message}`, timedOut });
     });
@@ -45,40 +50,52 @@ export function runCommand(cmd: string, args: string[], opts: { cwd?: string; ti
   });
 }
 
-/** Whether Docker is reachable at all, spec's definition of "Docker is unavailable" for
- *  `run_tests`'s fallback: `docker info` exits non-zero (daemon not running, no permission, the
- *  binary is missing and spawn itself errors). */
+/** Readiness only. A failed daemon check never enables host execution. */
 export async function dockerAvailable(): Promise<boolean> {
   const result = await runCommand("docker", ["info"], { timeoutMs: 10_000 });
   return result.code === 0 && !result.timedOut;
 }
 
-/**
- * `docker run --rm --network none -v <dir>:/work -w /work node:22-alpine npm test`, 120s
- * timeout. Throws when Docker is unavailable (`docker info` failed) so `ToolRouter.runTests` can
- * catch that specific failure mode and fall back to an in-process `npm test`; any other failure
- * (the container ran but the suite failed, non-zero exit) is reported as `passed: false` with
- * the captured output, not a throw, since Docker itself worked fine in that case.
- */
-export async function dockerRunTests(dir: string): Promise<RunTestsResult> {
-  const available = await dockerAvailable();
-  if (!available) {
-    throw new Error("docker unavailable: `docker info` failed");
+export type SandboxTestOptions = {
+  timeoutMs?: number;
+  /** Injected by lifecycle tests; production uses the real Docker CLI. */
+  commandRunner?: typeof runCommand;
+};
+
+/** Runs task-controlled code without network, host credentials or writable host mounts.
+ *  The image must already be installed by the operator. Container and subprocess failures fail
+ *  closed. Killing the Docker CLI does not kill its container, so always remove our unique
+ *  container by name before returning, including on timeout or a failed startup. */
+export async function dockerRunTests(dir: string, opts: SandboxTestOptions = {}): Promise<RunTestsResult> {
+  const run = opts.commandRunner ?? runCommand;
+  const source = resolve(dir);
+  // --mount parses CSV. Refuse delimiters rather than letting a path add mount options.
+  if (/[\n\r,"]/.test(source)) throw new Error("sandbox_invalid_workspace_path");
+  const name = `fleet-tests-${randomUUID()}`;
+  const args = [
+    "run", "--rm", "--name", name, "--pull", "never",
+    "--network", "none", "--read-only",
+    "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+    "--user", "65534:65534", "--pids-limit", "128", "--memory", "512m", "--cpus", "1",
+    "--tmpfs", "/tmp:rw,nosuid,nodev,size=128m,mode=1777",
+    "--mount", `type=bind,source=${source},target=/work,readonly`,
+    "--workdir", "/work", "--env", "HOME=/tmp", "--env", "npm_config_cache=/tmp/npm-cache",
+    "node:22-alpine", "npm", "test",
+  ];
+  let result: CommandResult;
+  try {
+    result = await run("docker", args, { timeoutMs: opts.timeoutMs ?? 120_000 });
+  } finally {
+    const cleanup = await run("docker", ["rm", "--force", name], { timeoutMs: 10_000 });
+    // --rm often removes the container before this command. Any other cleanup failure leaves
+    // the run in doubt and must be surfaced, even if npm exited successfully.
+    if (cleanup.timedOut || (cleanup.code !== 0 && !/no such container/i.test(cleanup.output))) {
+      throw new Error(`sandbox_cleanup_failed: ${name}: ${cleanup.output}`);
+    }
   }
-
-  const result = await runCommand(
-    "docker",
-    ["run", "--rm", "--network", "none", "-v", `${dir}:/work`, "-w", "/work", "node:22-alpine", "npm", "test"],
-    { timeoutMs: 120_000 },
-  );
-  return { passed: result.code === 0 && !result.timedOut, output: result.output };
-}
-
-/** Fallback used when Docker is unavailable: `npm test` run directly in `dir`, with no
- *  container and so no `--network none` isolation; the caller is responsible for noting that
- *  loss of isolation in its log and report (the `fallback: "no-docker"` marker in
- *  `ToolRouter`'s `run_tests` output). Same 120s timeout as the Docker path. */
-export async function npmTestInProcess(dir: string): Promise<RunTestsResult> {
-  const result = await runCommand("npm", ["test"], { cwd: dir, timeoutMs: 120_000 });
-  return { passed: result.code === 0 && !result.timedOut, output: result.output };
+  if (result.timedOut) throw new Error("sandbox_timeout: test container terminated");
+  if (result.code === null || [125, 126, 127].includes(result.code)) {
+    throw new Error(`sandbox_unavailable: ${result.output}`);
+  }
+  return { passed: result.code === 0, output: result.output };
 }

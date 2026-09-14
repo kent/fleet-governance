@@ -1,0 +1,61 @@
+{
+  "schema": "fleet.manifest.v1",
+  "chainId": 31337,
+  "deploymentBlock": 0,
+  "deploymentTimestamp": 1789411395,
+  "deployer": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+  "addresses": {
+    "registry": "0x5fbdb2315678afecb367f032d93f642f64180aa3",
+    "token": "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0",
+    "timelock": "0xdc64a140aa3e981100a9beca4e685f962f0cf6c9",
+    "ledger": "0x5fc8d32690cc91d4c39d9d3abcbd16989f875707",
+    "hook": "0xd7982cb51b3ceca048e5e6bbc51d6fadf2b922c0",
+    "governor": "0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+    "executor": "0x9a676e781a523b5d0c0e43731313a708cb607508",
+    "artifactStore": "0x0b306bf915c4d645ff596e518faf3f9669b97016"
+  },
+  "hookSalt": "0x00000000000000000000000000000000000000000000000000000000000044fb",
+  "members": [
+    "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+    "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",
+    "0x90f79bf6eb2c4f870365e785982e1f101e93b906",
+    "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",
+    "0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc"
+  ],
+  "membershipHash": "0x29613121cdd0b8903254c0c882b01c0c577c96bbe838538476020216ca796b63",
+  "operator": "0x976ea74026e726554db657fa54763abd0c3a0aa9",
+  "guardian": "0x14dc79964da2c08b23698b3d3cc7ca32193d9955",
+  "tokenName": "Fleet Vote",
+  "tokenSymbol": "FLEET",
+  "configPath": "/home/operator/bliss/agora-ai/fleet-governance/deployments/.fleet-it-execution-5-1789411395881/deploy.json",
+  "params": {
+    "votingDelay": 5,
+    "votingPeriod": 3600,
+    "proposalThreshold": "1000000000000000000",
+    "quorumNumerator": 6000,
+    "timelockDelay": 5,
+    "maxTaskLifetime": 7200
+  },
+  "countingRule": "for-only-quorum",
+  "hookPermissionMask": "0x22C0",
+  "configHash": "0x9594fe7ed05cd02659e1fd5260030b0c0324f4db4b83d68cae245e102b3b358e",
+  "compiler": {
+    "solc": "0.8.29",
+    "evm": "cancun",
+    "optimizerRuns": 200
+  },
+  "pins": {
+    "agoraGovernor": "11a11641ce1f4f691c300d530eae3c7203593b85",
+    "openzeppelin": "3d139e998b9843179d72b28a3264834b01baf160"
+  },
+  "codeHashes": {
+    "registry": "0xa9a7cc636797b80f97bffbd97c664a9e2a25a7f138d77689e70ecaf8fe65cbf7",
+    "token": "0x2f50d9c28f60e49ada74eea728efa230e64cb764704345429a9c270596ffd540",
+    "timelock": "0x3686ca9db922aa4712623aaa7a85ed360db18c466ddcdb3d05397cd74731d163",
+    "ledger": "0x77d37a5e6c4a89026d392dab5794d3c1322f85eaa207e7ad4368928213b71080",
+    "hook": "0x26c60f472e350e223544c697f1a2ac4c5a4b71008e83b308ab4c4fe8a942ab9e",
+    "governor": "0x016aa3fdd991c3806d4b7e14584c6c8306abc9e3982e432450047edd0d9b5721",
+    "executor": "0x516f2e02999a2656f2454d51101e9b21b6c92e3fcf69907035383e0ae2be1fd4",
+    "artifactStore": "0x0fead99c904075b45cf9ee0f7c1a6ce79169a862d6f7d59df3a01b626f15f36b"
+  }
+}

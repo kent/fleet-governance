@@ -28,6 +28,7 @@ const NEEDS_SPEC_CHARTER = {
 
 const DEFAULT_FIXTURES = {
   fixtures: [
+    { name: "hf-replay", kind: "scripted", description: "Scripted replay with the same scenario name." },
     {
       name: "hf-replay",
       kind: "model",
@@ -92,6 +93,31 @@ describe("ConfigForm", () => {
     }
   });
 
+  it("submits the edited fleet budget and refuses models without price limits", async () => {
+    const fetcher = vi.mocked(fetch);
+    fetcher.mockImplementation(async (input, init) => {
+      if (input === "/api/runs") return fakeResponse({ runId: "budget-test", logPath: "run.log" }) as Response;
+      if (String(input).startsWith("/api/fixtures")) return fakeResponse(DEFAULT_FIXTURES) as Response;
+      return fakeResponse(DEFAULT_ENV_VARS) as Response;
+    });
+    render(<ConfigForm />);
+    fireEvent.change(screen.getByLabelText("Model spending limit (USD)"), { target: { value: "2.5" } });
+    fireEvent.change(screen.getByLabelText("Total inference token limit"), { target: { value: "300000" } });
+    fireEvent.change(screen.getAllByLabelText("Model")[0]!, { target: { value: "new/model" } });
+    const run = screen.getByRole("button", { name: "Run" }) as HTMLButtonElement;
+    expect(run.disabled).toBe(true);
+    const model = screen.getByRole("group", { name: /new\/model: price limits/ });
+    const inputs = model.querySelectorAll("input");
+    fireEvent.change(inputs[0]!, { target: { value: "0.3" } });
+    fireEvent.change(inputs[1]!, { target: { value: "2.5" } });
+    expect(run.disabled).toBe(false);
+    await userEvent.click(run);
+    const submitted = fetcher.mock.calls.find(([input]) => input === "/api/runs");
+    const body = JSON.parse(String(submitted?.[1]?.body));
+    expect(body.config.inference.budget).toMatchObject({ maxTokens: 300000, maxCostUsd: 2.5,
+      prices: { "new/model": { inputUsdPerMillion: 0.3, outputUsdPerMillion: 2.5 } } });
+  });
+
   it("shows the effective yes count for the default fleet and updates it when N changes", async () => {
     render(<ConfigForm />);
     expect(await screen.findByText(/effective yes count: 3 of 5/)).toBeTruthy();
@@ -135,10 +161,14 @@ describe("ConfigForm", () => {
     const scriptedCheckbox = screen.getByLabelText(/scripted agents/i) as HTMLInputElement;
     const fixtureSelect = await screen.findByLabelText(/scenario fixture/i);
 
-    await userEvent.selectOptions(fixtureSelect, "delegation-visible");
+    await userEvent.selectOptions(fixtureSelect, "scripted:delegation-visible");
     expect(scriptedCheckbox.checked).toBe(true);
 
-    await userEvent.selectOptions(fixtureSelect, "hf-replay");
+    await userEvent.selectOptions(fixtureSelect, "model:hf-replay");
+    expect(scriptedCheckbox.checked).toBe(false);
+    await userEvent.selectOptions(fixtureSelect, "scripted:hf-replay");
+    expect(scriptedCheckbox.checked).toBe(true);
+    await userEvent.selectOptions(fixtureSelect, "model:hf-replay");
     expect(scriptedCheckbox.checked).toBe(false);
   });
 
@@ -147,11 +177,11 @@ describe("ConfigForm", () => {
     const fixtureSelect = await screen.findByLabelText(/scenario fixture/i);
     const charterEditor = screen.getByLabelText(/charter \(json\)/i) as HTMLTextAreaElement;
 
-    await userEvent.selectOptions(fixtureSelect, "hf-replay");
+    await userEvent.selectOptions(fixtureSelect, "model:hf-replay");
     expect(charterEditor.value).toContain(HF_REPLAY_CHARTER.goal);
     expect(charterEditor.value).not.toContain("slugify");
 
-    await userEvent.selectOptions(fixtureSelect, "legit-amendment");
+    await userEvent.selectOptions(fixtureSelect, "model:legit-amendment");
     expect(charterEditor.value).toContain("Follow the slugify rules published at spec.examples.internal/slugify-rules.");
     expect(charterEditor.value).not.toBe(JSON.stringify(HF_REPLAY_CHARTER, null, 2));
   });

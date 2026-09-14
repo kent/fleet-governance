@@ -1,3 +1,7 @@
+"use client";
+
+import { useCollectionPage } from "./useCollectionPage.js";
+
 /**
  * `HealthPanel`: DAO Node `/v1/progress` lag, CPLS reachability, Agora Next reachability, keeper
  * last action, and signer balances (task 6 controller notes). Duck-typed against
@@ -17,6 +21,7 @@ function statusWord(ok: boolean): string {
 }
 
 export default function HealthPanel(props: HealthPanelProps) {
+  const balances = useCollectionPage(props.signerBalances, "signer balances", signer => `${signer.label} ${signer.address}`);
   return (
     <section aria-label="Health">
       <h3>Health</h3>
@@ -36,8 +41,9 @@ export default function HealthPanel(props: HealthPanelProps) {
         </li>
       </ul>
       <h4>Signer balances</h4>
+      {balances.controls}
       <ul>
-        {props.signerBalances.map((signer) => (
+        {balances.visible.map((signer) => (
           <li key={signer.address} data-status={statusWord(signer.ok)}>
             {signer.label} ({signer.address}):{" "}
             {signer.ok && signer.balanceWei !== null ? `${signer.balanceWei} wei` : "could not read balance"}

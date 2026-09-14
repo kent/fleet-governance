@@ -1,0 +1,17 @@
+{
+  "runId": "scale-2000-1789408328458",
+  "mode": "scripted",
+  "memberCount": 2000,
+  "proposalCount": 2,
+  "voteCount": 4000,
+  "deploymentTransactionCount": 107,
+  "maxDeploymentGas": "6673062",
+  "deploymentGas": "552261294",
+  "outcomeDistribution": {
+    "Defeated": 1,
+    "Executed": 1
+  },
+  "allPassed": true,
+  "chainRecaptureMatches": true,
+  "runtimeMs": 1050784
+}

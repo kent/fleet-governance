@@ -115,7 +115,7 @@ export async function resolveRunContext(runId: string, repoRootDir: string, pgUr
   const experimentPath = uiRow?.experimentPath ?? path.join(repoRootDir, "experiments", "configs", `${runId}.json`);
   const experiment = tryLoadExperiment(experimentPath);
   const deployConfigPath = uiRow?.deployConfigPath ?? (experiment ? path.join(repoRootDir, "deployments", "configs", `${experiment.name}.deploy.json`) : null);
-  const deployConfig = tryLoadDeployConfig(deployConfigPath);
+  const deployConfig = tryLoadDeployConfig(deployConfigPath) ?? tryLoadDeployConfig(path.join(runDir, "deploy.json"));
 
   const record = tryLoadRecord(runDir);
   const manifest = record?.manifest ?? tryResolveManifestForRun(repoRootDir, runId, experiment);

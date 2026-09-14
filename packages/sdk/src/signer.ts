@@ -11,9 +11,11 @@ import {
 } from "viem";
 import type { Abi, Address, Hex, PublicClient, WalletClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { agoraGovernorAbi, fleetVotesAbi } from "@fleet/abi";
+import { agoraGovernorAbi, fleetVotesAbi, fleetExecutorAbi } from "@fleet/abi";
+import { ExecutionPermitV1 } from "@fleet/schemas";
 import type { DecisionKind } from "@fleet/schemas";
 import { decodeRecordDecision, encodeRecordDecision } from "./actions.js";
+import { decodeExecutePermit, encodeExecutePermit, executionPermitArgs } from "./execution.js";
 import { explainRevert } from "./client.js";
 import type { NonceManager } from "./nonce.js";
 
@@ -28,6 +30,8 @@ export type SignerPolicy = {
   governor: Address;
   ledger: Address;
   token: Address;
+  /** Opt in to the deployment's contract-governed execution capability. */
+  executor?: Address;
   /** Spec 10.7's "configured fee limits". A cap on what one transaction may pay per unit of gas;
    *  applied as the transaction's `maxFeePerGas`, so the signer never pays above it. */
   maxFeePerGasWei?: bigint;
@@ -38,7 +42,7 @@ export type SignerPolicy = {
   maxGas?: bigint;
 };
 
-export type PolicyViolationCode = "CHAIN" | "TARGET" | "SELECTOR" | "VALUE" | "SIZE" | "RAW_CALLDATA" | "GAS";
+export type PolicyViolationCode = "CHAIN" | "TARGET" | "SELECTOR" | "VALUE" | "SIZE" | "RAW_CALLDATA" | "GAS" | "ACTOR";
 
 /** Thrown before any signing or sending when a call `FleetSigner` was asked to make would fall
  *  outside its policy. Every check that can throw this runs client-side, ahead of simulation. */
@@ -68,11 +72,12 @@ export function assertSize(field: string, value: string, minBytes: number, maxBy
 const PROPOSE_SELECTOR = toFunctionSelector("propose(address[],uint256[],bytes[],string)");
 const CAST_VOTE_SELECTOR = toFunctionSelector("castVoteWithReason(uint256,uint8,string)");
 const DELEGATE_SELECTOR = toFunctionSelector("delegate(address)");
+const EXECUTE_SELECTOR = toFunctionSelector("execute((uint256,uint32,address,address,bytes32,bytes32,uint256,uint64),bytes)");
 
 type AllowedCall = { target: Address; abi: Abi; functionName: string };
 
 function allowedCalls(policy: SignerPolicy): Map<Hex, AllowedCall> {
-  return new Map<Hex, AllowedCall>([
+  const calls = new Map<Hex, AllowedCall>([
     [PROPOSE_SELECTOR, { target: policy.governor, abi: agoraGovernorAbi as Abi, functionName: "propose" }],
     [
       CAST_VOTE_SELECTOR,
@@ -80,6 +85,8 @@ function allowedCalls(policy: SignerPolicy): Map<Hex, AllowedCall> {
     ],
     [DELEGATE_SELECTOR, { target: policy.token, abi: fleetVotesAbi as Abi, functionName: "delegate" }],
   ]);
+  if (policy.executor) calls.set(EXECUTE_SELECTOR, { target: policy.executor, abi: fleetExecutorAbi as Abi, functionName: "execute" });
+  return calls;
 }
 
 function sameAddress(a: Address, b: Address): boolean {
@@ -125,7 +132,7 @@ export function checkPolicy(policy: SignerPolicy, call: PlannedCall): void {
   if (!rule) {
     throw new PolicyViolation(
       "SELECTOR",
-      `selector ${selector} is not propose, castVoteWithReason, or delegate`,
+      `selector ${selector} is not enabled by the signer policy`,
     );
   }
 
@@ -157,6 +164,11 @@ export function checkPolicy(policy: SignerPolicy, call: PlannedCall): void {
 
   if (rule.functionName === "propose") {
     checkProposeBatch(policy, decodedArgs);
+  }
+  if (rule.functionName === "execute") {
+    try { decodeExecutePermit(call.data); } catch (error) {
+      throw new PolicyViolation("RAW_CALLDATA", error instanceof Error ? error.message : String(error));
+    }
   }
 }
 
@@ -207,8 +219,9 @@ function checkProposeBatch(policy: SignerPolicy, args: readonly unknown[] | unde
 
 /**
  * A policy-checked wrapper around a viem local-account wallet client. `FleetSigner` can only
- * call `propose`/`castVoteWithReason` on the policy's governor and `delegate` on the policy's
- * token, always with zero value and typed, size-bounded arguments it encodes itself. There is
+ * call `propose`/`castVoteWithReason` on the policy's governor, `delegate` on the policy's
+ * token, and `execute` on an explicitly configured fleet executor. All calls carry zero value
+ * and typed, size-bounded arguments it encodes itself. There is
  * deliberately no method that sends raw calldata, signs an arbitrary message, or targets any
  * other contract.
  *
@@ -251,7 +264,7 @@ export class FleetSigner {
   }
 
   /** Runs `checkPolicy`, simulates, reserves a nonce, sends, and commits/releases it. Shared by
-   *  all three public writes; each supplies its own already-encoded, already-size-checked call.
+   *  all public writes; each supplies its own already-encoded, already-size-checked call.
    *  Returns the reservation's nonce alongside the hash: spec 10.4 lists `nonce` among a job's
    *  fields and spec 10.8 says "persist intent, nonce, and hash before treating submission as
    *  complete", and until this wave the signer reserved and committed the nonce inside itself and
@@ -386,6 +399,21 @@ export class FleetSigner {
       args: [input.proposalId, input.support, input.reason],
       data,
     });
+  }
+
+  /** Only the named actor can spend a permit, through this policy's configured executor.
+   * The contract independently checks settlement, membership, expiry and single consumption. */
+  async executePermit(input: ExecutionPermitV1): Promise<SubmittedTx> {
+    const permit = ExecutionPermitV1.parse(input);
+    if (permit.chainId !== this.policy.chainId) throw new PolicyViolation("CHAIN", "permit belongs to another chain");
+    if (!this.policy.executor || !sameAddress(permit.executor as Address, this.policy.executor)
+      || !sameAddress(permit.ledger as Address, this.policy.ledger)) throw new PolicyViolation("TARGET", "permit belongs to another executor or ledger");
+    if (!sameAddress(permit.actor as Address, this.address)) throw new PolicyViolation("ACTOR", "only the permit actor can execute it");
+    const data = encodeExecutePermit(permit);
+    decodeExecutePermit(data);
+    await this.assertChain();
+    return this.simulateAndSend({ target: this.policy.executor, abi: fleetExecutorAbi as Abi, functionName: "execute",
+      args: [executionPermitArgs(permit), permit.data as Hex], data });
   }
 
   async delegate(delegatee: Address): Promise<SubmittedTx> {

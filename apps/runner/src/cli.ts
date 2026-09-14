@@ -8,6 +8,7 @@ import { createPublicClient, http } from "viem";
 import { CharterV1, assertAllowedChain } from "@fleet/schemas";
 import { deployFleet, verifyDeployment } from "./deploy.js";
 import { runDemo, formatDemoTable } from "./demo.js";
+import { runScaleDemo } from "./scale-demo.js";
 import { RunnerEnvError, loadManifest, requirePrivateKeyEnv } from "./env.js";
 import { createLogger } from "./logger.js";
 import { openRunStore } from "./pipeline/state.js";
@@ -340,6 +341,28 @@ program
     } catch (err) {
       fail(err);
     }
+  });
+
+program.command("scale-demo")
+  .description("Run thousands of scripted voters on an isolated local Anvil and save reconstructable evidence.")
+  .option("--members <count>", "fixed fleet size (2 to 4096)", "2000")
+  .option("--concurrency <count>", "maximum simultaneous vote jobs (1 to 64)", "16")
+  .option("--report-dir <path>", "base report directory", defaultReportDir())
+  .action(async (opts: { members: string; concurrency: string; reportDir: string }) => {
+    try {
+      await runScaleDemo({ repoRoot, reportDir: opts.reportDir, members: Number(opts.members), concurrency: Number(opts.concurrency), log: console.log });
+    } catch (error) { fail(error); }
+  });
+
+program.command("execution-demo")
+  .description("Verify scripted fleet votes control artifact publication through contracts on an owned local Anvil.")
+  .option("--members <count>", "fixed fleet size (2 to 4096)", "5")
+  .option("--concurrency <count>", "maximum simultaneous vote jobs (1 to 64)", "16")
+  .option("--report-dir <path>", "base report directory", defaultReportDir())
+  .action(async (opts: { members: string; concurrency: string; reportDir: string }) => {
+    try {
+      await runScaleDemo({ repoRoot, reportDir: opts.reportDir, members: Number(opts.members), concurrency: Number(opts.concurrency), execution: true, log: console.log });
+    } catch (error) { fail(error); }
   });
 
 const isMainModule = process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`;

@@ -31,7 +31,8 @@ type ClaudeCliEnvelope = {
   type?: string;
   is_error?: boolean;
   result?: string;
-  usage?: { input_tokens?: number; output_tokens?: number };
+  total_cost_usd?: number;
+  usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
 };
 
 const FENCED_JSON_PATTERN = /```(?:json)?\s*([\s\S]*?)```/i;
@@ -52,11 +53,10 @@ function errorMessage(err: unknown): string {
 }
 
 /**
- * `Provider` backed by the local Claude Code CLI: spawns `claude -p --output-format json --model
- * <m>` with the prompt on stdin, parses the JSON envelope's `result`, then the fenced or bare
- * JSON inside that. This is the default local provider (controller notes / progress ledger: no
- * OpenRouter key was available when Part 4 began, and Claude Code is installed on this machine),
- * with no per-call cost and no network dependency.
+ * Inference-only Claude Code CLI adapter. Built-in tools, MCP servers, skills, hooks and other
+ * customizations are disabled: model output must return through the fleet's tool gateway.
+ * Unsupported flags fail the provider call rather than retrying with weaker restrictions.
+ * Authentication and inference still use the operator's Claude account and network.
  *
  * Usage counters come from the envelope's `usage` object when the CLI reports one; when it does
  * not, they are recorded as unknown (`{ inputTokens: 0, outputTokens: 0, model: "unknown" }`)
@@ -75,8 +75,14 @@ export class ClaudeCliProvider implements Provider {
   }
 
   async complete<T>(req: CompleteRequest<T>): Promise<CompleteResult<T>> {
+    if (req.spending) return { ok: false, error: "provider", raw: "inference_budget_unsupported_provider", latencyMs: 0,
+      usage: { inputTokens: 0, outputTokens: 0, model: this.model, costUsd: 0 } };
     const started = Date.now();
-    const args = ["-p", "--output-format", "json", "--model", this.model];
+    const args = [
+      "-p", "--output-format", "json", "--model", this.model,
+      "--safe-mode", "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+      "--no-session-persistence", "--system-prompt", req.system,
+    ];
 
     return new Promise<CompleteResult<T>>((resolve) => {
       let settled = false;
@@ -118,7 +124,7 @@ export class ClaudeCliProvider implements Provider {
       });
 
       try {
-        child.stdin.write(`${req.system}\n\n${req.user}`);
+        child.stdin.write(req.user);
         child.stdin.end();
       } catch {
         // A child that already exited (a fake binary in a test, or a real CLI that failed to
@@ -146,15 +152,15 @@ export class ClaudeCliProvider implements Provider {
       return { ok: false, error: "malformed", raw: stdout, latencyMs };
     }
 
+    const usage = this.usageFromEnvelope(envelope);
     if (envelope.is_error) {
-      return { ok: false, error: "provider", raw: stdout, latencyMs };
+      return { ok: false, error: "provider", raw: stdout, latencyMs, usage };
     }
 
     if (typeof envelope.result !== "string") {
-      return { ok: false, error: "malformed", raw: stdout, latencyMs };
+      return { ok: false, error: "malformed", raw: stdout, latencyMs, usage };
     }
     const result = envelope.result;
-    const usage = this.usageFromEnvelope(envelope);
     const jsonText = extractJsonText(result);
 
     let parsed: unknown;
@@ -173,10 +179,10 @@ export class ClaudeCliProvider implements Provider {
   }
 
   private usageFromEnvelope(envelope: ClaudeCliEnvelope): Usage {
-    const inputTokens = envelope.usage?.input_tokens;
+    const inputTokens = envelope.usage?.input_tokens === undefined ? undefined : envelope.usage.input_tokens + (envelope.usage.cache_read_input_tokens ?? 0) + (envelope.usage.cache_creation_input_tokens ?? 0);
     const outputTokens = envelope.usage?.output_tokens;
     if (typeof inputTokens === "number" && typeof outputTokens === "number") {
-      return { inputTokens, outputTokens, model: this.model };
+      return { inputTokens, outputTokens, model: this.model, ...(typeof envelope.total_cost_usd === "number" && Number.isFinite(envelope.total_cost_usd) && envelope.total_cost_usd >= 0 ? { costUsd: envelope.total_cost_usd } : {}) };
     }
     return { inputTokens: 0, outputTokens: 0, model: "unknown" };
   }

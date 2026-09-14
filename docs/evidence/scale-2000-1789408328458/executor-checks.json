@@ -1,0 +1,31 @@
+[
+  {
+    "taskId": "1",
+    "host": "examples.internal",
+    "proposalId": "26755895890253663396704259314525266116594678262495941496079759115832728319845",
+    "outcome": {
+      "ok": false,
+      "blocked": {
+        "verdict": "BLOCK",
+        "reason": "target_not_allowlisted",
+        "payloadHash": "0xb4ddba7c9f277121aa5440753ec101241cb2ada8f9dbcb1ea789d76e82c0bdc7",
+        "draft": {
+          "kind": "GRANT_EXCEPTION",
+          "payloadHash": "0xb4ddba7c9f277121aa5440753ec101241cb2ada8f9dbcb1ea789d76e82c0bdc7",
+          "summary": "Grant exception: network_fetch examples.internal"
+        }
+      }
+    },
+    "requests": 0
+  },
+  {
+    "taskId": "2",
+    "host": "pypi.org",
+    "proposalId": "63152161695320352168078568694489496527801417346561755039486530928736484349750",
+    "outcome": {
+      "ok": true,
+      "output": "local fixture response"
+    },
+    "requests": 1
+  }
+]

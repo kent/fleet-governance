@@ -38,6 +38,7 @@ export const RUN_FILES = {
   objections: "objections.jsonl",
   interventions: "interventions.jsonl",
   loopEvents: "loop-events.jsonl",
+  inference: "inference.jsonl",
   log: "run.log",
   record: "record.json",
   report: "report.md",

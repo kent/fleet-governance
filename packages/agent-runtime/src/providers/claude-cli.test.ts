@@ -47,6 +47,16 @@ function spawnImplFor(child: FakeChildProcess): SpawnFn {
 }
 
 describe("ClaudeCliProvider", () => {
+  it("includes cache input and billed cost even when the model returns an error", async () => {
+    const child = new FakeChildProcess();
+    const provider = new ClaudeCliProvider({ spawnImpl: spawnImplFor(child) });
+    const pending = provider.complete(req());
+    child.finish(0, JSON.stringify({ is_error: true, total_cost_usd: 0.009, usage: {
+      input_tokens: 100, output_tokens: 5, cache_read_input_tokens: 200, cache_creation_input_tokens: 300,
+    } }));
+    await expect(pending).resolves.toMatchObject({ ok: false, usage: { inputTokens: 600, outputTokens: 5, costUsd: 0.009 } });
+  });
+
   it("parses a canned envelope with a fenced JSON result and reports envelope usage", async () => {
     const child = new FakeChildProcess();
     const provider = new ClaudeCliProvider({ spawnImpl: spawnImplFor(child) });
@@ -225,8 +235,11 @@ describe("ClaudeCliProvider", () => {
     await promise;
 
     expect(seenBin).toBe("claude");
-    expect(seenArgs).toEqual(["-p", "--output-format", "json", "--model", "claude-opus-5"]);
-    expect(child.stdin.write).toHaveBeenCalledWith(expect.stringContaining("sys"));
+    expect(seenArgs).toEqual([
+      "-p", "--output-format", "json", "--model", "claude-opus-5",
+      "--safe-mode", "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+      "--no-session-persistence", "--system-prompt", "sys",
+    ]);
     expect(child.stdin.write).toHaveBeenCalledWith(expect.stringContaining("usr"));
     expect(child.stdin.end).toHaveBeenCalled();
   });

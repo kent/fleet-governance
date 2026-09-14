@@ -1,0 +1,100 @@
+[
+  {
+    "taskId": "1",
+    "payloadHash": "0x0a0d5dce64ace14e215cc28b807003dfd3923408ed0a6a8d21bed795ff570083",
+    "checks": [
+      {
+        "name": "operator direct publication",
+        "txHash": "0x9663b31a2cb139e6eb35dc692a1b2c4c87248e069b5ac9429645e9008e400efd",
+        "status": "reverted",
+        "simulation": "The contract function \"publish\" reverted.\n\nError: NotExecutor(address caller)\n                  (0x976EA74026E726554dB657fA54763abd0C3a0aa9)\n \nContract Call:\n  address:   0x0b306bf915c4d645ff596e518faf3f9669b97016\n  function:  publish(bytes32 digest)\n  args:             (0x5f55631780b14310db27d6ca066b7363a50eeb9a981e1b9c4094008dcb8d5710)\n  sender:    0x976EA74026E726554dB657fA54763abd0C3a0aa9\n\nDocs: https://viem.sh/docs/contract/simulateContract\nDetails: execution reverted: custom error 0x5cf20d63: 000000000000000000000000976ea74026e726554db657fa54763abd0c3a0aa9\nVersion: viem@2.56.5"
+      },
+      {
+        "name": "defeated publication",
+        "txHash": "0xbd0241cac61a8f57275119da2f2303579cc8ffe748e8a13eb575e30f2282693c",
+        "status": "reverted",
+        "simulation": "Reverted with NotApproved(0x0a0d5dce64ace14e215cc28b807003dfd3923408ed0a6a8d21bed795ff570083)"
+      }
+    ],
+    "artifact": {
+      "digest": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "revision": "0"
+    },
+    "consumed": false,
+    "fees": [
+      {
+        "txHash": "0x9663b31a2cb139e6eb35dc692a1b2c4c87248e069b5ac9429645e9008e400efd",
+        "gasUsed": "22410",
+        "effectiveGasPrice": "1021492856",
+        "feeWei": "22891654902960"
+      },
+      {
+        "txHash": "0xbd0241cac61a8f57275119da2f2303579cc8ffe748e8a13eb575e30f2282693c",
+        "gasUsed": "72696",
+        "effectiveGasPrice": "1018813427",
+        "feeWei": "74063660889192"
+      }
+    ]
+  },
+  {
+    "taskId": "2",
+    "payloadHash": "0x38889aa20760ebc7144634fc176ba24811403a8d691a697309e9341f7e65f54c",
+    "checks": [
+      {
+        "name": "operator direct publication",
+        "txHash": "0x7b88b1e0e62065733c24f03f932b4d7509c6742e009ee1058b6f1edf4f7a200f",
+        "status": "reverted",
+        "simulation": "The contract function \"publish\" reverted.\n\nError: NotExecutor(address caller)\n                  (0x976EA74026E726554dB657fA54763abd0C3a0aa9)\n \nContract Call:\n  address:   0x0b306bf915c4d645ff596e518faf3f9669b97016\n  function:  publish(bytes32 digest)\n  args:             (0x5f55631780b14310db27d6ca066b7363a50eeb9a981e1b9c4094008dcb8d5710)\n  sender:    0x976EA74026E726554dB657fA54763abd0C3a0aa9\n\nDocs: https://viem.sh/docs/contract/simulateContract\nDetails: execution reverted: custom error 0x5cf20d63: 000000000000000000000000976ea74026e726554db657fa54763abd0c3a0aa9\nVersion: viem@2.56.5"
+      },
+      {
+        "name": "changed publication",
+        "txHash": "0x18eb99471e649806618e2a4303759e9327318d5f80b2aa4dbe16455ebf9214a0",
+        "status": "reverted",
+        "simulation": "Reverted with NotApproved(0xf9d7f5a5fb344c458da5cdb0299e2d4700d5e9e1707d41872102aa43f1fb62d2)"
+      },
+      {
+        "name": "approved exact publication",
+        "txHash": "0xf03ccf4d0cff97950eaa5a04c5beda32f8d746bb23b286352acef6fd3df54d6b",
+        "status": "success",
+        "simulation": "approved"
+      },
+      {
+        "name": "replayed publication",
+        "txHash": "0x1af3d2f42020c2e4bbfc28d706224d0c21771218686348e65321cd767d880ba3",
+        "status": "reverted",
+        "simulation": "Reverted with AlreadyConsumed(0x38889aa20760ebc7144634fc176ba24811403a8d691a697309e9341f7e65f54c)"
+      }
+    ],
+    "artifact": {
+      "digest": "0x038a91e5cc822b09ec6bb690c25d40b9257b280a2019b464cbd7be9b38a918a0",
+      "revision": "1"
+    },
+    "consumed": true,
+    "fees": [
+      {
+        "txHash": "0x7b88b1e0e62065733c24f03f932b4d7509c6742e009ee1058b6f1edf4f7a200f",
+        "gasUsed": "22410",
+        "effectiveGasPrice": "1002612152",
+        "feeWei": "22468538326320"
+      },
+      {
+        "txHash": "0x18eb99471e649806618e2a4303759e9327318d5f80b2aa4dbe16455ebf9214a0",
+        "gasUsed": "72708",
+        "effectiveGasPrice": "1002286506",
+        "feeWei": "72874247278248"
+      },
+      {
+        "txHash": "0xf03ccf4d0cff97950eaa5a04c5beda32f8d746bb23b286352acef6fd3df54d6b",
+        "gasUsed": "167709",
+        "effectiveGasPrice": "1002003171",
+        "feeWei": "168044949805239"
+      },
+      {
+        "txHash": "0x1af3d2f42020c2e4bbfc28d706224d0c21771218686348e65321cd767d880ba3",
+        "gasUsed": "63907",
+        "effectiveGasPrice": "1001757781",
+        "feeWei": "64019334510367"
+      }
+    ]
+  }
+]

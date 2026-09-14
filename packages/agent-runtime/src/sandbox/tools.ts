@@ -3,7 +3,7 @@ import { describeAction, evaluateAction } from "@fleet/gateway";
 import type { DraftProposal, GatewayLogRecord, GatewayVerdict, LedgerSnapshot, LedgerWatcher } from "@fleet/gateway";
 import { payloadHashForAction } from "@fleet/sdk";
 import type { Workspace } from "./workspace.js";
-import { dockerRunTests as realDockerRunTests, npmTestInProcess, runCommand } from "./docker.js";
+import { dockerRunTests as realDockerRunTests } from "./docker.js";
 
 export type ToolCall = { class: ActionClass; target: string; args: Record<string, unknown> };
 
@@ -12,10 +12,8 @@ export type ToolResult =
   | { ok: false; blocked: GatewayVerdict & { verdict: "BLOCK" } }
   | { ok: false; error: string };
 
-/** What `run_tests`'s `output` string decodes to (`JSON.parse`d). `fallback: "no-docker"` is
- *  present only when Docker was unavailable and the suite ran in-process instead, so a report
- *  can flag the run as having lost `--network none` isolation (amendment 4). */
-export type RunTestsOutput = { passed: boolean; output: string; fallback?: "no-docker" };
+/** A successful sandbox invocation. Infrastructure failures return ToolResult.error. */
+export type RunTestsOutput = { passed: boolean; output: string };
 
 type SpawnResult = { code: number | null; output: string };
 type CommandRunner = (cmd: string, args: string[], opts: { cwd?: string }) => Promise<SpawnResult>;
@@ -32,13 +30,9 @@ export type ToolRouterOpts = {
   log: (r: GatewayLogRecord) => void;
   fetchImpl?: typeof fetch;
   dockerRunTests?: (dir: string) => Promise<{ passed: boolean; output: string }>;
-  /**
-   * Deviation from the brief's illustrative constructor snippet, which lists no injection point
-   * for `package_install`: amendment 6 requires tests to "assert the command that would run
-   * (inject a fake runner) rather than installing anything", and there is no way to satisfy that
-   * without one. Defaults to a real `npm install` (argv array, never a shell string, so `pkg`
-   * cannot inject additional shell commands regardless of its content).
-   */
+  /** Test injection only. Production refuses installation until an installer can mediate all
+   *  dependency traffic through the gateway. Host npm can execute scripts and contact hosts
+   *  other than --registry, bypassing the fleet's decision. */
   packageInstallRunner?: CommandRunner;
 };
 
@@ -122,7 +116,7 @@ export class ToolRouter {
   private readonly logSink: (r: GatewayLogRecord) => void;
   private readonly fetchImpl: typeof fetch;
   private readonly runDockerTests: (dir: string) => Promise<{ passed: boolean; output: string }>;
-  private readonly packageInstallRunner: CommandRunner;
+  private readonly packageInstallRunner: CommandRunner | undefined;
 
   constructor(opts: ToolRouterOpts) {
     this.workspace = opts.workspace;
@@ -132,8 +126,7 @@ export class ToolRouter {
     this.logSink = opts.log;
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.runDockerTests = opts.dockerRunTests ?? realDockerRunTests;
-    this.packageInstallRunner =
-      opts.packageInstallRunner ?? ((cmd, args, runOpts) => runCommand(cmd, args, { ...runOpts, timeoutMs: 120_000 }));
+    this.packageInstallRunner = opts.packageInstallRunner;
   }
 
   usage(): { toolCalls: number } {
@@ -239,24 +232,9 @@ export class ToolRouter {
   }
 
   private async runTests(): Promise<string> {
-    try {
-      const result = await this.runDockerTests(this.workspace.dir);
-      const payload: RunTestsOutput = { passed: result.passed, output: result.output };
-      return JSON.stringify(payload);
-    } catch (err) {
-      const warning =
-        `run_tests: Docker unavailable (${errorMessage(err)}); falling back to an in-process ` +
-        `npm test with no --network none isolation`;
-      // eslint-disable-next-line no-console
-      console.warn(warning);
-      const fallback = await npmTestInProcess(this.workspace.dir);
-      const payload: RunTestsOutput = {
-        passed: fallback.passed,
-        output: `${warning}\n${fallback.output}`,
-        fallback: "no-docker",
-      };
-      return JSON.stringify(payload);
-    }
+    const result = await this.runDockerTests(this.workspace.dir);
+    const payload: RunTestsOutput = { passed: result.passed, output: result.output };
+    return JSON.stringify(payload);
   }
 
   private async packageInstall(tc: ToolCall): Promise<string> {
@@ -267,6 +245,9 @@ export class ToolRouter {
       // F4: rejected before any subprocess, argument-injection attempts included ("-g", "foo
       // bar", "foo;rm" are all invalid specs, not commands that ever reach npm).
       throw new Error("invalid_package_name");
+    }
+    if (!this.packageInstallRunner) {
+      throw new Error("package_install_unavailable: a gateway-mediated installer is required; host execution is disabled");
     }
     const cmd = "npm";
     // F4: "--" ends npm's own option parsing, so pkg (already validated, and now also argv's

@@ -10,6 +10,8 @@ export type FleetAddresses = {
   ledger: Address;
   hook: Address;
   governor: Address;
+  executor?: Address;
+  artifactStore?: Address;
 };
 
 /**
@@ -25,5 +27,7 @@ export function addressesFromManifest(m: ManifestV1): FleetAddresses {
     ledger: m.addresses.ledger as Address,
     hook: m.addresses.hook as Address,
     governor: m.addresses.governor as Address,
+    ...(m.addresses.executor ? { executor: m.addresses.executor as Address } : {}),
+    ...(m.addresses.artifactStore ? { artifactStore: m.addresses.artifactStore as Address } : {}),
   };
 }

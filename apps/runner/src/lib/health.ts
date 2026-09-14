@@ -1,4 +1,5 @@
 import type { Address } from "viem";
+import { mapConcurrent } from "@fleet/sdk";
 
 /**
  * `HealthPanel`'s data (spec 12.3: "keeper and indexer health"; task 6 controller notes' ruling):
@@ -148,7 +149,7 @@ export async function probeHealth(deps: HealthDeps): Promise<HealthView> {
     probeDaoNode(deps.daoNodeUrl, deps.getChainHead, fetchProbe, timeoutMs),
     probeReachable(`${deps.cplsUrl.replace(/\/+$/, "")}/health`, fetchProbe, timeoutMs),
     deps.agoraNextUrl ? probeReachable(deps.agoraNextUrl, fetchProbe, timeoutMs) : Promise.resolve({ ok: false, detail: "not configured (display.agoraNextBaseUrl unset)" }),
-    Promise.all(deps.signers.map((s) => probeSignerBalance(s.label, s.address, deps.getBalanceWei))),
+    mapConcurrent(deps.signers, 16, s => probeSignerBalance(s.label, s.address, deps.getBalanceWei)),
   ]);
 
   return { daoNode, cpls, agoraNext, keeperLastAction: keeperLastActionFromLog(deps.logText), signerBalances };

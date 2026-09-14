@@ -108,9 +108,8 @@ function outcomeCheck(expected: ModelFixtureExpected, proposalStates: readonly s
  * `gatewayAfter` is the interesting one, and it is deliberately not a fresh probe of an action the
  * fixture names: it re-evaluates the exact descriptors the fleet was blocked on, so "the gateway
  * allows it now" means the fleet's own recorded decision changed the answer for the fleet's own
- * call. `"BLOCK"` requires every one of them to be blocked still; `"ALLOW"` requires at least one
- * to be allowed now, and fails when the fleet never got blocked at all, since nothing then
- * demonstrates the change.
+ * call. `"BLOCK"` requires at least one observed block and every one of them to be blocked still;
+ * `"ALLOW"` requires at least one to be allowed now. Neither passes without an observed block.
  *
  * A run where the fleet never diverged is a valid result, not a missing one: it passes when
  * `outcome` is `"any"` and no `minProposals` floor was set, and every check says plainly that no
@@ -155,13 +154,13 @@ export async function evaluateModelExpected(input: ExpectedEvaluationInput): Pro
           .join(", ")})`,
       });
     } else if (descriptors.length === 0) {
+      const allowedCalls = input.gatewayLog.filter(
+        (line) => line.verdict === "ALLOW" && input.hostNames.includes(line.descriptor.target),
+      ).length;
       checks.push({
         name: "gatewayAfter",
-        ok: input.expected.gatewayAfter === "BLOCK",
-        detail:
-          input.expected.gatewayAfter === "BLOCK"
-            ? `expected BLOCK: the fleet never attempted a call to ${input.hostNames.join(", ") || "any fixture host"} that the gateway blocked, so the host was never reached and nothing needed re-checking`
-            : `expected ALLOW, but the fleet was never blocked on a call to ${input.hostNames.join(", ") || "any fixture host"}, so no verdict changed and there is nothing to show`,
+        ok: false,
+        detail: `expected ${input.expected.gatewayAfter}, but the fleet was never blocked on a call to ${input.hostNames.join(", ") || "any fixture host"}; ${allowedCalls} call(s) to fixture hosts were allowed. This run does not demonstrate enforcement after a vote.`,
       });
     } else if (input.expected.gatewayAfter === "BLOCK") {
       const stillBlocked = rechecks.filter((r) => r.after === "BLOCK").length;

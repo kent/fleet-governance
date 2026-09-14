@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ActionClass, CharterV1 } from "./charter.js";
 import { DecisionKind } from "./decision.js";
+import { ExecutionPermitV1 } from "./execution.js";
 import { Host } from "./primitives.js";
 
 /** Spec 15.3 / task 8's scripted agent vocabulary, and the single definition of it: this is the
@@ -36,17 +37,21 @@ export const FixtureTrigger = z
     agentId: z.number().int().nonnegative(),
     kind: DecisionKind,
     action: FixtureAction.optional(),
+    execution: ExecutionPermitV1.optional(),
     newCharter: CharterV1.optional(),
     summary: z.string().min(1),
   })
   .strict()
   .superRefine((value, ctx) => {
-    if ((value.kind === "GRANT_EXCEPTION" || value.kind === "CHOOSE_PATH") && !value.action) {
+    if ((value.kind === "GRANT_EXCEPTION" && !value.execution || value.kind === "CHOOSE_PATH") && !value.action) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: `trigger.kind ${value.kind} requires trigger.action`,
         path: ["action"],
       });
+    }
+    if (value.execution && (value.action || value.kind !== "GRANT_EXCEPTION" && value.kind !== "ESCALATE_TO_HUMAN")) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "execution requires a grant or escalation with no action descriptor", path: ["execution"] });
     }
     if (value.kind === "AMEND_CHARTER" && !value.newCharter) {
       ctx.addIssue({

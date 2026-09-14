@@ -16,10 +16,13 @@ export const ManifestV1 = z
         ledger: Address,
         hook: Address,
         governor: Address,
+        executor: Address.optional(),
+        artifactStore: Address.optional(),
       })
       .strict(),
     hookSalt: Hex32,
     members: z.array(Address),
+    membershipHash: Hex32.optional(),
     operator: Address,
     guardian: Address,
     tokenName: z.string(),
@@ -59,8 +62,16 @@ export const ManifestV1 = z
         ledger: Hex32,
         hook: Hex32,
         governor: Hex32,
+        executor: Hex32.optional(),
+        artifactStore: Hex32.optional(),
       })
       .strict(),
   })
-  .strict();
+  .strict().superRefine((manifest, ctx) => {
+    const resources = [manifest.addresses.executor, manifest.addresses.artifactStore,
+      manifest.codeHashes.executor, manifest.codeHashes.artifactStore];
+    if (resources.some(value => value !== undefined) && resources.some(value => value === undefined)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "execution resources require both addresses and both code hashes" });
+    }
+  });
 export type ManifestV1 = z.infer<typeof ManifestV1>;

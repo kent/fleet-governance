@@ -1,5 +1,7 @@
 "use client";
 
+import { MAX_FLEET_MEMBERS } from "@fleet/schemas";
+
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { CharterV1, ExperimentConfigV1, effectiveYesCount } from "@fleet/schemas";
@@ -100,8 +102,14 @@ export default function ConfigForm() {
     }
     if (nameError) map["name"] = nameError;
     if (charterError) map["task.charter"] = charterError;
+    if (!draft.scenario.agentsScripted) {
+      if (draft.fleet.members.some(member => member.provider === "claude-cli")) map["inference.provider"] = "Live runs currently require OpenRouter to enforce model spending limits.";
+      for (const member of draft.fleet.members) {
+        if (member.provider === "openrouter" && !draft.inference?.budget?.prices[member.model]) map["inference.prices"] = "Set input and output price limits for every model before starting.";
+      }
+    }
     return map;
-  }, [validation, nameError, charterError]);
+  }, [validation, nameError, charterError, draft]);
   const canSubmit = Object.keys(fieldErrors).length === 0 && !submitting;
 
   const yesCount = effectiveYesCount(memberCount, draft.governance.quorumNumerator);
@@ -114,6 +122,19 @@ export default function ConfigForm() {
     }));
   }
 
+  function updateBudget(patch: { maxTokens?: number; maxCostUsd?: number }): void {
+    setDraft(prev => ({ ...prev, inference: { ...prev.inference!, budget: { ...prev.inference!.budget!, ...patch } } }));
+  }
+
+  function updatePrice(model: string, field: "inputUsdPerMillion" | "outputUsdPerMillion", value: number): void {
+    setDraft(prev => {
+      const budget = prev.inference!.budget!;
+      return { ...prev, inference: { ...prev.inference!, budget: { ...budget, prices: { ...budget.prices,
+        [model]: { ...(budget.prices[model] ?? { inputUsdPerMillion: 0, outputUsdPerMillion: 0 }), [field]: value },
+      } } } };
+    });
+  }
+
   function addMember(): void {
     setDraft((prev) => ({ ...prev, fleet: { ...prev.fleet, members: [...prev.fleet.members, defaultMember("")] } }));
   }
@@ -123,7 +144,7 @@ export default function ConfigForm() {
   }
 
   function setFleetSize(rawValue: number): void {
-    const size = Math.max(2, Math.min(64, Number.isFinite(rawValue) ? Math.trunc(rawValue) : 2));
+    const size = Math.max(2, Math.min(MAX_FLEET_MEMBERS, Number.isFinite(rawValue) ? Math.trunc(rawValue) : 2));
     setDraft((prev) => {
       const current = prev.fleet.members;
       let members = current;
@@ -136,9 +157,10 @@ export default function ConfigForm() {
     });
   }
 
-  function handleFixtureChange(name: string): void {
-    const fixture = fixtures.find((f) => f.name === name);
-    const isModel = fixture?.kind === "model";
+  function handleFixtureChange(selection: string): void {
+    const fixture = fixtures.find((f) => `${f.kind}:${f.name}` === selection);
+    const name = fixture?.name ?? draft.scenario.fixture;
+    const isModel = fixture ? fixture.kind === "model" : !draft.scenario.agentsScripted;
     const agentsScripted = fixture ? !isModel : draft.scenario.agentsScripted;
 
     // A scripted fixture names no charter of its own, so it always pre-fills from the embedded
@@ -208,7 +230,7 @@ export default function ConfigForm() {
     }
   }
 
-  const fixtureOptions = fixtures.some((f) => f.name === draft.scenario.fixture)
+  const fixtureOptions = fixtures.some((f) => f.name === draft.scenario.fixture && (f.kind === "scripted") === draft.scenario.agentsScripted)
     ? fixtures
     : [{ name: draft.scenario.fixture, kind: draft.scenario.agentsScripted ? ("scripted" as const) : ("model" as const), description: "" }, ...fixtures];
 
@@ -277,7 +299,7 @@ export default function ConfigForm() {
           id="fleet-size"
           type="number"
           min={2}
-          max={64}
+          max={MAX_FLEET_MEMBERS}
           value={memberCount}
           onChange={(e) => setFleetSize(Number(e.target.value))}
         />
@@ -338,10 +360,36 @@ export default function ConfigForm() {
             )}
           </div>
         ))}
-        <button type="button" onClick={addMember} disabled={draft.fleet.members.length >= 64}>
+        <button type="button" onClick={addMember} disabled={draft.fleet.members.length >= MAX_FLEET_MEMBERS}>
           Add member
         </button>
       </section>
+
+      {!draft.scenario.agentsScripted && (
+        <section>
+          <h2>Model budget</h2>
+          <label htmlFor="model-cost-limit">Model spending limit (USD)</label>
+          <input id="model-cost-limit" type="number" min="0.000001" step="any" value={draft.inference?.budget?.maxCostUsd ?? ""}
+            onChange={event => updateBudget({ maxCostUsd: Number(event.target.value) })} />
+          <label htmlFor="model-token-limit">Total inference token limit</label>
+          <input id="model-token-limit" type="number" min="1" step="1" value={draft.inference?.budget?.maxTokens ?? ""}
+            onChange={event => updateBudget({ maxTokens: Number(event.target.value) })} />
+          <p>Shared by the whole fleet, including voting. The charter can set a lower token limit. Voting keeps 20% of each allowance by default.</p>
+          <p>Use an OpenRouter key with a credit cap that does not reset. Its remaining credit must fit this spending limit, with BYOK usage included.</p>
+          {[...new Set(draft.fleet.members.filter(member => member.provider === "openrouter").map(member => member.model))].map((model, index) => (
+            <fieldset key={model}>
+              <legend>{model || "Choose a model"}: price limits per million tokens (USD)</legend>
+              <label htmlFor={`input-price-${index}`}>Input price limit</label>
+              <input id={`input-price-${index}`} type="number" min="0" step="any" value={draft.inference?.budget?.prices[model]?.inputUsdPerMillion ?? ""}
+                onChange={event => updatePrice(model, "inputUsdPerMillion", Number(event.target.value))} />
+              <label htmlFor={`output-price-${index}`}>Output price limit</label>
+              <input id={`output-price-${index}`} type="number" min="0" step="any" value={draft.inference?.budget?.prices[model]?.outputUsdPerMillion ?? ""}
+                onChange={event => updatePrice(model, "outputUsdPerMillion", Number(event.target.value))} />
+            </fieldset>
+          ))}
+          {Object.entries(fieldErrors).filter(([key]) => key.startsWith("inference")).map(([key, error]) => <p key={key} role="alert">{error}</p>)}
+        </section>
+      )}
 
       <section>
         <h2>Governance</h2>
@@ -428,9 +476,9 @@ export default function ConfigForm() {
       <section>
         <h2>Scenario</h2>
         <label htmlFor="scenario-fixture">Scenario fixture</label>
-        <select id="scenario-fixture" value={draft.scenario.fixture} onChange={(e) => handleFixtureChange(e.target.value)}>
+        <select id="scenario-fixture" value={`${draft.scenario.agentsScripted ? "scripted" : "model"}:${draft.scenario.fixture}`} onChange={(e) => handleFixtureChange(e.target.value)}>
           {fixtureOptions.map((f) => (
-            <option key={f.name} value={f.name}>
+            <option key={`${f.kind}:${f.name}`} value={`${f.kind}:${f.name}`}>
               {f.name} ({f.kind})
             </option>
           ))}

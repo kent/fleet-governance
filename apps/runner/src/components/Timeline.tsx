@@ -1,4 +1,7 @@
+"use client";
+
 import type { GatewayLogLineType, InterventionLineType } from "../pipeline/runfiles.js";
+import { useCollectionPage } from "./useCollectionPage.js";
 
 /** A `DecisionTraceEvent` (or a `record.json` chain event), every `bigint` already a decimal
  *  string (matches `src/lib/run-state.ts`'s `ChainEventView`, duck-typed here rather than imported
@@ -56,14 +59,18 @@ export function mergeTimelineItems(
  */
 export default function Timeline({ chainEvents, gatewayRecords, interventions }: TimelineProps) {
   const items = mergeTimelineItems(chainEvents, gatewayRecords, interventions);
+  const page = useCollectionPage(items, "events", item => Object.values(item.register === "onchain" ? item.event : item.record)
+    .filter(value => typeof value !== "object").map(String).join(" "));
 
   if (items.length === 0) {
     return <p>No timeline events yet.</p>;
   }
 
   return (
+    <>
+    {page.controls}
     <ol aria-label="Timeline">
-      {items.map((item) => (
+      {page.visible.map((item) => (
         <li key={item.key} data-block={item.blockNumber.toString()} data-register={item.register}>
           <span>Block {item.blockNumber.toString()}</span>{" "}
           {item.register === "onchain" && (
@@ -87,6 +94,7 @@ export default function Timeline({ chainEvents, gatewayRecords, interventions }:
         </li>
       ))}
     </ol>
+    </>
   );
 }
 

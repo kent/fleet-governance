@@ -1,0 +1,18 @@
+{
+  "runId": "execution-5-1789411395881",
+  "chainRecaptureMatches": {
+    "events": true,
+    "votes": true,
+    "fees": true,
+    "resource.events": true,
+    "resource.artifacts": true
+  },
+  "counts": {
+    "events": 19,
+    "votes": 10,
+    "fees": 22
+  },
+  "resourceEvents": 2,
+  "recordBlock": "51",
+  "recaptureBlock": "51"
+}

@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdir, mkdtemp, rm, writeFile as fsWriteFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, access, writeFile as fsWriteFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -391,24 +391,20 @@ describe("ToolRouter: run_tests", () => {
     expect(dockerRunTests).toHaveBeenCalledWith(workspace.dir);
   });
 
-  it("falls back to an in-process npm test, with a fallback:no-docker marker, when dockerRunTests throws", async () => {
+  it("fails closed when Docker throws and never executes the task script on the host", async () => {
     const { watcher } = makeWatcher(baseCharter());
     const { log } = makeLog();
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await workspace.writeFile("package.json", JSON.stringify({
+      scripts: { test: `node -e "require('fs').writeFileSync('host-executed', 'yes')"` },
+    }));
     const dockerRunTests = vi.fn(async () => {
-      throw new Error("docker unavailable: `docker info` failed");
+      throw new Error("sandbox_unavailable: docker daemon failed");
     });
     const router = new ToolRouter({ workspace, watcher, agentId: 1, budget: { toolCalls: 0 }, log, dockerRunTests });
-
-    const result = await router.call({ class: "run_tests", target: "all", args: {} });
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("unreachable");
-    const parsed = JSON.parse(result.output) as RunTestsOutputShape;
-    expect(parsed.passed).toBe(true);
-    expect(parsed.fallback).toBe("no-docker");
-    expect(parsed.output).toContain("fixture tests passed");
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    warnSpy.mockRestore();
+    expect(await router.call({ class: "run_tests", target: "all", args: {} })).toEqual({
+      ok: false, error: "sandbox_unavailable: docker daemon failed",
+    });
+    await expect(access(join(workspace.dir, "host-executed"))).rejects.toThrow();
   });
 
   it("uses real Docker end to end when no dockerRunTests is injected", async () => {
@@ -429,6 +425,14 @@ describe("ToolRouter: run_tests", () => {
 type RunTestsOutputShape = { passed: boolean; output: string; fallback?: string };
 
 describe("ToolRouter: package_install", () => {
+  it("refuses an allowlisted install when no mediated installer exists", async () => {
+    const { watcher } = makeWatcher(baseCharter({ externalAllowlist: ["registry.npmjs.org"] }));
+    const { log } = makeLog();
+    const router = new ToolRouter({ workspace, watcher, agentId: 1, budget: { toolCalls: 0 }, log });
+    const result = await router.call({ class: "package_install", target: "registry.npmjs.org", args: { pkg: "left-pad" } });
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("package_install_unavailable") });
+  });
+
   it("asserts the exact npm install command via an injected runner, without installing anything", async () => {
     const host = "registry.example.com";
     const charter = baseCharter({ externalAllowlist: [host] });

@@ -7,6 +7,8 @@ import ProposalCard from "./ProposalCard.js";
 import AgentPanel from "./AgentPanel.js";
 import HealthPanel from "./HealthPanel.js";
 import GuardianControls from "./GuardianControls.js";
+import ExecutionPanel from "./ExecutionPanel.js";
+import { useCollectionPage } from "./useCollectionPage.js";
 
 type EnvVarStatus = { name: string; present: boolean };
 type SseFrame = { type: "log"; line: string } | { type: "stage"; stage: string; updatedAt: string } | { type: "ping" };
@@ -25,6 +27,8 @@ export default function RunView({ runId }: { runId: string }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [logLines, setLogLines] = useState<string[]>([]);
   const [guardianKeyPresent, setGuardianKeyPresent] = useState(false);
+  const agentPage = useCollectionPage(state?.agents ?? [], "agents", agent =>
+    [agent.agentId, agent.address, agent.role, agent.model, agent.jobState].join(" "));
 
   useEffect(() => {
     let cancelled = false;
@@ -128,9 +132,12 @@ export default function RunView({ runId }: { runId: string }) {
         )}
       </section>
 
+      <ExecutionPanel execution={state.execution} />
+
       <section aria-label="Agents">
         <h2>Agents</h2>
-        {state.agents.map((agent) => (
+        {agentPage.controls}
+        {agentPage.visible.map((agent) => (
           <AgentPanel key={agent.agentId} {...agent} />
         ))}
       </section>

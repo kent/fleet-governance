@@ -1,5 +1,11 @@
 # @fleet/runner
 
+`fleet execution-demo --members 5 --concurrency 4` runs two scripted artifact-publication votes
+on an owned local Anvil. It mines rejected direct writes, substitutions and replays, verifies the
+approved call executes once, and reconstructs the resource events and state. Use `--members 2000`
+for the load test. See [execution permissions](../../../docs/execution-permits.md) for the scope
+and evidence format. This command makes no model API calls.
+
 The headless pipeline the spec's Runner UI (Part 4) sits on, binary `fleet`: deploy a fleet with
 the Foundry script, configure the Part 2 read side, open a task, run a divergence scenario through
 proposal, votes, queue, execute, and ledger, capture everything into `record.json` and `report.md`,
@@ -164,6 +170,133 @@ so in as many words.
 `deployments/configs/local-hf-replay-model.deploy.json` are a complete five-agent model-driven pair
 for local Anvil.
 
+### Execution boundary
+
+Prepare Docker and the `node:22-alpine` image before a model run (`docker pull node:22-alpine`).
+Task tests run in a container with no external network, a read-only workspace and root filesystem,
+an unprivileged user, resource limits, and temporary scratch space. The container receives no
+fleet keys, provider credentials, or Docker socket. A timeout removes the container. Docker
+startup and cleanup failures return an error; tests never fall back to running on the host.
+
+Network fetches still pass through the charter gateway. A defeated exception leaves the same
+fetch blocked. Writing a fetch into repository code does not give the test container network
+access. The Claude CLI provider also runs with its built-in tools, MCP servers and customizations
+disabled, so it returns decisions through the fleet runtime.
+
+`package_install` currently returns `package_install_unavailable` after charter evaluation. The
+old host `npm install` could execute lifecycle scripts or fetch dependencies from other hosts.
+Restoring this tool requires an isolated installer whose dependency traffic passes through the
+gateway. An allowlisted registry alone is insufficient.
+
+This boundary still trusts the operator, Docker and the runtime. Onchain decisions currently
+control the gateway's permission check. Contract permits now control the canonical artifact store through `FleetExecutor`; connecting
+publication to the normal model task loop remains future work. Contracts support up to 4,096 members through bounded initialization batches.
+
+A model run that never attempts a forbidden action is a valid observation. It does not establish
+that a vote prevented execution. Both `gatewayAfter: "BLOCK"` and `gatewayAfter: "ALLOW"` require
+an observed blocked call before their expectations can pass.
+
+### Local scale experiment
+
+Live model runs require an `inference.budget` block in the experiment JSON. The queue settings
+remain optional. This example permits up to 400,000 tokens and $1 of model usage:
+
+```json
+"inference": {
+  "concurrency": 8,
+  "reservedVoteSlots": 1,
+  "maxCalls": 10000,
+  "reservedVoteCalls": 2000,
+  "requestTimeoutMs": 60000,
+  "budget": {
+    "maxTokens": 400000,
+    "maxCostUsd": 1,
+    "maxInputTokensPerCall": 65536,
+    "maxOutputTokensPerCall": 4000,
+    "prices": {
+      "meta/muse-spark-1.3-contributor": {
+        "inputUsdPerMillion": 0.1,
+        "outputUsdPerMillion": 0.2
+      }
+    }
+  }
+}
+```
+
+The queue values shown are defaults; budgets and prices must be chosen explicitly. When omitted,
+`reservedVoteCalls` is 20% of `maxCalls`, rounded down.
+One shared queue handles task, objection, voting and repair calls. Task
+work cannot occupy the reserved voting slots, and waiting votes take the next available slot.
+Task loops stop when their call allocation runs out, leaving the reserved calls for voting.
+At most 4,096 requests wait in memory; excess requests fail explicitly. The request deadline
+includes queue time, while each dispatched provider call gets at most 60 seconds. Larger fleets
+can configure more concurrency and a longer request deadline, within their governance window
+and provider capacity. Canceled task loops cannot dispatch their waiting requests.
+
+The budget owner reserves tokens and dollars before each call. It clips requested output to
+`maxOutputTokensPerCall`, including a schema repair, and reserves one input token per serialized
+UTF-8 byte plus 4,096 tokens for provider framing. The input estimate includes the actual strict
+JSON schema. Oversized prompts fail before dispatch. This is a conservative estimate, not the
+provider's tokenizer. A reported input, output or cost overrun stops further inference and fails
+the run. Already dispatched calls retain their reservations and finish accounting.
+
+Every admission reads the current task charter. The effective token ceiling is the lower of
+`budget.maxTokens` and the charter's `budget.inferenceTokens`, shared across all agents and votes.
+A charter amendment cannot raise the operator's configured allowance. Voting reserves 20% of the
+configured token and dollar budget by default; set `reservedVoteTokens` and `reservedVoteCostUsd`
+inside `budget` to override those shares. Queue time includes waiting for another call to refund
+unused capacity. Insufficient budget is an explicit missing result, never an invented vote.
+
+OpenRouter requests carry the configured input and output price ceilings, prohibit per-request
+charges and provider fallbacks, and require parameter support. Each dispatch gets one HTTP
+attempt. Live preflight also reads the key's credit limit before deployment and again before
+starting agents. Use a dedicated key whose positive remaining credit is no higher than
+`maxCostUsd`, with no reset and BYOK usage included in its cap. The runner never changes the key
+or buys credits. These provider controls are documented in [routing](https://openrouter.ai/docs/guides/routing/provider-selection)
+and [credit limits](https://openrouter.ai/docs/api_reference/limits). The Claude CLI adapter does
+not expose the needed output and price enforcement, so budgeted live runs currently require
+OpenRouter. Scripted test providers remain available for verification without model charges.
+
+`inference.jsonl` is synchronously flushed before transport dispatch and after completion. It
+records reservations, attempts, outcomes and reported usage. A restart reloads every charge;
+missing usage and interrupted calls retain their full reservations. Only reported components
+are refunded. Reports show reported usage separately from the allowance still charged. Historical
+calls without reservations must be reconciled before resuming that journal with a budget.
+
+One coordinator owns the journal through an exclusive `.lock` file. A `.scope` file binds it to
+the chain, ledger and task. A second owner is refused. After a crash, inspect the PID and host
+recorded in the lock and confirm the old process has stopped before removing only that lock.
+Keep the journal and scope files. A malformed journal fails closed. This is one shared run owner,
+not a distributed accounting service: moving a run between hosts requires the same durable
+filesystem, and copying its directory does not create another safe owner of the allowance.
+
+An optional `runtime` block sets `toolConcurrency` (default 4) and `voteConcurrency` (default 32).
+Tool slots are acquired before reading the charter, so a queued call checks current permission
+when it runs. The slot remains occupied through Docker cleanup. Vote slots are shared across
+proposals, limiting RPC and signing work as well as model requests. Both pools reject waiting
+work when closed and cap their waiting queues at 4,096 jobs.
+
+```bash
+pnpm exec tsx apps/runner/src/cli.ts scale-demo --members 2000 --concurrency 16
+```
+
+This command owns a separate Anvil on a free local port and stops it when finished. It registers
+the fixed fleet, initializes votes in batches, verifies deployment, and runs a rejected exception
+and an approved charter amendment with a ballot from every member. The same workers, signers,
+contracts and gateway used by the other experiments handle each decision. A local HTTP canary
+checks that the rejected fetch stays blocked and the approved fetch reaches its destination.
+
+Ballots and reasons are prescribed scripted outputs. This measures governance and executor
+behaviour under load; it does not establish how thousands of models would decide. Vote concurrency
+is bounded between 1 and 64. The owned chain uses a 16,777,216 block gas limit and retains normal
+gas checks. Its transaction fees are local measurements, not estimates of public-chain cost.
+
+Evidence is saved under `experiments/reports/scale-<members>-<timestamp>/`: deployment config and
+manifest, every deployment receipt's gas usage, `record.json`, `chain-recaptured.json`, `report.md`,
+`executor-checks.json`, `scale-summary.json`, and an Anvil state dump. The command checks that the
+chain reconstruction matches all recorded events, ballots and fees before declaring success.
+`--report-dir` changes the parent directory. Failed runs retain `error.json` and available evidence.
+
 ### Run directory
 
 A run writes these under `<reportDir>/<runId>/`, and the Runner UI reads them live:
@@ -174,6 +307,7 @@ A run writes these under `<reportDir>/<runId>/`, and the Runner UI reads them li
 | `steps.jsonl` | the coordinator's loop | one `StepLine` per step published to the board |
 | `objections.jsonl` | every follower's loop | one `ObjectionLine` per objection prompt answered, objected or not |
 | `loop-events.jsonl` | every loop | one `LoopEventLine` per `TaskLoopEvent` |
+| `inference.jsonl` | shared model queue | provider attempts, reported tokens and cost, queue delays, and denied calls |
 | `interventions.jsonl` | the Runner UI's guardian route | one `InterventionLine` per pause, unpause or cancel |
 | `run.log` | the Runner UI's spawned `fleet run` | the run's own stdout |
 | `record.json`, `report.md` | `CAPTURED`, `REPORTED` | the run record and the rendered report |

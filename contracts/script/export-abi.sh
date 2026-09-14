@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 forge build --silent
 out=../packages/abi/abis
 mkdir -p "$out"
-for c in FleetRegistry FleetVotes FleetHook TaskLedger; do
+for c in FleetRegistry FleetVotes FleetHook TaskLedger FleetExecutor GovernedArtifactStore; do
   jq '.abi' "out/$c.sol/$c.json" > "$out/$c.json"
 done
 jq '.abi' out/AgoraGovernor.sol/AgoraGovernor.json > "$out/AgoraGovernor.json"

@@ -26,6 +26,8 @@ const EXPORTED_CONTRACTS = [
   "FleetVotes",
   "FleetHook",
   "TaskLedger",
+  "FleetExecutor",
+  "GovernedArtifactStore",
   "AgoraGovernor",
   "TimelockController",
 ] as const;

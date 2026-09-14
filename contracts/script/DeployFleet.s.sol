@@ -3,6 +3,7 @@ pragma solidity 0.8.29;
 
 import {Script, console2} from "forge-std/Script.sol";
 import {FleetDeployer, FleetDeployParams, FleetAddresses} from "../src/deploy/FleetDeployer.sol";
+import {FleetRegistry} from "../src/FleetRegistry.sol";
 
 /// @notice Reads a fleet config JSON, deploys the full sequence to whatever chain `--rpc-url`
 ///         points at, and writes a manifest describing the result. See deployments/configs for
@@ -44,6 +45,8 @@ contract DeployFleet is Script {
         console2.log("ledger", a.ledger);
         console2.log("hook", a.hook);
         console2.log("governor", a.governor);
+        console2.log("executor", a.executor);
+        console2.log("artifactStore", a.artifactStore);
     }
 
     function _writeManifest(
@@ -61,6 +64,7 @@ contract DeployFleet is Script {
         vm.serializeUint(root, "deploymentTimestamp", startTimestamp);
         vm.serializeAddress(root, "deployer", p.deployer);
         vm.serializeAddress(root, "members", p.members);
+        vm.serializeBytes32(root, "membershipHash", FleetRegistry(a.registry).membershipHash());
         vm.serializeAddress(root, "operator", p.operator);
         vm.serializeAddress(root, "guardian", p.guardian);
         vm.serializeString(root, "tokenName", p.tokenName);
@@ -112,7 +116,9 @@ contract DeployFleet is Script {
         vm.serializeAddress(addrs, "timelock", a.timelock);
         vm.serializeAddress(addrs, "ledger", a.ledger);
         vm.serializeAddress(addrs, "hook", a.hook);
-        return vm.serializeAddress(addrs, "governor", a.governor);
+        vm.serializeAddress(addrs, "governor", a.governor);
+        vm.serializeAddress(addrs, "executor", a.executor);
+        return vm.serializeAddress(addrs, "artifactStore", a.artifactStore);
     }
 
     function _paramsJson(FleetDeployParams memory p) internal returns (string memory) {
@@ -148,7 +154,9 @@ contract DeployFleet is Script {
         vm.serializeBytes32(hashes, "timelock", a.timelock.codehash);
         vm.serializeBytes32(hashes, "ledger", a.ledger.codehash);
         vm.serializeBytes32(hashes, "hook", a.hook.codehash);
-        return vm.serializeBytes32(hashes, "governor", a.governor.codehash);
+        vm.serializeBytes32(hashes, "governor", a.governor.codehash);
+        vm.serializeBytes32(hashes, "executor", a.executor.codehash);
+        return vm.serializeBytes32(hashes, "artifactStore", a.artifactStore.codehash);
     }
 
     /// @dev `vm.writeJson` writes the pretty-printed object with no trailing newline, which makes

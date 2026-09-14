@@ -9,6 +9,8 @@ import {FleetHook} from "../src/FleetHook.sol";
 import {AgoraGovernor} from "agora-governor/src/AgoraGovernor.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {Checkpoints} from "@openzeppelin/contracts/utils/structs/Checkpoints.sol";
+import {FleetExecutor} from "../src/FleetExecutor.sol";
+import {GovernedArtifactStore} from "../src/GovernedArtifactStore.sol";
 
 /// @notice Re-reads a manifest written by DeployFleet.s.sol and asserts every post-condition the
 ///         deployment sequence promises, with a clear require message on the first one that
@@ -48,8 +50,29 @@ contract VerifyDeployment is Script {
         _checkTimelockRoles(json, a);
         _checkGovernorParams(json, a);
         _checkCodeHashes(json, a);
+        _checkExecutionResources(json, a);
 
         console2.log("VERIFIED");
+    }
+
+    function _checkExecutionResources(string memory json, ManifestAddrs memory a) internal view {
+        // Historical transparency-only deployments have neither optional resource address.
+        bool hasExecutor = vm.keyExistsJson(json, ".addresses.executor");
+        bool hasStore = vm.keyExistsJson(json, ".addresses.artifactStore");
+        require(hasExecutor == hasStore, "incomplete execution resources");
+        require(hasExecutor == vm.keyExistsJson(json, ".codeHashes.executor"), "incomplete executor code hash");
+        require(hasStore == vm.keyExistsJson(json, ".codeHashes.artifactStore"), "incomplete artifact store code hash");
+        if (!hasExecutor) return;
+        address executorAddress = vm.parseJsonAddress(json, ".addresses.executor");
+        address storeAddress = vm.parseJsonAddress(json, ".addresses.artifactStore");
+        FleetExecutor executor = FleetExecutor(executorAddress);
+        require(address(executor.hook()) == a.hook, "executor hook mismatch");
+        require(address(executor.ledger()) == a.ledger, "executor ledger mismatch");
+        require(address(executor.registry()) == a.registry, "executor registry mismatch");
+        require(GovernedArtifactStore(storeAddress).executor() == executorAddress, "artifact store executor mismatch");
+        require(executor.activeTaskId() == 0, "executor has an active call at deployment");
+        require(executorAddress.codehash == vm.parseJsonBytes32(json, ".codeHashes.executor"), "executor code hash mismatch");
+        require(storeAddress.codehash == vm.parseJsonBytes32(json, ".codeHashes.artifactStore"), "artifact store code hash mismatch");
     }
 
     function _parseAddrs(string memory json) internal pure returns (ManifestAddrs memory a) {
@@ -100,6 +123,16 @@ contract VerifyDeployment is Script {
         address[] memory manifestMembers = vm.parseJsonAddressArray(json, ".members");
 
         require(registry.memberCount() == manifestMembers.length, "registry.memberCount() != manifest members length");
+        // Historical v1 manifests predate batched initialization. New deployments always carry
+        // the roster commitment and must pass the full activation checks.
+        if (vm.keyExistsJson(json, ".membershipHash")) {
+            require(registry.initialized(), "registry is not initialized");
+            require(registry.expectedMemberCount() == manifestMembers.length, "registry expected member count mismatch");
+            require(registry.membershipHash() == vm.parseJsonBytes32(json, ".membershipHash"), "membership hash mismatch");
+            require(registry.registeredHash() == registry.membershipHash(), "registered roster commitment mismatch");
+            require(FleetVotes(a.token).initialized(), "token is not initialized");
+            require(FleetVotes(a.token).mintedMembers() == manifestMembers.length, "token mint is incomplete");
+        }
         for (uint256 i = 0; i < manifestMembers.length; i++) {
             require(registry.accountOf(i) == manifestMembers[i], "registry.accountOf(i) != manifest members[i]");
         }
@@ -112,10 +145,8 @@ contract VerifyDeployment is Script {
         address[] memory members = registry.members();
         require(token.totalSupply() == members.length * 1e18, "token.totalSupply() != memberCount * 1e18");
 
-        // The constructor mints and self-delegates in one block, so every member's first voting
-        // checkpoint carries that block's timestamp. The manifest's `deploymentTimestamp` is read
-        // before the transactions are broadcast, so it is a lower bound on that block and never
-        // later than it; cross-check that, then gate on the checkpoint itself.
+        // The manifest time precedes all mint batches. Check the last member too: the first
+        // member may have votes while later batches are still too recent for getPastVotes.
         require(token.numCheckpoints(members[0]) > 0, "token has no voting checkpoint for member 0");
         Checkpoints.Checkpoint208 memory first = token.checkpoints(members[0], 0);
         require(first._key >= a.deploymentTimestamp, "token mint predates manifest deploymentTimestamp");
@@ -125,7 +156,8 @@ contract VerifyDeployment is Script {
         // is a timing condition, not an optional check, so it reverts and asks for a retry rather
         // than passing over the votes check and still printing VERIFIED.
         uint256 clockNow = token.clock();
-        require(clockNow > first._key, "VerifyDeployment: clock has not advanced past deployment; retry in a moment");
+        Checkpoints.Checkpoint208 memory last = token.checkpoints(members[members.length - 1], 0);
+        require(clockNow > last._key, "VerifyDeployment: clock has not advanced past deployment; retry in a moment");
 
         for (uint256 i = 0; i < members.length; i++) {
             require(token.getPastVotes(members[i], clockNow - 1) == 1e18, "member getPastVotes(clock()-1) != 1e18");

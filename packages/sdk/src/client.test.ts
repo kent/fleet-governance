@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { numberToHex } from "viem";
 import type { Address } from "viem";
 import { ChainNotAllowedError } from "@fleet/schemas";
@@ -14,6 +14,32 @@ const ADDRESSES: FleetAddresses = {
   hook: `0x${"a5".repeat(20)}` as Address,
   governor: `0x${"a6".repeat(20)}` as Address,
 };
+
+describe("single member resolution", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("resolves a high agent id with constant RPC work", async () => {
+    const client = new FleetClient({ rpcUrl: "http://127.0.0.1:1", chainId: 31337, addresses: ADDRESSES });
+    const read = vi.spyOn(client.publicClient, "readContract")
+      .mockResolvedValueOnce(true).mockResolvedValueOnce(2000n).mockResolvedValueOnce('{"role":"critic"}');
+    await expect(client.getMember(ADDRESSES.token)).resolves.toEqual({ agentId: 2000, account: ADDRESSES.token, manifest: '{"role":"critic"}' });
+    expect(read.mock.calls.map(([call]) => call.functionName)).toEqual(["isMember", "idOf", "agentManifest"]);
+    expect(read.mock.calls[2]?.[0].args).toEqual([2000n]);
+  });
+
+  it("gives a partial roster no membership authority", async () => {
+    const client = new FleetClient({ rpcUrl: "http://127.0.0.1:1", chainId: 31337, addresses: ADDRESSES });
+    const read = vi.spyOn(client.publicClient, "readContract").mockResolvedValueOnce(false);
+    await expect(client.getMember(ADDRESSES.token)).resolves.toBeNull();
+    expect(read).toHaveBeenCalledOnce();
+  });
+
+  it("preserves RPC errors rather than treating an unreadable identity as absent", async () => {
+    const client = new FleetClient({ rpcUrl: "http://127.0.0.1:1", chainId: 31337, addresses: ADDRESSES });
+    vi.spyOn(client.publicClient, "readContract").mockRejectedValueOnce(new Error("RPC unavailable"));
+    await expect(client.getMember(ADDRESSES.token)).rejects.toThrow("RPC unavailable");
+  });
+});
 
 /** The smallest possible JSON-RPC endpoint: answers `eth_chainId` with `chainId` and nothing
  *  else, which is all `FleetClient.assertChain` ever asks for. */

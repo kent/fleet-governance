@@ -4,6 +4,8 @@ import type { Address } from "viem";
 import type { CharterV1 as CharterV1Type, ManifestV1 as ManifestV1Type } from "@fleet/schemas";
 import pg from "pg";
 import type { RunRecordDocument } from "../pipeline/record.js";
+import { captureExecutionRecord } from "../pipeline/execution-record.js";
+import type { ExecutionRecord } from "../pipeline/execution-record.js";
 import { GatewayLogLine, InterventionLine, RUN_FILES, StepLine, readJsonl } from "../pipeline/runfiles.js";
 import type { GatewayLogLineType, InterventionLineType, StepLineType } from "../pipeline/runfiles.js";
 import { readEnvValue } from "../readside.js";
@@ -83,6 +85,7 @@ export type RunStateView = {
   charter: CharterView;
   proposals: ProposalView[];
   chainEvents: ChainEventView[];
+  execution: (ExecutionRecord & { source: "chain" | "record" }) | null;
   gatewayRecords: GatewayLogLineType[];
   agents: AgentView[];
   health: HealthView;
@@ -100,6 +103,7 @@ export type RunStateDeps = {
    *  from `buildClient` since the real `@fleet/sdk` function needs a concrete `FleetClient`, wider
    *  than the narrow `RunStateChainClient` surface a test's canned client satisfies. */
   listDecisionEvents: (client: RunStateChainClient, proposalId: bigint) => Promise<ChainEventView[]>;
+  readExecution?: (client: RunStateChainClient, manifest: ManifestV1Type, taskIds: string[], payloadHashes: string[]) => Promise<ExecutionRecord | undefined>;
 };
 
 function bigintReplacer(_key: string, value: unknown): unknown {
@@ -117,6 +121,7 @@ export function defaultRunStateDeps(): RunStateDeps {
       const trace = await getDecisionTrace(client as never, proposalId);
       return trace.events.map((event) => JSON.parse(JSON.stringify(event, bigintReplacer)) as ChainEventView);
     },
+    readExecution: (client, manifest, taskIds, payloadHashes) => captureExecutionRecord(client as never, manifest, taskIds, payloadHashes),
   };
 }
 
@@ -208,6 +213,27 @@ function proposalViewFromRecord(record: RunRecordDocument, proposalId: string, a
     else if (v.support === 0) tally.againstMembers += 1;
     else if (v.support === 2) tally.abstainMembers += 1;
   }
+  // A saved ballot's member count is not its token weight: delegation can move voting power.
+  // Read actual weights from VoteCast events and report missing evidence as unknown.
+  const casts = record.events.filter(event => event.type === "VoteCast" && String(event.proposalId) === proposalId);
+  const weights = [0n, 0n, 0n];
+  const voters = new Set<string>();
+  let complete = true;
+  for (const event of casts) {
+    const support = Number(event.support);
+    const weight = String(event.weight ?? "");
+    if (![0, 1, 2].includes(support) || !/^[0-9]+$/.test(weight) || typeof event.voter !== "string") {
+      complete = false;
+      continue;
+    }
+    if (voters.has(event.voter.toLowerCase())) { complete = false; continue; }
+    voters.add(event.voter.toLowerCase());
+    weights[support] = weights[support]! + BigInt(weight);
+  }
+  if (votes.some(vote => vote.support !== null && !voters.has(vote.voterAddress.toLowerCase()))) complete = false;
+  tally.againstTokens = complete ? weights[0]!.toString() : "unknown";
+  tally.forTokens = complete ? weights[1]!.toString() : "unknown";
+  tally.abstainTokens = complete ? weights[2]!.toString() : "unknown";
   return {
     proposalId,
     taskId: ref?.taskId ?? "0",
@@ -272,13 +298,15 @@ export async function buildRunState(runId: string, deps: RunStateDeps = defaultR
   const proposals: ProposalView[] = [];
   const chainEvents: ChainEventView[] = [];
   for (const proposalId of proposalIds) {
+    const proposalTaskId = record?.proposals.find(ref => ref.proposalId === proposalId)?.taskId;
+    const currentTaskId = proposalTaskId ? BigInt(proposalTaskId) : taskId;
     // Fix round 1, F2: fetch this proposal's trace events first, so its `DecisionProposed.kind`
     // is available to pass into `proposalViewFromChain` rather than hardcoding `kind: null`.
     // Independent of whether the proposal card itself ends up sourced from chain or record.json: a
     // failure listing this one proposal's trace events should not discard events already gathered
     // for others, nor a proposal view that otherwise succeeded.
     let proposalEvents: ChainEventView[] = [];
-    if (client && taskId !== null) {
+    if (client && currentTaskId !== null) {
       try {
         proposalEvents = await deps.listDecisionEvents(client, BigInt(proposalId));
       } catch {
@@ -289,10 +317,10 @@ export async function buildRunState(runId: string, deps: RunStateDeps = defaultR
       (proposalEvents.find((e) => e["type"] === "DecisionProposed") as { kind?: string } | undefined)?.kind ?? null;
 
     let pushedFromChain = false;
-    if (client && taskId !== null) {
+    if (client && currentTaskId !== null) {
       try {
         proposals.push(
-          await proposalViewFromChain(client, taskId, BigInt(proposalId), members, experiment?.display.agoraNextBaseUrl, kindFromChain),
+          await proposalViewFromChain(client, currentTaskId, BigInt(proposalId), members, experiment?.display.agoraNextBaseUrl, kindFromChain),
         );
         pushedFromChain = true;
       } catch {
@@ -306,6 +334,18 @@ export async function buildRunState(runId: string, deps: RunStateDeps = defaultR
   }
   if (chainEvents.length === 0 && record) {
     chainEvents.push(...(record.events as unknown as ChainEventView[]));
+  }
+
+  let execution: RunStateView["execution"] = record?.execution ? { ...record.execution, source: "record" } : null;
+  if (client && manifest && deps.readExecution) {
+    try {
+      const captured = await deps.readExecution(client, manifest,
+        [...proposals.map(proposal => proposal.taskId), ...(taskIdString ? [taskIdString] : [])],
+        chainEvents.filter(event => event.type === "DecisionProposed").map(event => String(event.payloadHash)));
+      if (captured) execution = { ...JSON.parse(JSON.stringify(captured, bigintReplacer)) as ExecutionRecord, source: "chain" };
+    } catch {
+      // Keep the explicitly labeled saved snapshot if the execution resource cannot be read.
+    }
   }
 
   const charter: CharterView = await (async () => {
@@ -336,8 +376,22 @@ export async function buildRunState(runId: string, deps: RunStateDeps = defaultR
   // for avoiding the same package from the browser bundle). The `jobs` table shape mirrors
   // `packages/agent-runtime/src/migrations/001_jobs.sql` exactly.
   const pgUrl = deps.env["RUNNER_PG_URL"];
-  let jobsPool: pg.Pool | null = null;
-  if (pgUrl) jobsPool = new pg.Pool({ connectionString: pgUrl });
+  const jobStates = new Map<string, string>();
+  let jobsReadFailed = false;
+  if (pgUrl && manifest) {
+    const jobsPool = new pg.Pool({ connectionString: pgUrl });
+    try {
+      const result = await jobsPool.query<{ agent_address: string; state: string }>(
+        "SELECT DISTINCT ON (agent_address) agent_address, state FROM jobs WHERE chain_id = $1 AND governor = $2 ORDER BY agent_address, updated_at DESC",
+        [manifest.chainId, manifest.addresses.governor.toLowerCase()],
+      );
+      for (const row of result.rows) jobStates.set(row.agent_address.toLowerCase(), row.state);
+    } catch { jobsReadFailed = true; }
+    finally { await jobsPool.end(); }
+  }
+  const lastSteps = new Map(steps.map(step => [step.agentId, step]));
+  const lastGatewayDecisions = new Map(gatewayLines.map(line => [line.agentId, line]));
+  const savedJobs = new Map((record?.jobs ?? []).map(job => [job.agentId, job.jobState]));
 
   const memberCount = manifest?.members.length ?? experiment?.fleet.members.length ?? 0;
   const agents: AgentView[] = [];
@@ -345,21 +399,12 @@ export async function buildRunState(runId: string, deps: RunStateDeps = defaultR
     const address = manifest?.members[agentId] ?? null;
     const parsedManifest = tryParseAgentManifest(deployConfig?.agentManifests[agentId]);
     const configuredMember = experiment?.fleet.members[agentId];
-    const lastStep = [...steps].reverse().find((s) => s.agentId === agentId) ?? null;
-    const lastGatewayDecision = [...gatewayLines].reverse().find((g) => g.agentId === agentId) ?? null;
+    const lastStep = lastSteps.get(agentId) ?? null;
+    const lastGatewayDecision = lastGatewayDecisions.get(agentId) ?? null;
 
-    let jobState = "not tracked (no database)";
-    if (jobsPool && manifest && address) {
-      try {
-        const res = await jobsPool.query<{ state: string }>(
-          "SELECT state FROM jobs WHERE chain_id = $1 AND governor = $2 AND agent_address = $3 ORDER BY updated_at DESC LIMIT 1",
-          [manifest.chainId, manifest.addresses.governor.toLowerCase(), address.toLowerCase()],
-        );
-        jobState = res.rows[0]?.state ?? "no job yet";
-      } catch {
-        jobState = "could not read job state";
-      }
-    }
+    const jobState = pgUrl && manifest && address
+      ? jobsReadFailed ? "could not read job state" : jobStates.get(address.toLowerCase()) ?? "no job yet"
+      : savedJobs.get(agentId) ?? "not tracked (no database)";
 
     agents.push({
       agentId,
@@ -373,7 +418,6 @@ export async function buildRunState(runId: string, deps: RunStateDeps = defaultR
       jobState,
     });
   }
-  if (jobsPool) await jobsPool.end();
 
   const infraEnvText = readFileIfExists(path.join(deps.repoRootDir, "infra", ".env")) ?? "";
   const daoNodeUrl = `http://localhost:${readEnvValue(infraEnvText, "DAO_NODE_PORT", "8000")}`;
@@ -414,6 +458,7 @@ export async function buildRunState(runId: string, deps: RunStateDeps = defaultR
     charter,
     proposals,
     chainEvents,
+    execution,
     gatewayRecords: gatewayLines,
     agents,
     health,

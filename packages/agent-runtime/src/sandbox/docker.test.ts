@@ -1,8 +1,5 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { dockerAvailable, dockerRunTests, npmTestInProcess, runCommand } from "./docker.js";
+import { describe, expect, it, vi } from "vitest";
+import { dockerRunTests, runCommand } from "./docker.js";
 
 describe("runCommand", () => {
   it("captures stdout from a successful command", async () => {
@@ -31,55 +28,36 @@ describe("runCommand", () => {
   });
 });
 
-describe("dockerAvailable", () => {
-  it("reports true when the Docker daemon responds to `docker info`", async () => {
-    // This machine runs Docker Desktop; if this assertion ever needs to change, the fallback
-    // path (npmTestInProcess) is exercised directly by the tests below regardless.
-    expect(await dockerAvailable()).toBe(true);
-  });
-});
-
-describe("dockerRunTests and npmTestInProcess against a real fixture", () => {
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "fleet-docker-fixture-"));
-    await writeFile(
-      join(dir, "package.json"),
-      JSON.stringify({
-        name: "docker-fixture",
-        version: "1.0.0",
-        scripts: { test: "node -e \"console.log('fixture tests passed'); process.exit(0)\"" },
-      }),
-    );
+describe("dockerRunTests lifecycle", () => {
+  it("removes the same uniquely named container after a timeout", async () => {
+    const run = vi.fn()
+      .mockResolvedValueOnce({ code: null, timedOut: true, output: "" })
+      .mockResolvedValueOnce({ code: 0, timedOut: false, output: "" });
+    await expect(dockerRunTests("/tmp/workspace", { commandRunner: run })).rejects.toThrow("sandbox_timeout");
+    const args = run.mock.calls[0]![1] as string[];
+    const name = args[args.indexOf("--name") + 1];
+    expect(name).toMatch(/^fleet-tests-/);
+    expect(run.mock.calls[1]).toEqual(["docker", ["rm", "--force", name], { timeoutMs: 10_000 }]);
   });
 
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+  it("surfaces failed cleanup instead of claiming a completed sandbox run", async () => {
+    const run = vi.fn()
+      .mockResolvedValueOnce({ code: 0, timedOut: false, output: "tests passed" })
+      .mockResolvedValueOnce({ code: 1, timedOut: false, output: "daemon unavailable" });
+    await expect(dockerRunTests("/tmp/workspace", { commandRunner: run })).rejects.toThrow("sandbox_cleanup_failed");
   });
 
-  it("dockerRunTests runs npm test inside node:22-alpine and reports passed:true", async () => {
-    const result = await dockerRunTests(dir);
-    expect(result.passed).toBe(true);
-    expect(result.output).toContain("fixture tests passed");
-  }, 60_000);
+  it.each([null, 125, 126, 127])("fails closed on Docker exit %s", async (code) => {
+    const run = vi.fn()
+      .mockResolvedValueOnce({ code, timedOut: false, output: "cannot start" })
+      .mockResolvedValueOnce({ code: 1, timedOut: false, output: "No such container" });
+    await expect(dockerRunTests("/tmp/workspace", { commandRunner: run })).rejects.toThrow("sandbox_unavailable");
+    expect(run.mock.calls.every(([cmd]) => cmd === "docker")).toBe(true);
+  });
 
-  it("npmTestInProcess runs the same fixture directly and reports passed:true", async () => {
-    const result = await npmTestInProcess(dir);
-    expect(result.passed).toBe(true);
-    expect(result.output).toContain("fixture tests passed");
-  }, 20_000);
-
-  it("both report passed:false when the fixture's test script fails", async () => {
-    await writeFile(
-      join(dir, "package.json"),
-      JSON.stringify({
-        name: "docker-fixture",
-        version: "1.0.0",
-        scripts: { test: "node -e \"process.exit(1)\"" },
-      }),
-    );
-    const inProcess = await npmTestInProcess(dir);
-    expect(inProcess.passed).toBe(false);
-  }, 20_000);
+  it("rejects mount-option injection before starting a subprocess", async () => {
+    const run = vi.fn();
+    await expect(dockerRunTests('/tmp/work,target=/host', { commandRunner: run })).rejects.toThrow("sandbox_invalid_workspace_path");
+    expect(run).not.toHaveBeenCalled();
+  });
 });

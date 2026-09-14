@@ -10,9 +10,11 @@ building this and how it was resolved.
 
 ### FleetRegistry
 
-Immutable membership and public manifests for one fleet deployment. The constructor takes the
-member address list, one JSON agent manifest string per member, and one JSON fleet manifest
-string, and stores all of it for the life of the contract. There is no admission, rotation, or
+Immutable membership and public manifests for one fleet deployment, with 2 to 4,096 members.
+The constructor commits to the member count, an ordered hash of all addresses and agent manifests,
+and the fleet manifest. The initializer loads the committed roster in batches of at most 32
+members and 8,192 manifest bytes. No address has membership authority until the complete roster
+matches the commitment. Every manifest is stored and emitted in full. There is no admission, rotation, or
 removal path anywhere in `FleetRegistry`: a different fleet, or a fleet whose membership changes,
 is a different deployment of the whole sequence below, not a call into this one. Every other
 contract in this repository treats `FleetRegistry.isMember` as the single source of truth for who
@@ -21,7 +23,9 @@ belongs to the fleet.
 ### FleetVotes
 
 An ERC-20 votes token (`ERC20Votes`, timestamp-clocked) that mints exactly one unit (1e18) to each
-member of a `FleetRegistry` at construction and never mints, burns, or transfers again: `_update`
+member of a sealed `FleetRegistry` through setup batches of at most 64 members. The initializer
+cannot choose recipients or amounts, and minting ends permanently after the last member.
+Public delegation and hook activation remain disabled until the supply is complete. `_update`
 reverts on every non-mint transfer, and `_approve` reverts unconditionally, so the token can never
 move after the fleet is stood up. Delegation is restricted to members delegating to themselves or
 to another member (`_delegate` checks `registry.isMember` on both ends), so voting power always
@@ -54,13 +58,24 @@ the permission bits the governor's hook dispatcher checks.
 `AgoraGovernor` and `TimelockController` themselves are vendored, unmodified upstream code (see
 Pins, below); this repository only wires them together and layers `FleetHook` on top.
 
+### FleetExecutor and GovernedArtifactStore
+
+`FleetExecutor` requires a settled, exact permission before making a zero-value contract call.
+It binds the agent, task, charter version, target code, calldata, nonce and expiry, and checks
+current pause, task, escalation and revocation state. Successful permissions are consumed once.
+The guardian can revoke a permission but cannot grant one.
+
+`GovernedArtifactStore` accepts publication only from that executor. It records a task's canonical
+artifact digest and revision. There is no direct operator or guardian write path. See
+[execution permissions](../docs/execution-permits.md) for the scope and reproduction commands.
+
 ## Deployment sequence
 
 `contracts/src/deploy/FleetDeployer.sol` (a library, `FleetDeployer.deploy`) runs the full sequence
 once, shared by the Foundry script and the test fixture:
 
-1. `FleetRegistry` (members, agent manifests, fleet manifest).
-2. `FleetVotes` (mints one unit to each registry member, delegated to itself).
+1. `FleetRegistry` commits the roster, then seals it through bounded registration transactions.
+2. `FleetVotes` initializes one unit per member, delegated to itself, through bounded mint transactions.
 3. `TimelockController` (no initial proposers or executors; the deployer is the initial admin).
 4. `TaskLedger` (bound to the timelock, the configured operator, and the configured guardian).
 5. `FleetHook`, at a CREATE2 salt mined by `contracts/src/deploy/HookMiner.sol` so the deployed
@@ -69,12 +84,13 @@ once, shared by the Foundry script and the test fixture:
    ABI-encoded constructor arguments (needed because the `IHooks` type our files import is not the
    same nominal type the vendored governor's constructor declares; see
    `docs/compatibility-notes.md`, Task 5).
-7. `hook.initialize(governor)`, binding the hook to the governor that will call it.
+7. `hook.initialize(governor)`, checking the sealed registry and complete token supply before binding the governor.
 8. `timelock.grantRole` three times (`PROPOSER_ROLE`, `EXECUTOR_ROLE`, `CANCELLER_ROLE` to the
    governor) plus once more (`CANCELLER_ROLE` to the guardian), then
    `timelock.renounceRole(DEFAULT_ADMIN_ROLE, deployer)`, so after deployment only the governor (by
    way of a successful proposal and vote) and the guardian (cancellation only) can act on the
    timelock, and no EOA holds admin rights over it.
+9. Deploy `FleetExecutor` and `GovernedArtifactStore`, making the executor the store's only writer.
 
 ## Running the tests
 
@@ -123,14 +139,14 @@ guardian.
 
 The deploy script writes two byte-identical files, `deployments/<chainId>/latest.json` (the pointer
 the next deployment overwrites) and `deployments/<chainId>/<deploymentTimestamp>.json` (the
-archive), and prints the six contract addresses. Setting `FLEET_MANIFEST_OUT` redirects the manifest
+archive), and prints the eight contract addresses. Setting `FLEET_MANIFEST_OUT` redirects the manifest
 to that path and skips the archive, for throwaway runs.
 
 `VerifyDeployment.s.sol` re-reads a manifest and asserts every post-condition the deployment
 sequence promises: hook, governor, registry, ledger, and token cross-wiring; the hook's permission
 bits; admin and manager zeroed; timelock roles and minimum delay; the ledger's operator, guardian,
 and maximum task lifetime; the registry's member list against the manifest's; token supply and
-per-member voting power; governor parameters; and the on-chain codehash of all six contracts. It
+per-member voting power; governor parameters; and the on-chain codehash of all eight contracts. It
 prints `VERIFIED` when they all hold. Every check either passes or reverts with a message naming it.
 The one check with a timing precondition, per-member voting power, needs the chain's clock to have
 moved past the block the deployment landed in; if it has not, the verifier reverts with
@@ -147,24 +163,26 @@ bash script/export-abi.sh
 ```
 
 Writes `FleetRegistry.json`, `FleetVotes.json`, `FleetHook.json`, `TaskLedger.json`,
-`AgoraGovernor.json`, and `TimelockController.json` (each just the `abi` array, via `jq`) to
+`AgoraGovernor.json`, `TimelockController.json`, `FleetExecutor.json`, and `GovernedArtifactStore.json` (each just the `abi` array, via `jq`) to
 `packages/abi/abis/`, building first if needed.
 
 ## Contract sizes
 
 `forge build --sizes`, filtered to the contracts this repository deploys:
 
-| Contract            | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
-| -------------------- | ----------------: | ------------------: | -------------------: | ---------------------: |
-| AgoraGovernor        | 23,005            | 26,483               | 1,571                 | 22,669                  |
-| FleetHook             | 10,037            | 10,868               | 14,539                | 38,284                  |
-| FleetRegistry         | 1,422             | 3,284                 | 23,154                | 45,868                  |
-| FleetVotes            | 7,149             | 10,969               | 17,427                | 38,183                  |
-| TaskLedger            | 6,616             | 7,078                 | 17,960                | 42,074                  |
-| TimelockController    | 6,550             | 7,468                 | 18,026                | 41,684                  |
+| Contract | Runtime bytes | Initcode bytes | Runtime headroom | Initcode headroom |
+| --- | ---: | ---: | ---: | ---: |
+| AgoraGovernor | 23,005 | 26,483 | 1,571 | 22,669 |
+| FleetHook | 10,821 | 11,666 | 13,755 | 37,486 |
+| FleetRegistry | 3,709 | 4,789 | 20,867 | 44,363 |
+| FleetVotes | 8,172 | 9,593 | 16,404 | 39,559 |
+| TaskLedger | 7,048 | 7,510 | 17,528 | 41,642 |
+| TimelockController | 6,550 | 7,468 | 18,026 | 41,684 |
+| FleetExecutor | 4,350 | 5,167 | 20,226 | 43,985 |
+| GovernedArtifactStore | 808 | 994 | 23,768 | 48,158 |
 
-All six are well under the 24,576-byte EIP-170 runtime limit; `AgoraGovernor` has the least margin
-at 1,571 bytes because it is large, vendored, unmodified upstream code.
+Measured from the current Foundry build on September 14, 2026. All eight contracts are below
+the 24,576-byte runtime limit. Agora Governor has the least runtime headroom at 1,571 bytes.
 
 ## Pins
 

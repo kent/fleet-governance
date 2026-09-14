@@ -2,6 +2,7 @@ import type { Hex } from "viem";
 import { DecisionV1, canonicalize } from "@fleet/schemas";
 import type { DecisionKind } from "@fleet/schemas";
 import { decodeRecordDecision, payloadHashForAction, payloadHashForCharter } from "./actions.js";
+import { payloadHashForExecution } from "./execution.js";
 
 /** The trailing marker the unpatched DAO Node parser requires, spec 8.2. */
 export const DESCRIPTION_MARKER = "#proposalTypeId=0";
@@ -144,12 +145,14 @@ function sameHash(a: string, b: string): boolean {
  * - anything that is not an amendment: `newCharterText` must be empty and the description must
  *   carry no `newCharter` (an amendment payload smuggled into a non-amendment kind);
  * - `GRANT_EXCEPTION` and `CHOOSE_PATH`: the description must carry the `action` its payload hash
- *   covers, so a voter can see what is being permitted.
+ *   covers. A grant may instead carry one exact `execution` permit; its hash, task, version and
+ *   deployment must match. An escalation may identify the same execution permit to suspend it.
  */
 export function verifyDescriptionAgainstCalldata(
   description: string,
   calldata: Hex,
   proposer: { agentId: number },
+  deployment?: { chainId: number; ledger: string; executor?: string },
 ): { ok: true } | { ok: false; mismatches: string[] } {
   const { decision } = parseDecisionDescription(description);
   const decoded = decodeRecordDecision(calldata);
@@ -210,7 +213,23 @@ export function verifyDescriptionAgainstCalldata(
     }
   }
 
-  if ((decoded.kind === "GRANT_EXCEPTION" || decoded.kind === "CHOOSE_PATH") && !decision.action) {
+  if (decision.execution) {
+    const permit = decision.execution;
+    if (decision.action) mismatches.push("execution: cannot combine an execution permit with an action descriptor");
+    if (decoded.kind !== "GRANT_EXCEPTION" && decoded.kind !== "ESCALATE_TO_HUMAN") {
+      mismatches.push("execution: only GRANT_EXCEPTION or ESCALATE_TO_HUMAN may carry a permit");
+    }
+    if (permit.taskId !== decoded.taskId.toString() || permit.charterVersion !== decoded.expectedVersion) {
+      mismatches.push("execution: permit task or charter version differs from calldata");
+    }
+    if (!sameHash(payloadHashForExecution(permit), decoded.payloadHash)) mismatches.push("execution: permit hash differs from calldata");
+    if (deployment && (permit.chainId !== deployment.chainId || !sameHash(permit.ledger, deployment.ledger)
+      || !deployment.executor || !sameHash(permit.executor, deployment.executor))) {
+      mismatches.push("execution: permit belongs to a different chain, ledger or executor");
+    }
+  }
+
+  if ((decoded.kind === "GRANT_EXCEPTION" && !decision.execution || decoded.kind === "CHOOSE_PATH") && !decision.action) {
     mismatches.push(`action: calldata is a ${decoded.kind} but the description carries no action descriptor`);
   }
 

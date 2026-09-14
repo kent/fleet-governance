@@ -345,5 +345,16 @@ describe("buildRunState", () => {
     expect(proposal.rawDescription).toContain("Grant exception");
     expect(proposal.votes).toEqual([{ voter: ADDR.agent0, agentId: 0, support: 0, reason: "AGAINST. no" }]);
     expect(state.chainEvents).toEqual(record.events);
+    expect(proposal.tally.againstTokens).toBe("unknown");
+    const withWeight = { ...record, events: [...record.events, {
+      type: "VoteCast", proposalId: "777", voter: ADDR.agent0, support: 0, weight: "3000000000000000000",
+      blockNumber: "12", logIndex: 0, txHash: `0x${"ee".repeat(32)}`, fixtureName: "hf-replay", blockHash: `0x${"ff".repeat(32)}`,
+    }], execution: { blockNumber: "13", blockHash: `0x${"ff".repeat(32)}`, events: [], artifacts: [{ taskId: "1", digest: `0x${"00".repeat(32)}`, revision: "0" }] } };
+    writeJson(path.join(dir, "experiments", "reports", "run-2", "record.json"), withWeight);
+    const captured = await buildRunState("run-2", baseDeps({ buildClient: () => { throw new Error("offline"); } }));
+    expect(captured.proposals[0]?.tally.againstTokens).toBe("3000000000000000000");
+    expect(captured.proposals[0]?.tally.forTokens).toBe("0");
+    expect(captured.execution?.source).toBe("record");
+    expect(captured.execution?.artifacts[0]?.revision).toBe("0");
   }, 15000);
 });

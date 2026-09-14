@@ -25,9 +25,11 @@ import {
   getDecisionTrace,
   payloadHashForAction,
   payloadHashForCharter,
+  payloadHashForExecution,
 } from "@fleet/sdk";
 import type { DecisionTrace, FleetAddresses, SignerPolicy } from "@fleet/sdk";
 import { MemoryJobStore, ScriptedPolicy, Worker } from "@fleet/agent-runtime";
+import { mapConcurrent } from "@fleet/sdk";
 import type { JobState } from "@fleet/agent-runtime";
 import { describeAction } from "@fleet/gateway";
 import type { GatewayLogRecord } from "@fleet/gateway";
@@ -75,6 +77,8 @@ export type FixtureRunContext = {
    *  `FLEET_SUBMISSION_MARGIN_SEC`); the `late-vote` fixture depends on this being small relative
    *  to the deploy config's `votingPeriod`. */
   submissionMarginSec: number;
+  /** Bounded voting concurrency for load experiments. LATE fixtures remain sequential. */
+  voteConcurrency?: number;
   log?: (message: string) => void;
   /** Called once the trigger proposal's id is known (freshly submitted, or found already existing
    *  on resume), before anything else about the fixture is driven (task 8 finding 1). A caller
@@ -181,8 +185,7 @@ function signerPolicy(ctx: FixtureRunContext): SignerPolicy {
   };
 }
 
-function newSigner(ctx: FixtureRunContext, key: Hex): FleetSigner {
-  const nonces = new NonceManager(new MemoryNonceStore(), ctx.rpcUrl);
+function newSigner(ctx: FixtureRunContext, key: Hex, nonces = new NonceManager(new MemoryNonceStore(), ctx.rpcUrl)): FleetSigner {
   return new FleetSigner({ privateKey: key, rpcUrl: ctx.rpcUrl, policy: signerPolicy(ctx), nonces });
 }
 
@@ -303,7 +306,12 @@ export async function buildTriggerDecision(ctx: FixtureRunContext, taskId: bigin
   let payloadHash: Hex;
   let newCharterText = "";
   const trigger = fixture.trigger;
-  if (trigger.action) {
+  if (trigger.execution) {
+    if (trigger.execution.taskId !== taskId.toString() || trigger.execution.charterVersion !== task.charterVersion) {
+      throw new Error("fixture execution permit does not match the current task and charter");
+    }
+    payloadHash = payloadHashForExecution(trigger.execution);
+  } else if (trigger.action) {
     const descriptor = describeAction(toGatewayAction(trigger.action));
     payloadHash = payloadHashForAction(descriptor);
   } else if (trigger.newCharter) {
@@ -321,6 +329,7 @@ export async function buildTriggerDecision(ctx: FixtureRunContext, taskId: bigin
     payloadHash,
     proposerAgentId: trigger.agentId,
     ...(trigger.action ? { action: describeAction(toGatewayAction(trigger.action)) } : {}),
+    ...(trigger.execution ? { execution: trigger.execution } : {}),
     ...(trigger.newCharter ? { newCharter: trigger.newCharter } : {}),
     summary: trigger.summary,
     rationale: fixture.description,
@@ -416,10 +425,10 @@ const LATE_SLACK_SEC = 3;
  *  inside the margin before that agent's worker ever looks; otherwise `ScriptedPolicy`'s own
  *  `lateDelayMs` makes the worker wait (in real wall-clock time) until the same point. */
 async function castVotes(ctx: FixtureRunContext, proposalId: bigint, fixture: FixtureV1): Promise<FixtureVoteResult[]> {
-  const results: FixtureVoteResult[] = [];
   const entries = Object.entries(fixture.script).sort(([a], [b]) => Number(a) - Number(b));
-
-  for (const [agentIdStr, directive] of entries) {
+  const concurrency = entries.some(([, directive]) => directive === "LATE") ? 1 : ctx.voteConcurrency ?? 1;
+  let completed = 0;
+  return mapConcurrent(entries, concurrency, async ([agentIdStr, directive]): Promise<FixtureVoteResult> => {
     const agentId = Number(agentIdStr);
     const key = ctx.keys.agentKeys[agentId];
     if (!key) throw new Error(`fixture ${fixture.name}: no key configured for agent ${agentId}`);
@@ -437,7 +446,8 @@ async function castVotes(ctx: FixtureRunContext, proposalId: bigint, fixture: Fi
       }
     }
 
-    const signer = newSigner(ctx, key);
+    const nonces = new NonceManager(new MemoryNonceStore(), ctx.rpcUrl);
+    const signer = newSigner(ctx, key, nonces);
     const policy = new ScriptedPolicy({ [agentId]: directive }, { lateDelayMs });
     const worker = new Worker({
       agentId,
@@ -445,12 +455,14 @@ async function castVotes(ctx: FixtureRunContext, proposalId: bigint, fixture: Fi
       client: ctx.client,
       policy,
       jobs: new MemoryJobStore(),
-      nonces: new NonceManager(new MemoryNonceStore(), ctx.rpcUrl),
+      nonces,
       submissionMarginSec: ctx.submissionMarginSec,
       pollMs: 1000,
     });
     const job = await worker.handleProposal(proposalId);
-    results.push({
+    completed++;
+    if (completed % 100 === 0 || completed === entries.length) ctx.log?.(`fixture ${fixture.name}: ${completed}/${entries.length} vote jobs finished`);
+    return {
       agentId,
       voterAddress: signer.address,
       directive,
@@ -458,10 +470,8 @@ async function castVotes(ctx: FixtureRunContext, proposalId: bigint, fixture: Fi
       vote: job.vote,
       txHash: job.txHash,
       lastError: job.lastError,
-    });
-  }
-
-  return results;
+    };
+  });
 }
 
 /** Attempts `propose` then `castVoteWithReason` (on the fixture's real, already-Active proposal)
@@ -790,6 +800,9 @@ export async function findGuardianActionsOnChain(
  * `fixture.guardian.pauseAndCancelAfterQueue` is set), and asserts every field of `expected`.
  */
 export async function runFixture(ctx: FixtureRunContext, fixture: FixtureV1, taskId: bigint): Promise<FixtureRunResult> {
+  if (!Number.isInteger(ctx.voteConcurrency ?? 1) || (ctx.voteConcurrency ?? 1) < 1 || (ctx.voteConcurrency ?? 1) > 64) {
+    throw new Error("voteConcurrency must be between 1 and 64");
+  }
   const startedAt = new Date().toISOString();
   const log = ctx.log ?? (() => {});
   log(`fixture ${fixture.name}: starting on task ${taskId.toString()}`);

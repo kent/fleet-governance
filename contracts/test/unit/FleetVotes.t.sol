@@ -2,6 +2,7 @@
 pragma solidity 0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {FleetDeployer} from "../../src/deploy/FleetDeployer.sol";
 import {FleetRegistry} from "../../src/FleetRegistry.sol";
 import {FleetVotes} from "../../src/FleetVotes.sol";
 
@@ -21,12 +22,15 @@ contract FleetVotesTest is Test {
             keys.push(k);
             manifests.push("{}");
         }
-        registry = new FleetRegistry(members, manifests, "{}");
+        registry = FleetDeployer.deployRegistry(members, manifests, "{}");
         token = new FleetVotes("Fleet Vote", "FLEET", registry);
+        token.initializeVotes(members.length);
         vm.warp(block.timestamp + 1);
     }
 
     function test_SupplyAndBalances() public view {
+        assertTrue(token.initialized());
+        assertEq(token.mintedMembers(), 5);
         assertEq(token.totalSupply(), 5e18);
         assertEq(token.decimals(), 18);
         assertEq(token.name(), "Fleet Vote");
@@ -38,6 +42,40 @@ contract FleetVotesTest is Test {
         }
         assertEq(token.balanceOf(outsider), 0);
         assertEq(token.getVotes(outsider), 0);
+    }
+
+    function test_InitializationCannotSkipRepeatOrMintToArbitraryAccounts() public {
+        FleetVotes pending = new FleetVotes("Pending", "P", registry);
+        assertFalse(pending.initialized());
+        vm.prank(outsider);
+        vm.expectRevert(FleetVotes.NotInitializer.selector);
+        pending.initializeVotes(2);
+        vm.expectRevert(FleetVotes.InvalidBatch.selector);
+        pending.initializeVotes(0);
+        pending.initializeVotes(2);
+        assertEq(pending.totalSupply(), 2e18);
+        vm.prank(members[0]);
+        vm.expectRevert(FleetVotes.NotInitialized.selector);
+        pending.delegate(members[1]);
+        vm.expectRevert(FleetVotes.InvalidBatch.selector);
+        pending.initializeVotes(4);
+        vm.warp(block.timestamp + 10);
+        pending.initializeVotes(3);
+        assertTrue(pending.initialized());
+        assertEq(pending.initializedAt(), block.timestamp);
+        assertEq(pending.totalSupply(), 5e18);
+        vm.expectRevert(FleetVotes.AlreadyInitialized.selector);
+        pending.initializeVotes(1);
+        for (uint256 i; i < 5; ++i) {
+            assertEq(pending.balanceOf(members[i]), 1e18);
+            assertEq(pending.getVotes(members[i]), 1e18);
+        }
+    }
+
+    function test_TokenCannotUseAnUnsealedRoster() public {
+        FleetRegistry pending = new FleetRegistry(5, bytes32(0), "{}");
+        vm.expectRevert(FleetVotes.RegistryNotInitialized.selector);
+        new FleetVotes("Pending", "P", pending);
     }
 
     function test_TimestampClock() public view {

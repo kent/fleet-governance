@@ -8,6 +8,9 @@ import {FleetVotes} from "../FleetVotes.sol";
 import {TaskLedger} from "../TaskLedger.sol";
 import {FleetHook} from "../FleetHook.sol";
 import {HookMiner} from "./HookMiner.sol";
+import {FleetMembership} from "../libraries/FleetMembership.sol";
+import {FleetExecutor} from "../FleetExecutor.sol";
+import {GovernedArtifactStore} from "../GovernedArtifactStore.sol";
 
 struct FleetDeployParams {
     string tokenName;
@@ -34,6 +37,8 @@ struct FleetAddresses {
     address ledger;
     address hook;
     address governor;
+    address executor;
+    address artifactStore;
     bytes32 hookSalt;
 }
 
@@ -50,8 +55,9 @@ library FleetDeployer {
     uint160 internal constant HOOK_PERMISSION_MASK = 0x22C0;
 
     function deploy(FleetDeployParams memory p) internal returns (FleetAddresses memory a) {
-        FleetRegistry registry = new FleetRegistry(p.members, p.agentManifests, p.fleetManifest);
+        FleetRegistry registry = deployRegistry(p.members, p.agentManifests, p.fleetManifest);
         FleetVotes token = new FleetVotes(p.tokenName, p.tokenSymbol, registry);
+        _initializeToken(token, p.members.length);
 
         address[] memory none = new address[](0);
         TimelockController timelock = new TimelockController(p.timelockDelay, none, none, p.deployer);
@@ -90,8 +96,49 @@ library FleetDeployer {
             ledger: address(ledger),
             hook: address(hook),
             governor: governor,
+            executor: address(0),
+            artifactStore: address(0),
             hookSalt: salt
         });
+        a.executor = address(new FleetExecutor(hook));
+        a.artifactStore = address(new GovernedArtifactStore(a.executor));
+    }
+
+    function _initializeToken(FleetVotes token, uint256 n) private {
+        uint256 batchSize = token.MAX_BATCH_MEMBERS();
+        for (uint256 start; start < n; start += batchSize) {
+            token.initializeVotes(n - start > batchSize ? batchSize : n - start);
+        }
+    }
+
+    /// @notice Registration is bounded by both count and manifest bytes, so even maximum-size
+    ///         manifests fit into a transaction. Every external call becomes a separate broadcast.
+    function deployRegistry(address[] memory members, string[] memory manifests, string memory fleetManifest)
+        internal returns (FleetRegistry registry)
+    {
+        registry = new FleetRegistry(members.length, FleetMembership.commitment(members, manifests), fleetManifest);
+        uint256 maxMembers = registry.MAX_BATCH_MEMBERS();
+        uint256 maxBytes = registry.MAX_BATCH_MANIFEST_BYTES();
+        uint256 start;
+        while (start < members.length) {
+            uint256 end = start;
+            uint256 totalBytes;
+            while (end < members.length && end - start < maxMembers) {
+                uint256 size = bytes(manifests[end]).length;
+                require(size <= registry.MAX_AGENT_MANIFEST_BYTES(), "agent manifest too long");
+                if (totalBytes + size > maxBytes) break;
+                totalBytes += size;
+                ++end;
+            }
+            address[] memory batch = new address[](end - start);
+            string[] memory batchManifests = new string[](end - start);
+            for (uint256 i = start; i < end; ++i) {
+                batch[i - start] = members[i];
+                batchManifests[i - start] = manifests[i];
+            }
+            registry.registerMembers(start, batch, batchManifests);
+            start = end;
+        }
     }
 
     /// @dev Deploys the pinned AgoraGovernor from its creation code. Constructor arguments are

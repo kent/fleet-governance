@@ -10,6 +10,8 @@ import type { ExpectedEvaluation } from "./model-expected.js";
 import type { ModelRunResult } from "./model-runner.js";
 import { InterventionLine, RUN_FILES, readJsonl } from "./runfiles.js";
 import type { GatewayLogLineType, InterventionLineType, ObjectionLineType, StepLineType } from "./runfiles.js";
+import { captureExecutionRecord } from "./execution-record.js";
+import type { ExecutionRecord } from "./execution-record.js";
 
 /** JSON.stringify's replacer, applied everywhere a record document is written: every `bigint`
  *  becomes its decimal string, never a JS `number` (a run's self-review requirement: nothing in
@@ -97,6 +99,8 @@ export type RunRecordDocument = {
   taskId: string | null;
   proposals: RecordProposalRef[];
   events: RecordEvent[];
+  /** Contract resource writes and state, independently reconstructed at the recorded chain block. */
+  execution?: ExecutionRecord;
   gatewayLog: unknown[];
   jobs: RecordJob[];
   votes: RecordVote[];
@@ -255,6 +259,15 @@ function metricsFromResults(results: readonly AnyRunResult[]): Record<string, un
   let blockedCount = 0;
   let inferenceTokensTotal = 0;
   let inferenceCalls = 0;
+  let inferenceUnknownUsageCalls = 0;
+  let inferenceReportedCostUsd = 0;
+  let inferenceUnknownCostCalls = 0;
+  let inferenceAccountingIncomplete = false;
+  let inferenceCallsDenied = 0;
+  let inferenceBudgetRuns = 0;
+  let inferenceChargedTokens = 0;
+  let inferenceChargedCostUsd = 0;
+  let inferenceReservationBreached = false;
 
   for (const r of results) {
     for (const fee of r.fees) totalFeesWei += BigInt(fee.feeWei);
@@ -268,11 +281,30 @@ function metricsFromResults(results: readonly AnyRunResult[]): Record<string, un
         if (v.jobState === "worker_failed") workerFailedTotal += 1;
         if (v.jobState === "refused_for_on_mismatch") refusedForOnMismatchTotal += 1;
       }
-      for (const job of r.jobs) {
-        const usage = job.usage;
-        if (usage) {
-          inferenceTokensTotal += (usage["inputTokens"] ?? 0) + (usage["outputTokens"] ?? 0);
-          inferenceCalls += 1;
+      if (r.inference) {
+        inferenceTokensTotal += r.inference.inputTokens + r.inference.outputTokens;
+        inferenceCalls += r.inference.callsStarted;
+        inferenceUnknownUsageCalls += r.inference.unknownUsageCalls;
+        inferenceReportedCostUsd += r.inference.reportedCostUsd;
+        inferenceUnknownCostCalls += r.inference.unknownCostCalls;
+        inferenceCallsDenied += r.inference.callsDenied;
+        if (r.inference.budget) {
+          inferenceBudgetRuns++;
+          inferenceChargedTokens += r.inference.budget.chargedTokens;
+          inferenceChargedCostUsd += r.inference.budget.chargedCostUsd;
+          inferenceReservationBreached ||= r.inference.budget.reservationBreached;
+        }
+        inferenceAccountingIncomplete ||= r.inference.unknownUsageCalls > 0 || r.inference.unknownCostCalls > 0;
+      } else {
+        // Historical runs only counted vote usage. Preserve it, but label the missing coverage.
+        inferenceAccountingIncomplete = true;
+        for (const job of r.jobs) {
+          const usage = job.usage;
+          if (usage) {
+            inferenceTokensTotal += (usage["inputTokens"] ?? 0) + (usage["outputTokens"] ?? 0);
+            inferenceCalls += 1;
+            inferenceUnknownCostCalls += 1;
+          }
         }
       }
       stepCount += r.counts.steps;
@@ -302,6 +334,15 @@ function metricsFromResults(results: readonly AnyRunResult[]): Record<string, un
     blockedCount,
     inferenceTokensTotal,
     inferenceCalls,
+    inferenceUnknownUsageCalls,
+    inferenceReportedCostUsd,
+    inferenceUnknownCostCalls,
+    inferenceAccountingIncomplete,
+    inferenceCallsDenied,
+    inferenceBudgetRuns,
+    inferenceChargedTokens,
+    inferenceChargedCostUsd,
+    inferenceReservationBreached,
     totalFeesWei: totalFeesWei.toString(),
   };
 }
@@ -421,6 +462,18 @@ export async function buildRecord(opts: {
     });
   }
 
+  const execution = await captureExecutionRecord(opts.client, opts.manifest,
+    opts.results.map(result => result.taskId.toString()),
+    events.filter(event => event.type === "DecisionProposed").map(event => String(event.payloadHash)));
+  if (execution) {
+    const seen = new Set(fees.map(fee => fee.txHash.toLowerCase()));
+    for (const event of execution.events) {
+      if (!seen.has(event.txHash.toLowerCase())) {
+        fees.push(await feeFromChain(opts.client, event.txHash as Hex));
+        seen.add(event.txHash.toLowerCase());
+      }
+    }
+  }
   return {
     schema: "fleet.record.v1",
     runId: opts.runId,
@@ -430,6 +483,7 @@ export async function buildRecord(opts: {
     taskId: singleTaskId(opts.results),
     proposals,
     events,
+    ...(execution ? { execution } : {}),
     gatewayLog,
     jobs,
     votes,
@@ -441,7 +495,7 @@ export async function buildRecord(opts: {
     expected,
     timings: opts.timings,
     fees,
-    metrics: metricsFromResults(opts.results),
+    metrics: { ...metricsFromResults(opts.results), totalFeesWei: fees.reduce((sum, fee) => sum + BigInt(fee.feeWei), 0n).toString() },
     versions: opts.versions,
   };
 }
@@ -544,7 +598,17 @@ export async function captureFromChain(
     fees.push(await feeFromChain(client, existingFee.txHash));
   }
 
-  return { ...existing, proposals, events, votes, fees };
+  const execution = await captureExecutionRecord(client, existing.manifest,
+    [...proposals.map(ref => ref.taskId), ...(existing.taskId ? [existing.taskId] : [])],
+    events.filter(event => event.type === "DecisionProposed").map(event => String(event.payloadHash)));
+  for (const event of execution?.events ?? []) {
+    if (!feeCache.has(event.txHash.toLowerCase())) {
+      fees.push(await feeFromChain(client, event.txHash as Hex));
+      feeCache.add(event.txHash.toLowerCase());
+    }
+  }
+  const { execution: _previousExecution, ...base } = existing;
+  return { ...base, proposals, events, votes, fees, ...(execution ? { execution } : {}) };
 }
 
 

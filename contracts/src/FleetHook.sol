@@ -7,6 +7,7 @@ import {AgoraGovernor} from "agora-governor/src/AgoraGovernor.sol";
 import {IGovernor} from "@openzeppelin/contracts/governance/IGovernor.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {FleetRegistry} from "./FleetRegistry.sol";
+import {FleetVotes} from "./FleetVotes.sol";
 import {TaskLedger} from "./TaskLedger.sol";
 import {ActionId} from "./libraries/ActionId.sol";
 
@@ -21,6 +22,8 @@ contract FleetHook is IHooks {
     error AlreadyInitialized();
     error NotInitialized();
     error GovernorHookMismatch(address governor);
+    error FleetNotInitialized();
+    error TokenRegistryMismatch();
     error NotGovernor(address account);
     error HookNotImplemented();
     error NotMember(address account);
@@ -127,6 +130,9 @@ contract FleetHook is IHooks {
         if (address(AgoraGovernor(payable(governor_)).hooks()) != address(this)) {
             revert GovernorHookMismatch(governor_);
         }
+        FleetVotes token = FleetVotes(address(AgoraGovernor(payable(governor_)).token()));
+        if (address(token.registry()) != address(registry)) revert TokenRegistryMismatch();
+        if (!registry.initialized() || !token.initialized()) revert FleetNotInitialized();
         governor = AgoraGovernor(payable(governor_));
         emit Initialized(governor_);
     }

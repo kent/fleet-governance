@@ -11,6 +11,7 @@ import type {
   ModelFixtureV1,
 } from "@fleet/schemas";
 import { FleetClient, addressesFromManifest } from "@fleet/sdk";
+import { assertOpenRouterBudgetKey, readOpenRouterApiKey } from "@fleet/agent-runtime";
 import type { FleetAddresses } from "@fleet/sdk";
 import { deployFleet, verifyDeployment } from "../deploy.js";
 import { RunnerEnvError, parseSignerFeeLimits } from "../env.js";
@@ -18,7 +19,7 @@ import { readEnvValue, readside } from "../readside.js";
 import { assertScenarioMatchesFixture, isModelFixture, resolveFixture } from "./fixture-resolve.js";
 import type { FixtureRunContext, FixtureRunResult, FleetKeys } from "./fixture-runner.js";
 import { runFixture } from "./fixture-runner.js";
-import { hostSitePath, runModelFixture } from "./model-runner.js";
+import { assertModelInferenceBudget, hostSitePath, runModelFixture } from "./model-runner.js";
 import type { ModelRunContext, ModelRunResult } from "./model-runner.js";
 import { defaultPreflightDeps, formatPreflightReport, runPreflight } from "./preflight.js";
 import { buildReadSideSyncConfig } from "./readside-sync-config.js";
@@ -367,6 +368,8 @@ async function runAgentsStage(
         runDir,
         repoRoot: ctx.opts.repoRoot,
         feeLimits: parseSignerFeeLimits(env),
+        ...(ctx.experiment.inference ? { inference: ctx.experiment.inference } : {}),
+        ...(ctx.experiment.runtime ? { runtime: ctx.experiment.runtime } : {}),
         submissionMarginSec: 20,
         env,
         log: (m) => log(ctx, m),
@@ -444,6 +447,10 @@ export function buildRunStages(env: NodeJS.ProcessEnv): readonly Stage<RunPipeli
         assertModelFixturePaths(ctx.opts.repoRoot, fixture);
         log(ctx, `preflight: [ok] model fixture assets: charter, repo${fixture.repoOverlay ? ", overlay" : ""}${fixture.hosts.length > 0 ? `, ${fixture.hosts.length} host site(s)` : ""}`);
         assertModelProvidersConfigured(ctx.experiment, env);
+        assertModelInferenceBudget(ctx.experiment.fleet.members, ctx.experiment.inference, Boolean(ctx.opts.modelProviderFactory));
+        if (!ctx.opts.modelProviderFactory && ctx.experiment.fleet.members.some(member => member.provider === "openrouter")) {
+          await assertOpenRouterBudgetKey(readOpenRouterApiKey(env), ctx.experiment.inference!.budget!.maxCostUsd);
+        }
       }
 
       const publicClient = createPublicClient({ transport: http(ctx.experiment.target.rpcHttp) });

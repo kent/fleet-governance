@@ -52,10 +52,6 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function sameAddress(a: string, b: string): boolean {
-  return a.toLowerCase() === b.toLowerCase();
-}
-
 /** Best-effort extraction of `{ role }` from one agent's raw `FleetRegistry.agentManifest`
  *  string (JSON text, e.g. `{"role":"planner","provider":"scripted",...}`; spec's deploy
  *  manifests, `@fleet/schemas`'s `DeployConfigV1.agentManifests`). Never throws: a manifest that
@@ -193,8 +189,9 @@ export class Worker {
       throw new Error(`task ${decoded.taskId.toString()}: charter text does not parse as fleet.charter.v1`);
     }
 
-    const members = await client.listMembers();
-    const selfMember = members.find((m) => sameAddress(m.account, this.cfg.signer.address));
+    const [selfMember, proposerMember] = await Promise.all([
+      client.getMember(this.cfg.signer.address), client.getMember(proposal.proposer),
+    ]);
     if (!selfMember) {
       throw new Error(`agent ${this.cfg.agentId} (${this.cfg.signer.address}) is not a registered fleet member`);
     }
@@ -217,11 +214,24 @@ export class Worker {
       decision = null;
     }
 
-    const proposerMember = members.find((m) => sameAddress(m.account, proposal.proposer));
     let verificationOk = false;
     if (decision && proposerMember) {
-      const result = verifyDescriptionAgainstCalldata(proposal.description, calldata, { agentId: proposerMember.agentId });
+      const result = verifyDescriptionAgainstCalldata(proposal.description, calldata, { agentId: proposerMember.agentId }, {
+        chainId: client.chainId, ledger: client.addresses.ledger,
+        ...(client.addresses.executor ? { executor: client.addresses.executor } : {}),
+      });
       verificationOk = result.ok;
+      if (verificationOk && decision.execution) {
+        const permit = decision.execution;
+        const [actor, code] = await Promise.all([
+          client.getMember(permit.actor as Address),
+          client.publicClient.getCode({ address: permit.target as Address, blockNumber: block.number }),
+        ]);
+        verificationOk = actor !== null && code !== undefined && code !== "0x"
+          && keccak256(code).toLowerCase() === permit.targetCodeHash.toLowerCase()
+          && permit.charterVersion === task.charterVersion
+          && BigInt(permit.deadline) <= task.expiresAt && BigInt(permit.deadline) > block.timestamp;
+      }
     }
 
     return {

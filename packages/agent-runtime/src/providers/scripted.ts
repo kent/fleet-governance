@@ -31,6 +31,8 @@ export class ScriptedProvider implements Provider {
     this.defaultModel = opts?.model ?? "scripted";
   }
 
+  estimateInputTokens<T>(_req: CompleteRequest<T>): number { return 1; }
+
   async complete<T>(req: CompleteRequest<T>): Promise<CompleteResult<T>> {
     const started = Date.now();
     let reply: ScriptedReply;

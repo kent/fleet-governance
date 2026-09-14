@@ -1,4 +1,7 @@
+"use client";
+
 import { parseDecisionDescription, parseVoteReason } from "@fleet/sdk";
+import { useCollectionPage } from "./useCollectionPage.js";
 
 /**
  * `ProposalCard`: kind, decoded action, For/Against/Abstain tallies, status, and each vote (task 6
@@ -32,6 +35,8 @@ export type ProposalCardProps = {
 const SUPPORT_LABEL: Record<0 | 1 | 2, string> = { 0: "AGAINST", 1: "FOR", 2: "ABSTAIN" };
 
 export default function ProposalCard(props: ProposalCardProps) {
+  const votePage = useCollectionPage(props.votes, "votes", vote =>
+    [vote.agentId, vote.voter, vote.support === null ? "missing" : SUPPORT_LABEL[vote.support], vote.reason].join(" "));
   let decoded: ReturnType<typeof parseDecisionDescription> | null = null;
   let decodeError: string | null = null;
   try {
@@ -96,10 +101,17 @@ export default function ProposalCard(props: ProposalCardProps) {
         )}
       </section>
 
+      {decoded?.decision.execution && <section aria-label="Requested contract permission">
+          <h4>Requested contract permission</h4>
+          <p>This proposal requests one exact call. Approval and resource execution are recorded separately.</p>
+          <pre>{JSON.stringify(decoded.decision.execution, null, 2)}</pre>
+      </section>}
+
       <section aria-label="Votes">
         <h4>Votes</h4>
+        {votePage.controls}
         <ul>
-          {props.votes.map((vote) => {
+          {votePage.visible.map((vote) => {
             const parsed = vote.reason ? parseVoteReason(vote.reason) : null;
             return (
               <li key={vote.voter}>

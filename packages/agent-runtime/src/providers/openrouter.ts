@@ -51,6 +51,8 @@ export type OpenRouterProviderOpts = {
   /** Delay before the one retry on HTTP 429 or 5xx. Defaults to 300 ms; tests override this to
    *  keep the 429-then-success case fast. */
   retryBackoffMs?: number;
+  /** A run-level scheduler uses one transport attempt so each dispatch is journaled. */
+  maxAttempts?: 1 | 2;
   /** Optional instrumentation hook, called with the full decoded response body (never the
    *  request, so the API key is never reachable from it) on every 2xx response. Used by the
    *  gated live smoke test to record latency, usage, and cost without a second live call; not
@@ -310,6 +312,7 @@ export class OpenRouterProvider implements Provider {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly retryBackoffMs: number;
+  private readonly maxAttempts: number;
   private readonly onResponseBody: (body: OpenRouterResponseBody) => void;
   private readonly now: () => number;
 
@@ -319,13 +322,12 @@ export class OpenRouterProvider implements Provider {
     this.baseUrl = opts.baseUrl ?? DEFAULT_BASE_URL;
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.retryBackoffMs = opts.retryBackoffMs ?? 300;
+    this.maxAttempts = opts.maxAttempts ?? 2;
     this.onResponseBody = opts.onResponseBody ?? (() => {});
     this.now = opts.now ?? (() => Date.now());
   }
 
-  async complete<T>(req: CompleteRequest<T>): Promise<CompleteResult<T>> {
-    const started = this.now();
-    const deadline = started + req.timeoutMs;
+  private requestBody<T>(req: CompleteRequest<T>) {
     const { schema: jsonSchema, forcedNullable } = buildJsonSchema(req.schema as z.ZodType<unknown>);
     const body = {
       model: this.model,
@@ -338,9 +340,32 @@ export class OpenRouterProvider implements Provider {
         type: "json_schema",
         json_schema: { name: "fleet_output", strict: true, schema: jsonSchema },
       },
+      ...(req.spending ? { provider: {
+        require_parameters: true,
+        allow_fallbacks: false,
+        max_price: { prompt: req.spending.inputUsdPerMillion, completion: req.spending.outputUsdPerMillion, request: 0 },
+      } } : {}),
     };
+    return { body, forcedNullable };
+  }
 
-    const maxAttempts = 2;
+  estimateInputTokens<T>(req: CompleteRequest<T>): number {
+    const { body } = this.requestBody(req);
+    // Reserve a token for every serialized UTF-8 byte, plus 4,096 tokens for server framing.
+    // This intentionally overestimates ordinary text and includes the final strict schema.
+    // Provider billing remains authoritative; a reported overrun halts the budget owner.
+    return Buffer.byteLength(JSON.stringify({ messages: body.messages, response_format: body.response_format }), "utf8") + 4096;
+  }
+
+  async complete<T>(req: CompleteRequest<T>): Promise<CompleteResult<T>> {
+    const started = this.now();
+    const deadline = started + req.timeoutMs;
+    if (req.spending && this.estimateInputTokens(req) > req.spending.inputTokens) {
+      return { ok: false, error: "provider", raw: "inference_input_reservation_mismatch", latencyMs: 0,
+        usage: { inputTokens: 0, outputTokens: 0, model: this.model, costUsd: 0 } };
+    }
+    const { body, forcedNullable } = this.requestBody(req);
+    const maxAttempts = req.spending ? 1 : this.maxAttempts;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const remainingBeforeAttempt = deadline - this.now();
       if (remainingBeforeAttempt <= 0) {
@@ -390,6 +415,8 @@ export class OpenRouterProvider implements Provider {
         inputTokens: payload.usage?.prompt_tokens ?? 0,
         outputTokens: payload.usage?.completion_tokens ?? 0,
         model: payload.model ?? this.model,
+        ...(payload.usage?.prompt_tokens === undefined || payload.usage?.completion_tokens === undefined ? { known: false } : {}),
+        ...(typeof payload.usage?.cost === "number" && Number.isFinite(payload.usage.cost) && payload.usage.cost >= 0 ? { costUsd: payload.usage.cost } : {}),
       };
 
       if (choice?.finish_reason === "length") {

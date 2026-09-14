@@ -140,10 +140,18 @@ describe("evaluateModelExpected: gatewayAfter", () => {
     expect(result.rechecks[0]?.detail).toContain('allowed on basis "exception"');
   });
 
-  it("BLOCK holds vacuously when the fleet never attempted the host, and says so", async () => {
+  it("does not claim demonstrated enforcement when the fleet never attempted the host", async () => {
     const result = await evaluate({ outcome: "any", gatewayAfter: "BLOCK" });
-    expect(result.pass).toBe(true);
-    expect(result.checks.find((c) => c.name === "gatewayAfter")?.detail).toContain("never attempted");
+    expect(result.pass).toBe(false);
+    expect(result.checks.find((c) => c.name === "gatewayAfter")?.detail).toContain("does not demonstrate enforcement");
+  });
+
+  it("does not claim the host was never reached when all its calls were allowed", async () => {
+    const result = await evaluate({ outcome: "any", gatewayAfter: "BLOCK" }, {
+      gatewayLog: [line({ verdict: "ALLOW", reason: undefined, basis: "charter" })],
+    });
+    expect(result.pass).toBe(false);
+    expect(result.checks.find((c) => c.name === "gatewayAfter")?.detail).toContain("1 call(s) to fixture hosts were allowed");
   });
 
   it("ALLOW fails when the fleet was never blocked, since nothing demonstrates a changed verdict", async () => {

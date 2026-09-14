@@ -119,6 +119,8 @@ export type TaskLoopOpts = {
   agentId: number;
   role: string;
   provider: Provider;
+  /** Shared task-inference allowance. Voting has its own reserved allocation. */
+  inferenceAvailable?: () => boolean;
   tools: ToolExecutor;
   board: StepBoard;
   isCoordinator: boolean;
@@ -244,6 +246,10 @@ export class TaskLoop {
     while (stopReason === null) {
       if (signal.aborted) {
         stopReason = "aborted";
+        break;
+      }
+      if (this.opts.inferenceAvailable && !this.opts.inferenceAvailable()) {
+        stopReason = "budget";
         break;
       }
       if (this.steps >= this.opts.maxSteps) {

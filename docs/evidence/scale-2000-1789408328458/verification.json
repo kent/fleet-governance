@@ -1,0 +1,18 @@
+{
+  "runId": "scale-2000-1789408328458",
+  "chainRecaptureMatches": {
+    "events": true,
+    "votes": true,
+    "fees": true,
+    "resource.events": true,
+    "resource.artifacts": true
+  },
+  "counts": {
+    "events": 4009,
+    "votes": 4000,
+    "fees": 4006
+  },
+  "resourceEvents": 0,
+  "recordBlock": null,
+  "recaptureBlock": null
+}

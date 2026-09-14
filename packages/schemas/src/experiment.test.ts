@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ExperimentConfigV1 } from "./experiment.js";
+import { ExperimentConfigV1, InferenceBudget } from "./experiment.js";
 
 const validCharter = {
   schema: "fleet.charter.v1",
@@ -51,6 +51,13 @@ const validExperiment = {
 };
 
 describe("ExperimentConfigV1", () => {
+  it("rejects invalid inference budgets, prices and voting reservations", () => {
+    const budget = { maxTokens: 1000, maxCostUsd: 1, prices: { model: { inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.2 } } };
+    expect(InferenceBudget.parse(budget)).toMatchObject({ maxInputTokensPerCall: 65_536, maxOutputTokensPerCall: 4000 });
+    for (const invalid of [{ maxCostUsd: -1 }, { maxTokens: Number.MAX_SAFE_INTEGER + 1 }, { reservedVoteTokens: 1000 }, { reservedVoteCostUsd: 1 }, { maxOutputTokensPerCall: 0 }, { prices: { model: { inputUsdPerMillion: -1, outputUsdPerMillion: 0 } } }]) {
+      expect(() => InferenceBudget.parse({ ...budget, ...invalid })).toThrow();
+    }
+  });
   it("parses a valid experiment config", () => {
     expect(ExperimentConfigV1.parse(validExperiment)).toEqual(validExperiment);
   });

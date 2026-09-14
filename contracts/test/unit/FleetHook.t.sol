@@ -2,6 +2,7 @@
 pragma solidity 0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {FleetDeployer} from "../../src/deploy/FleetDeployer.sol";
 import {FleetRegistry} from "../../src/FleetRegistry.sol";
 import {FleetVotes} from "../../src/FleetVotes.sol";
 import {TaskLedger} from "../../src/TaskLedger.sol";
@@ -30,8 +31,9 @@ contract FleetHookTest is Test {
             members.push(makeAddr(string.concat("agent", vm.toString(i))));
             manifests.push("{}");
         }
-        registry = new FleetRegistry(members, manifests, "{}");
+        registry = FleetDeployer.deployRegistry(members, manifests, "{}");
         token = new FleetVotes("Fleet Vote", "FLEET", registry);
+        token.initializeVotes(members.length);
         address[] memory none = new address[](0);
         timelock = new TimelockController(30, none, none, address(this));
         ledger = new TaskLedger(address(timelock), operator, guardian, 7200);
@@ -128,6 +130,57 @@ contract FleetHookTest is Test {
         vm.prank(outsider);
         vm.expectRevert(abi.encodeWithSelector(FleetHook.GovernorHookMismatch.selector, address(governor)));
         other.initialize(address(governor)); // governor.hooks() is `hook`, not `other`
+    }
+
+    function test_GovernanceCannotActivateAgainstPartiallyMintedSupply() public {
+        FleetVotes pendingToken = new FleetVotes("Pending", "P", registry);
+        pendingToken.initializeVotes(2);
+        (FleetHook pendingHook, AgoraGovernor pendingGovernor, TaskLedger pendingLedger) = _pendingHook(pendingToken);
+        vm.expectRevert(FleetHook.FleetNotInitialized.selector);
+        pendingHook.initialize(address(pendingGovernor));
+        assertEq(address(pendingHook.governor()), address(0));
+
+        vm.warp(block.timestamp + 1);
+        vm.prank(operator);
+        uint256 taskId = pendingLedger.openTask("{}", 3600);
+        address[] memory targets = new address[](1);
+        uint256[] memory values = new uint256[](1);
+        bytes[] memory data = new bytes[](1);
+        targets[0] = address(pendingLedger);
+        data[0] = abi.encodeCall(TaskLedger.recordDecision, (taskId, 0, 1, keccak256("path"), "", "path"));
+        vm.prank(members[0]);
+        vm.expectRevert();
+        pendingGovernor.propose(targets, values, data, "partial electorate\n#proposalTypeId=0");
+
+        pendingToken.initializeVotes(3);
+        pendingHook.initialize(address(pendingGovernor));
+        vm.warp(block.timestamp + 1);
+        vm.prank(members[0]);
+        uint256 pid = pendingGovernor.propose(targets, values, data, "full electorate\n#proposalTypeId=0");
+        assertEq(pendingGovernor.proposalProposer(pid), members[0]);
+    }
+
+    function test_RejectsTokenFromAnotherRegistry() public {
+        FleetRegistry otherRegistry = FleetDeployer.deployRegistry(members, manifests, "other fleet");
+        FleetVotes otherToken = new FleetVotes("Other", "O", otherRegistry);
+        otherToken.initializeVotes(5);
+        (FleetHook pendingHook, AgoraGovernor pendingGovernor,) = _pendingHook(otherToken);
+        vm.expectRevert(FleetHook.TokenRegistryMismatch.selector);
+        pendingHook.initialize(address(pendingGovernor));
+    }
+
+    function _pendingHook(FleetVotes candidate)
+        internal returns (FleetHook pendingHook, AgoraGovernor pendingGovernor, TaskLedger pendingLedger)
+    {
+        pendingLedger = new TaskLedger(address(timelock), operator, guardian, 7200);
+        (, bytes32 salt) = HookMiner.find(
+            address(this), 0x22C0, type(FleetHook).creationCode, abi.encode(registry, pendingLedger, address(this))
+        );
+        pendingHook = new FleetHook{salt: salt}(registry, pendingLedger, address(this));
+        pendingGovernor = AgoraGovernor(payable(deployCode("AgoraGovernor.sol:AgoraGovernor", abi.encode(
+            uint48(15), uint32(120), uint256(1e18), uint256(6000), address(candidate),
+            address(timelock), address(0), address(0), address(pendingHook)
+        ))));
     }
 
     function test_StateChangingHooksRejectNonGovernor() public {

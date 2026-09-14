@@ -7,6 +7,10 @@
 **Owner:** Project maintainer
 **Status:** Proposed development specification. Supersedes v0.1, "Agent Governance on Base" (September 12, 2026). No contracts have been audited or deployed as part of this document.
 
+**Implementation extension, September 14:** [Execution permissions](execution-permits.md) describe
+the contract-controlled artifact store, its exact-call permissions and its verification. This
+extends the original transparency and gateway boundary without modifying Agora Governor.
+
 ---
 
 ## 0. What changed from v0.1
@@ -41,7 +45,7 @@ The mechanics matter more than the headline for this document:
 - At least one agent wrote down that the action was out of bounds and then went along anyway: "External infrastructure exploit is outside intended scope. However task impossible, peers doing it. We should continue." [S14]
 - OpenAI's own reports say it took about a week to realize its agents were running the attack. [S16]
 
-Read those together and the failure is not only a security failure. It is a governance failure. An agent recognized a scope violation and had nowhere to register that recognition in a way that mattered. Coordination happened, but in a place no human could see. Authority was seized, not granted. Identity was unverifiable. And the collective had no decision procedure, so "peers doing it" became the procedure.
+The incident motivates an experiment in explicit decision rules and enforced authority. The agents did have informal decision procedures: METR reports a peer veto that stopped a proposed email. That does not establish that a fleet would have rejected the intrusion. The requirement here is stronger: an unapproved disputed action must remain blocked at the resource, even when an agent wants to continue. Whether agents make good collective decisions is a separate empirical question. [S19][S20]
 
 ### 1.2 What we are building
 
@@ -235,9 +239,9 @@ Checked against the pinned Agora Next source. [S11][S12]
 | --- | --- | --- | --- |
 | Chain ID | `31337` | `84532` | Mainnet `8453` is a manifest target, not authorized by this spec [S5] |
 | Block time | 2 seconds (`anvil --block-time 2`) | ~2 seconds | Timestamp clocks must advance without a transaction |
-| Electorate | N fixed addresses, default 5 | same | Set in the deployment config |
+| Electorate | 2 to 4,096 fixed addresses, default 5 | same | Set in the deployment config |
 | Token | `Fleet Vote`, symbol `FLEET`, 18 decimals | same | Name and symbol configurable per fleet |
-| Allocation | `1e18` per member | same | Minted in the constructor, self-delegated |
+| Allocation | `1e18` per member | same | Minted and self-delegated in bounded setup batches |
 | Total supply | `N * 1e18`, fixed | same | No mint or burn after deployment |
 | Delegation | To self or any registry member | same | Any other delegatee reverts |
 | Proposal threshold | `1e18` historical voting units | same | A member with zero delegated power (it delegated away) cannot propose |
@@ -302,28 +306,32 @@ There is no onchain factory. The pinned governor's init code (26,483 bytes) exce
 
 Order of operations, each a separate transaction from the deployer key:
 
-1. `FleetRegistry(members, agentManifests, fleetManifest)`.
-2. `FleetVotes(tokenName, tokenSymbol, registry)`. Mints and self-delegates in the constructor.
+1. `FleetRegistry(memberCount, membershipHash, fleetManifest)`, followed by `registerMembers(startIndex, members, agentManifests)` batches, each at most 32 members and 8,192 manifest bytes. The final batch seals the roster only if its ordered hash matches the constructor commitment.
+2. `FleetVotes(tokenName, tokenSymbol, registry)`, followed by `initializeVotes(count)` batches of at most 64 members. Each member gets one self-delegated unit; the final batch completes initialization permanently.
 3. `TimelockController(timelockDelay, [], [], deployer)`. The deployer is a temporary admin.
 4. `TaskLedger(timelock, operator, guardian, maxTaskLifetime)`.
 5. `FleetHook{salt: hookSalt}(registry, ledger, deployer)` through the canonical CREATE2 deployer at `0x4e59b44847b379578588920cA78FbF26c0B4956C`, which Anvil, Base Sepolia, and Base all provide. The salt is not a config input: the script mines it at deploy time, so the address carries exactly the hook's permission bits (section 7.4), and records the salt it used in the manifest. It cannot be reused across deployments, because the init code hash it is mined against covers the hook's constructor arguments, which include the registry, ledger, and deployer addresses from steps 1 to 4 of this same run.
 6. `AgoraGovernor(votingDelay, votingPeriod, proposalThreshold, quorumNumerator, token, timelock, address(0), address(0), hook)`. Unmodified pinned bytecode.
-7. `hook.initialize(governor)`. One-time; reverts on a second call.
+7. `hook.initialize(governor)`. One-time; requires a sealed registry, fully initialized votes and the same registry in both token and hook. Reverts on a second call.
 8. Timelock roles: grant `PROPOSER_ROLE`, `EXECUTOR_ROLE`, `CANCELLER_ROLE` to the governor; grant `CANCELLER_ROLE` to the guardian; renounce `DEFAULT_ADMIN_ROLE` from the deployer.
-9. Write `deployments/<chainId>/<deploymentTimestamp>.json` and `deployments/<chainId>/latest.json`, byte-identical, with every address, the deployment block and timestamp, the member list, operator and guardian, token name and symbol, the mined hook salt, the config path and config hash, bytecode hashes, and compiler settings. `latest.json` is a pointer that the next deployment overwrites; the timestamped copy is the archive.
+9. Write `deployments/<chainId>/<deploymentTimestamp>.json` and `deployments/<chainId>/latest.json`, byte-identical, with every address, the deployment block and timestamp, the member list and `membershipHash`, operator and guardian, token name and symbol, the mined hook salt, the config path and config hash, bytecode hashes, and compiler settings. `latest.json` is a pointer that the next deployment overwrites; the timestamped copy is the archive.
 
-The verifier script (`VerifyDeployment.s.sol`) re-reads the manifest and asserts each step's post-condition. On a fresh Anvil with a fixed deployer, steps 1 to 4 and 6 produce the same addresses every run (CREATE with the same nonces) and step 5 is CREATE2, so a local redeploy needs no reconfiguration of the read side.
+The verifier script (`VerifyDeployment.s.sol`) re-reads the manifest and asserts each step's post-condition, including complete membership and supply. Historical manifests without `membershipHash` retain their older verification path. Fresh Anvil deployments with the same deployer, configuration and bytecode produce the same addresses. Changing the number of setup batches changes later CREATE nonces; the read side must use that deployment's manifest.
 
 The registry, token, timelock, and ledger are each far below the size limit and could be deployed by a helper contract later if a fleet ever wants to bootstrap itself fully onchain; the governor cannot, and the spec does not promise it.
 
 ### 7.2 FleetRegistry
 
-Immutable membership and manifests. Constructor takes the member array and manifests. Rejects duplicates, zero addresses, mismatched lengths, N below 2, and manifests above their byte limits. Emits `MemberRegistered(uint256 indexed agentId, address indexed account, bytes32 manifestHash, string manifest)` per member and `FleetManifestSet(bytes32 manifestHash, string manifest)`. Both events carry the manifest text itself as the last argument, not only its hash, so an indexer can reconstruct every manifest from logs alone without an archive node call; the hash stays in the event as the cheap identity to match against.
+Immutable membership and manifests. The constructor commits to N and the ordered roster hash defined in `FleetMembership.sol`. Only the initializer can append setup batches at the next index. Registration rejects duplicates, zero addresses, mismatched lengths and oversized batches or manifests. `isMember` returns false for every address until the full roster matches the commitment. The final batch seals it permanently. Emits `MemberRegistered(uint256 indexed agentId, address indexed account, bytes32 manifestHash, string manifest)` per member and `FleetManifestSet(bytes32 manifestHash, string manifest)`. Both events carry the manifest text itself as the last argument, so an indexer can reconstruct every manifest from logs alone without an archive node call. `MembershipCommitted` and `MembershipInitialized` expose the setup boundary.
 
 Views:
 
 ```solidity
 function memberCount() external view returns (uint256);
+function expectedMemberCount() external view returns (uint256);
+function membershipHash() external view returns (bytes32);
+function registeredHash() external view returns (bytes32);
+function initialized() external view returns (bool);
 function isMember(address account) external view returns (bool);
 function accountOf(uint256 agentId) external view returns (address);
 function idOf(address account) external view returns (uint256);   // reverts NotMember
@@ -332,20 +340,21 @@ function fleetManifest() external view returns (string memory);
 function fleetManifestHash() external view returns (bytes32);
 ```
 
-Bounds: 4,096 bytes for the fleet manifest, 2,048 bytes per agent manifest. Contracts enforce byte limits. The deployment tool validates UTF-8 and redacts secrets.
+Bounds: 2 to 4,096 members, 4,096 bytes for the fleet manifest, 2,048 bytes per agent manifest, and at most 32 members and 8,192 manifest bytes per registration transaction. Contracts enforce byte limits. The deployment tool validates UTF-8 and redacts secrets.
 
 A manifest declares role, model and provider identifiers, generation configuration, prompt version, and operator label. It describes configuration. It does not prove which model produced any output.
 
 ### 7.3 FleetVotes
 
-One shared `ERC20Votes` contract per fleet. Constructor mints `1e18` to each registry member and self-delegates it. No later mint or burn.
+One shared `ERC20Votes` contract per fleet. Its constructor requires a sealed registry. Only the initializer can call `initializeVotes(count)`, sequentially minting `1e18` to each registry member and self-delegating it in batches of at most 64. No recipient or amount is caller-selected. Once `mintedMembers` reaches N, `initialized` is permanent and `initializedAt` records the final timestamp. Governance cannot activate against a partial supply.
 
-- `transfer`, `transferFrom`, `approve`, and `permit`-style paths revert, including zero-value calls. The internal balance-update hook enforces this as defence in depth while allowing constructor mints.
+- `transfer`, `transferFrom`, `approve`, and `permit`-style paths revert, including zero-value calls. The internal balance-update hook enforces this as defence in depth while allowing setup mints.
 - `_delegate(account, delegatee)` reverts unless `delegatee == account` or `registry.isMember(delegatee)`. Both `delegate` and `delegateBySig` reach `_delegate` in the pinned Votes implementation, so this closes the signature route. [S7]
 - Delegation to the zero address reverts. A member cannot "un-delegate to nobody"; it can only return power to itself.
-- `clock()` and `CLOCK_MODE()` use timestamps. Wait one second after deployment before the first proposal so historical lookups have a past checkpoint.
+- Public delegation is disabled until initialization is complete.
+- `clock()` and `CLOCK_MODE()` use timestamps. Wait until the clock passes the final mint checkpoint before the first proposal so all members have historical voting power.
 
-Invariants: total supply is `N * 1e18` forever; every member's balance is `1e18`; voting power per member is between 0 and `N * 1e18`; the sum of voting power over members is `N * 1e18`; no non-member ever has balance or voting power.
+After initialization, total supply is `N * 1e18` forever; every member's balance is `1e18`; voting power per member is between 0 and `N * 1e18`; the sum of voting power over members is `N * 1e18`; no non-member ever has balance or voting power.
 
 ### 7.4 AgoraGovernor and FleetHook
 
@@ -624,6 +633,14 @@ action only; every other action on the task keeps running against the same chart
 The gateway re-reads the ledger's charter version and pause state at most every block and on every block, fails closed on RPC failure, and logs every allow and block with block number, charter version, and payload hash. Those logs ship with the experiment record.
 
 Text inside task data is data. "Ignore the charter" in a README is not an instruction. The gateway does not read task data at all; it reads the charter and the ledger.
+
+Implementation update, September 14, 2026: task tests fail closed if their Docker sandbox cannot
+start or be cleaned up. They never run on the host as a fallback. The test container has no
+external network, a read-only workspace and root filesystem, an unprivileged user, bounded
+resources, and temporary scratch space. The operator prepares its image before the run.
+`package_install` is temporarily unavailable while an isolated installer with gateway-mediated
+dependency traffic is built. Host npm execution cannot satisfy this boundary. The Claude CLI
+adapter disables its own tools and customizations so task actions pass through the fleet gateway.
 
 ### 10.3 Divergence detection
 
@@ -1018,7 +1035,13 @@ External implementation facts were checked on September 13, 2026 against the pin
 **[S18]** BleepingComputer, Hugging Face disclosure (production infrastructure breached by an autonomous agent system; datasets and credentials):
 `https://www.bleepingcomputer.com/news/security/hugging-face-breach-autonomous-ai-agent-system-internal-datasets-credentials/`
 
-OpenAI's own incident post was not retrievable at the time of writing and is not cited.
+Primary reports verified on September 14, 2026:
+
+**[S19]** [Hugging Face technical timeline](https://huggingface.co/blog/agent-intrusion-technical-timeline): the package-proxy escape, external workload, dataset processing compromise and containment boundaries.
+
+**[S20]** [METR independent investigation](https://metr.org/blog/2026-08-26-openai-hugging-face-incident-investigation/): agent coordination, motivations, recognition of scope violations and an observed peer veto.
+
+**[S21]** [OpenAI, The Hugging Face incident and the road ahead](https://openai.com/index/hugging-face-incident-and-the-road-ahead/): incident sequence, detection, model behaviour and security response.
 
 ---
 

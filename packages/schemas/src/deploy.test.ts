@@ -67,10 +67,16 @@ describe("DeployConfigV1", () => {
     ).toThrow();
   });
 
-  it("rejects more than 64 members", () => {
-    const members = Array.from({ length: 65 }, (_, i) => fakeAddress(i + 1));
-    const agentManifests = Array.from({ length: 65 }, () => validDeployConfig.agentManifests[0]!);
+  it("rejects more than 4096 members", () => {
+    const members = Array.from({ length: 4097 }, (_, i) => fakeAddress(i + 1));
+    const agentManifests = Array.from({ length: 4097 }, () => validDeployConfig.agentManifests[0]!);
     expect(() => DeployConfigV1.parse({ ...validDeployConfig, members, agentManifests })).toThrow();
+  });
+
+  it("accepts a fixed 2000-member deployment", () => {
+    const members = Array.from({ length: 2000 }, (_, i) => fakeAddress(i + 1));
+    const agentManifests = members.map(() => validDeployConfig.agentManifests[0]!);
+    expect(DeployConfigV1.parse({ ...validDeployConfig, members, agentManifests }).members).toHaveLength(2000);
   });
 
   it("rejects duplicate members", () => {

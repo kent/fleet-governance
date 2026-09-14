@@ -42,6 +42,8 @@ export async function deployFleet(opts: {
   deployerKey: Hex;
   outPath: string;
   expectedChainId?: number;
+  /** Wait for each deployment receipt before sending the next batch. */
+  sequentialBroadcast?: boolean;
 }): Promise<{ manifest: ManifestV1Type; deployed: boolean }> {
   const configRaw = readFileSync(opts.configPath, "utf8");
   const configHash = keccak256(toHex(configRaw));
@@ -63,7 +65,7 @@ export async function deployFleet(opts: {
   rmSync(scratchPath, { force: true });
 
   try {
-    execFileSync("forge", ["script", "script/DeployFleet.s.sol", "--rpc-url", opts.rpcUrl, "--broadcast"], {
+    execFileSync("forge", ["script", "script/DeployFleet.s.sol", "--rpc-url", opts.rpcUrl, "--broadcast", ...(opts.sequentialBroadcast !== false ? ["--slow"] : [])], {
       cwd: opts.contractsDir,
       env: {
         ...process.env,
@@ -76,6 +78,7 @@ export async function deployFleet(opts: {
   } catch (err) {
     const stderr = (err as { stderr?: Buffer }).stderr?.toString() ?? "";
     const stdout = (err as { stdout?: Buffer }).stdout?.toString() ?? "";
+    rmSync(scratchPath, { force: true });
     throw new Error(`forge script DeployFleet.s.sol failed: ${errorMessage(err)}\n${stdout}\n${stderr}`);
   }
 

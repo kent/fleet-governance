@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ActionClass, CharterV1 } from "./charter.js";
 import { DecimalString, Hex32 } from "./primitives.js";
+import { ExecutionPermitV1 } from "./execution.js";
 
 export const DecisionKind = z.enum([
   "CHOOSE_PATH",
@@ -38,6 +39,7 @@ export const DecisionV1 = z
     payloadHash: Hex32,
     proposerAgentId: z.number().int().nonnegative(),
     action: ActionDescriptor.optional(),
+    execution: ExecutionPermitV1.optional(),
     newCharter: CharterV1.optional(),
     summary: z.string().min(1).max(1024),
     rationale: z.string().min(1),
