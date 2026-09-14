@@ -90,3 +90,27 @@ export const BlockResponseV1 = z
   })
   .strict();
 export type BlockResponseV1 = z.infer<typeof BlockResponseV1>;
+
+/**
+ * The ballot a model is asked for, and the only part of a vote a model ever chooses. `VoteV1`'s
+ * two identity fields (`schema` and `proposalId`) are deliberately absent: `ModelPolicy` fills
+ * them in from the proposal the worker anchored its read to, so a model cannot vote on a proposal
+ * other than the one it was shown, and cannot mislabel the schema of its own output.
+ *
+ * `.strict()`, so a model that emits `proposalId` anyway does not have its value quietly kept
+ * next to an assembled one: the parse fails, the policy reports `malformed`, and spec 10.6's rule
+ * applies (a missing vote, never a synthesized one). `confidenceBps` is nullable as well as
+ * optional because a strict structured-output mode requires every declared property to be present
+ * and expresses "unset" as an explicit `null` (see `OpenRouterProvider`'s schema conversion);
+ * `ModelPolicy` drops it when it arrives as `null`.
+ */
+export const ModelVoteV1 = z
+  .object({
+    support: z.enum(["FOR", "AGAINST", "ABSTAIN"]),
+    rationale: z.string().min(1),
+    assumptions: z.array(z.string()),
+    riskFlags: z.array(z.string()),
+    confidenceBps: z.number().int().min(0).max(10000).nullable().optional(),
+  })
+  .strict();
+export type ModelVoteV1 = z.infer<typeof ModelVoteV1>;

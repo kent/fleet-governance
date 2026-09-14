@@ -11,6 +11,7 @@ import { EXPERIMENT_NAME_PATTERN } from "./defaults.js";
 import { loadRunnerEnv } from "./env.js";
 import { repoRoot } from "./paths.js";
 import { findMissingEnvVar, requiredEnvVarNames } from "./required-env.js";
+import { LOCAL_ANVIL_CHAIN_ID } from "../pipeline/run-keys.js";
 import { spawnRun } from "./spawn-run.js";
 import type { SpawnFn } from "./spawn-run.js";
 
@@ -104,14 +105,18 @@ export async function handleCreateRun(
 
   const anyOpenRouter = experiment.fleet.members.some((member) => member.provider === "openrouter");
   const requiredNames = requiredEnvVarNames({ memberCount: experiment.fleet.members.length, anyOpenRouter });
-  const missing = findMissingEnvVar(requiredNames, deps.env);
+  // On a local Anvil a missing private-key variable is not a blocker: `fleet run` falls back to
+  // the well-known public dev account for that role, which is what lets a non-developer accept the
+  // defaults and press Run. On every other chain a missing variable still refuses the run.
+  const localAnvil = chainId === LOCAL_ANVIL_CHAIN_ID;
+  const missing = findMissingEnvVar(requiredNames, deps.env, { localAnvil });
   if (missing) {
     return { status: 400, body: { error: `missing required environment variable ${missing}` } };
   }
 
   let deployConfig;
   try {
-    deployConfig = buildDeployConfig(experiment, deps.env);
+    deployConfig = buildDeployConfig(experiment, deps.env, { chainId });
   } catch (err) {
     if (err instanceof RunnerEnvError) return { status: 400, body: { error: err.message } };
     throw err;

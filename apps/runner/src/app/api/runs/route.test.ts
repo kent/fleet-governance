@@ -171,12 +171,13 @@ describe("POST /api/runs (handleCreateRun)", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("returns 400 naming only the missing variable when FLEET_AGENT_KEY_3 is absent", async () => {
+  it("returns 400 naming only the missing variable when FLEET_AGENT_KEY_3 is absent on a chain that is not a local Anvil", async () => {
     const env = testEnv();
     delete env["FLEET_AGENT_KEY_3"];
+    const config = { ...validExperiment(), target: { ...validExperiment().target, kind: "base-sepolia" } };
     const calls: FakeSpawnCall[] = [];
-    const d = deps({ env, spawnFn: fakeSpawn(calls) });
-    const result = await handleCreateRun({ config: validExperiment(), readSide: false }, d);
+    const d = deps({ env, probeChainId: async () => 84532, spawnFn: fakeSpawn(calls) });
+    const result = await handleCreateRun({ config, readSide: false }, d);
 
     expect(result.status).toBe(400);
     const message = (result.body as { error: string }).error;
@@ -184,6 +185,41 @@ describe("POST /api/runs (handleCreateRun)", () => {
     expect(message).not.toMatch(/0x[0-9a-fA-F]{64}/);
     expect(calls).toHaveLength(0);
     expect(existsSync(path.join(repoRootDir, "experiments", "configs"))).toBe(false);
+  });
+
+  it("runs anyway on a local Anvil with no FLEET_* key set at all, using the well-known test accounts", async () => {
+    // The M3 acceptance sentence: a non-developer accepts the defaults, presses Run, and watches
+    // the replay. Nothing here exports a key.
+    const env = testEnv();
+    for (const name of Object.keys(env)) {
+      if (name.startsWith("FLEET_")) delete env[name];
+    }
+    const calls: FakeSpawnCall[] = [];
+    const d = deps({ env, spawnFn: fakeSpawn(calls) });
+    const result = await handleCreateRun({ config: validExperiment(), readSide: false }, d);
+
+    expect(result.status).toBe(202);
+    expect(calls).toHaveLength(1);
+
+    // The deploy config it wrote names the Anvil dev accounts the run will actually sign with.
+    const deployConfigPath = path.join(repoRootDir, "deployments", "configs", "route-test.deploy.json");
+    const deployConfig = JSON.parse(readFileSync(deployConfigPath, "utf8")) as { members: string[]; operator: string; guardian: string };
+    const lower = (address: string): string => address.toLowerCase();
+    expect(lower(deployConfig.members[0]!)).toBe(lower(privateKeyToAccount(anvilDevKey(DEMO_ACCOUNT_INDEX.agent(0))).address));
+    expect(lower(deployConfig.operator)).toBe(lower(privateKeyToAccount(anvilDevKey(DEMO_ACCOUNT_INDEX.operator)).address));
+    expect(lower(deployConfig.guardian)).toBe(lower(privateKeyToAccount(anvilDevKey(DEMO_ACCOUNT_INDEX.guardian)).address));
+  });
+
+  it("still prefers an explicitly set key over the local Anvil fallback", async () => {
+    const env = testEnv();
+    const calls: FakeSpawnCall[] = [];
+    const d = deps({ env, spawnFn: fakeSpawn(calls) });
+    const result = await handleCreateRun({ config: validExperiment(), readSide: false }, d);
+
+    expect(result.status).toBe(202);
+    const deployConfigPath = path.join(repoRootDir, "deployments", "configs", "route-test.deploy.json");
+    const deployConfig = JSON.parse(readFileSync(deployConfigPath, "utf8")) as { members: string[] };
+    expect(deployConfig.members[0]?.toLowerCase()).toBe(privateKeyToAccount(env["FLEET_AGENT_KEY_0"] as `0x${string}`).address.toLowerCase());
   });
 
   it("returns 400 with issue paths when the config fails schema validation", async () => {

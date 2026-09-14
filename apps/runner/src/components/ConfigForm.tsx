@@ -18,7 +18,7 @@ type FixtureSummary = {
   charter?: CharterV1Type;
   charterError?: string;
 };
-type EnvVarStatus = { name: string; present: boolean };
+type EnvVarStatus = { name: string; present: boolean; source?: "env" | "local-anvil-test-key" | "missing" };
 type FleetMember = ExperimentConfigV1Type["fleet"]["members"][number];
 
 const PROVIDERS = ["scripted", "claude-cli", "openrouter"] as const;
@@ -73,10 +73,11 @@ export default function ConfigForm() {
 
   const memberCount = draft.fleet.members.length;
   const providersKey = draft.fleet.members.map((m) => m.provider).join(",");
+  const targetKind = draft.target.kind;
   useEffect(() => {
     let cancelled = false;
     const anyOpenRouter = providersKey.split(",").includes("openrouter");
-    const qs = new URLSearchParams({ n: String(memberCount), openrouter: anyOpenRouter ? "1" : "0" });
+    const qs = new URLSearchParams({ n: String(memberCount), openrouter: anyOpenRouter ? "1" : "0", target: targetKind });
     fetch(`/api/env?${qs.toString()}`)
       .then((res) => res.json())
       .then((data: { vars?: EnvVarStatus[] }) => {
@@ -88,7 +89,7 @@ export default function ConfigForm() {
     return () => {
       cancelled = true;
     };
-  }, [memberCount, providersKey]);
+  }, [memberCount, providersKey, targetKind]);
 
   const validation = useMemo(() => ExperimentConfigV1.safeParse(draft), [draft]);
   const nameError = EXPERIMENT_NAME_PATTERN.test(draft.name) ? null : "name must match ^[a-z0-9][a-z0-9-]{0,39}$";
@@ -263,7 +264,7 @@ export default function ConfigForm() {
         <ul>
           {envVars.map((v) => (
             <li key={v.name}>
-              {v.name}: {v.present ? "present" : "missing"}
+              {v.name}: {v.source === "local-anvil-test-key" ? "using the local Anvil test key" : v.present ? "present" : "missing"}
             </li>
           ))}
         </ul>

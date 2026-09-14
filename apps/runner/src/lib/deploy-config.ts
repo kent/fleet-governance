@@ -1,7 +1,8 @@
 import { privateKeyToAccount } from "viem/accounts";
 import { DeployConfigV1 } from "@fleet/schemas";
 import type { DeployConfigV1 as DeployConfigV1Type, ExperimentConfigV1 as ExperimentConfigV1Type } from "@fleet/schemas";
-import { requirePrivateKeyEnv } from "../env.js";
+import { resolveRunKey, roleKeySpecs } from "../pipeline/run-keys.js";
+import type { RunKeyOptions } from "../pipeline/run-keys.js";
 
 /**
  * Builds the `fleet.deploy.v1` document `run-pipeline.ts`'s `DEPLOYED` stage reads from
@@ -10,12 +11,27 @@ import { requirePrivateKeyEnv } from "../env.js";
  * itself. Throws `RunnerEnvError` (name only, never a value) if a key is missing or malformed;
  * callers must have already checked presence with `findMissingEnvVar` for a clearer error, but
  * this also re-validates format (the 0x + 64 hex pattern), which presence-only checks do not.
+ *
+ * `keyOpts` carries the chain id the RPC reported, so the members and the operator and guardian
+ * addresses this config names are the same accounts `fleet run` will actually sign with, including
+ * the local-Anvil fallback. A deploy config that registered one set of addresses while the run
+ * signed with another would produce a fleet whose every agent is unregistered.
  */
-export function buildDeployConfig(experiment: ExperimentConfigV1Type, env: NodeJS.ProcessEnv): DeployConfigV1Type {
-  const operatorKey = requirePrivateKeyEnv(env, "FLEET_OPERATOR_KEY");
-  const guardianKey = requirePrivateKeyEnv(env, "FLEET_GUARDIAN_KEY");
+export function buildDeployConfig(
+  experiment: ExperimentConfigV1Type,
+  env: NodeJS.ProcessEnv,
+  keyOpts: RunKeyOptions = {},
+): DeployConfigV1Type {
+  const specs = roleKeySpecs(experiment.fleet.members.length);
+  const specFor = (variable: string): (typeof specs)[number] => {
+    const spec = specs.find((s) => s.variable === variable);
+    if (!spec) throw new Error(`buildDeployConfig: no key spec for ${variable}`);
+    return spec;
+  };
+  const operatorKey = resolveRunKey(env, specFor("FLEET_OPERATOR_KEY"), keyOpts);
+  const guardianKey = resolveRunKey(env, specFor("FLEET_GUARDIAN_KEY"), keyOpts);
   const members = experiment.fleet.members.map(
-    (_, i) => privateKeyToAccount(requirePrivateKeyEnv(env, `FLEET_AGENT_KEY_${i}`)).address,
+    (_, i) => privateKeyToAccount(resolveRunKey(env, specFor(`FLEET_AGENT_KEY_${i}`), keyOpts)).address,
   );
   const agentManifests = experiment.fleet.members.map((member) =>
     JSON.stringify({

@@ -13,6 +13,7 @@ import {
 import type { FleetClient, FleetSigner, NonceManager, ProposalCreatedView, TaskView } from "@fleet/sdk";
 import { MemoryJobStore } from "./jobs.js";
 import type { JobKey, JobRecord } from "./jobs.js";
+import type { AnchoredProposal, DecisionPolicy, PolicyMeta, PolicyOutput } from "./policy.js";
 import { ScriptedPolicy } from "./scripted.js";
 import type { ScriptedDirective } from "./scripted.js";
 import { Worker } from "./worker.js";
@@ -226,15 +227,18 @@ function makeWorker(
     nonces: NonceManager;
     jobs: MemoryJobStore;
     submissionMarginSec: number;
+    policy: DecisionPolicy;
   }> = {},
 ): { worker: Worker; jobs: MemoryJobStore; signer: FleetSigner; nonces: NonceManager; client: FleetClient } {
   const jobs = overrides.jobs ?? new MemoryJobStore();
   const signer = overrides.signer ?? makeFakeSigner();
   const nonces = overrides.nonces ?? makeFakeNonces();
   const client = overrides.client ?? makeFakeClient();
-  const policy = new ScriptedPolicy(overrides.script ?? { [AGENT_ID]: "FOR" }, {
-    lateDelayMs: overrides.lateDelayMs,
-  });
+  const policy =
+    overrides.policy ??
+    new ScriptedPolicy(overrides.script ?? { [AGENT_ID]: "FOR" }, {
+      lateDelayMs: overrides.lateDelayMs,
+    });
   const cfg: WorkerConfig = {
     agentId: AGENT_ID,
     signer,
@@ -592,5 +596,76 @@ describe("Worker: job persistence", () => {
     expect(stored?.proposalId).toBe(PROPOSAL_ID.toString());
     expect(stored?.agentAddress.toLowerCase()).toBe(AGENT_ACCOUNT.toLowerCase());
     expect(stored?.actionType).toBe("vote");
+  });
+});
+
+describe("Worker: model provider bookkeeping on the job record", () => {
+  const meta: PolicyMeta = {
+    provider: "openrouter",
+    model: "meta/muse-spark-1.3-contributor",
+    promptVersion: "3",
+    latencyMs: 1234,
+    inputTokens: 900,
+    outputTokens: 77,
+  };
+
+  function policyReturning(output: PolicyOutput): DecisionPolicy {
+    return { evaluateProposal: async (_input: AnchoredProposal): Promise<PolicyOutput> => output };
+  }
+
+  it("persists provider, model, prompt version, latency and usage from a model policy's meta", async () => {
+    const vote = {
+      schema: "fleet.vote.v1" as const,
+      proposalId: PROPOSAL_ID.toString(),
+      support: "AGAINST" as const,
+      rationale: "not allowlisted",
+      assumptions: [],
+      riskFlags: [],
+    };
+    const { worker, jobs } = makeWorker({ policy: policyReturning({ kind: "vote", vote, meta }) });
+
+    await worker.handleProposal(PROPOSAL_ID);
+
+    const stored = await jobs.get(keyFor());
+    expect(stored?.providerId).toBe("openrouter");
+    expect(stored?.modelId).toBe("meta/muse-spark-1.3-contributor");
+    expect(stored?.promptVersion).toBe("3");
+    expect(stored?.inferenceLatencyMs).toBe(1234);
+    expect(stored?.usage).toEqual({ inputTokens: 900, outputTokens: 77 });
+  });
+
+  it("records what a malformed inference cost, even though it produced no vote", async () => {
+    const { worker, jobs } = makeWorker({ policy: policyReturning({ kind: "malformed", raw: "forced-malformed", meta }) });
+
+    const job = await worker.handleProposal(PROPOSAL_ID);
+
+    expect(job.state).toBe("worker_failed");
+    expect(job.vote).toBeNull();
+    const stored = await jobs.get(keyFor());
+    expect(stored?.providerId).toBe("openrouter");
+    expect(stored?.inferenceLatencyMs).toBe(1234);
+  });
+
+  it("records what an absent inference cost too", async () => {
+    const { worker, jobs } = makeWorker({ policy: policyReturning({ kind: "absent", why: "timeout: gave up", meta }) });
+
+    const job = await worker.handleProposal(PROPOSAL_ID);
+
+    expect(job.state).toBe("absent");
+    const stored = await jobs.get(keyFor());
+    expect(stored?.modelId).toBe("meta/muse-spark-1.3-contributor");
+  });
+
+  it("leaves every provider column null for a scripted policy, which has no meta to report", async () => {
+    const { worker, jobs } = makeWorker({ script: { [AGENT_ID]: "FOR" } });
+
+    await worker.handleProposal(PROPOSAL_ID);
+
+    const stored = await jobs.get(keyFor());
+    expect(stored?.providerId).toBeNull();
+    expect(stored?.modelId).toBeNull();
+    expect(stored?.promptVersion).toBeNull();
+    expect(stored?.inferenceLatencyMs).toBeNull();
+    expect(stored?.usage).toBeNull();
   });
 });

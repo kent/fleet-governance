@@ -3,29 +3,48 @@ import path from "node:path";
 import { createPublicClient, http, keccak256, toHex } from "viem";
 import type { Address, Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { ExperimentConfigV1, ManifestV1, assertAllowedChain, canonicalize, chainIdForKind } from "@fleet/schemas";
-import type { ExperimentConfigV1 as ExperimentConfigV1Type, ManifestV1 as ManifestV1Type } from "@fleet/schemas";
+import { CharterV1, ExperimentConfigV1, ManifestV1, assertAllowedChain, canonicalize, chainIdForKind } from "@fleet/schemas";
+import type {
+  CharterV1 as CharterV1Type,
+  ExperimentConfigV1 as ExperimentConfigV1Type,
+  ManifestV1 as ManifestV1Type,
+  ModelFixtureV1,
+} from "@fleet/schemas";
 import { FleetClient, addressesFromManifest } from "@fleet/sdk";
 import type { FleetAddresses } from "@fleet/sdk";
 import { deployFleet, verifyDeployment } from "../deploy.js";
-import { RunnerEnvError, parseSignerFeeLimits, requirePrivateKeyEnv } from "../env.js";
-import { loadFixture } from "../fixtures.js";
+import { RunnerEnvError, parseSignerFeeLimits } from "../env.js";
 import { readEnvValue, readside } from "../readside.js";
+import { assertScenarioMatchesFixture, isModelFixture, resolveFixture } from "./fixture-resolve.js";
 import type { FixtureRunContext, FixtureRunResult, FleetKeys } from "./fixture-runner.js";
 import { runFixture } from "./fixture-runner.js";
+import { hostSitePath, runModelFixture } from "./model-runner.js";
+import type { ModelRunContext, ModelRunResult } from "./model-runner.js";
 import { defaultPreflightDeps, formatPreflightReport, runPreflight } from "./preflight.js";
 import { buildReadSideSyncConfig } from "./readside-sync-config.js";
-import { buildRecord, writeJsonRecord } from "./record.js";
+import { buildRecord, readJsonRecord, writeJsonRecord } from "./record.js";
 import type { RunRecordDocument } from "./record.js";
 import { renderReport } from "./report.js";
 import type { RunStore, Stage, StageName, StageTimings } from "./state.js";
 import { runStages } from "./state.js";
+import { LOCAL_ANVIL_CHAIN_ID, loadRunKeysFromEnv } from "./run-keys.js";
 import { openTask } from "./task.js";
+
+/** Re-exported so `fleet run`'s callers keep one import site for key resolution, while the logic
+ *  itself lives in a module the Next.js side can import without pulling in the whole pipeline. */
+export { LOCAL_ANVIL_CHAIN_ID, loadRunKeysFromEnv } from "./run-keys.js";
+export type { RunKeyOptions } from "./run-keys.js";
 
 export type RunPipelineOptions = {
   runId: string;
   experimentPath: string;
+  /** The fixtures *root* (`experiments/fixtures`), not one of its two subdirectories:
+   *  `resolveFixture` looks under `scripted/` and then `model/`, so one `fleet run` can drive
+   *  either kind depending on what the experiment's `scenario` names. */
   fixturesDir: string;
+  /** Repository root, for resolving the repo, overlay, charter and host-site paths a model fixture
+   *  names relative to it. */
+  repoRoot: string;
   contractsDir: string;
   configDir: string;
   infraDir: string;
@@ -42,6 +61,9 @@ export type RunPipelineOptions = {
    *  and the same one the run store uses. */
   reportDir: string;
   store: RunStore;
+  /** Test-only: builds a `Provider` per member for a model-driven run. Production leaves it unset
+   *  and `runModelFixture` builds the real adapter each member's config names. */
+  modelProviderFactory?: ModelRunContext["providerFactory"];
   /** Whether the read side (Docker Compose: DAO Node, CPLS, Agora Next) is part of this run.
    *  Gates PREFLIGHT's `docker`/container-health/bucket checks, CPLS per-decision archive sync
    *  during `AGENTS_RUNNING` (task 8 finding 3), and whether `INDEXERS_READY` restarts the stack. */
@@ -64,29 +86,51 @@ export type RunPipelineCtx = {
   client: FleetClient | null;
   keys: FleetKeys | null;
   taskId: bigint | null;
-  result: FixtureRunResult | null;
+  result: FixtureRunResult | ModelRunResult | null;
   record: RunRecordDocument | null;
   recordPath: string | null;
   reportPath: string | null;
 };
 
-/** Reads every key `fleet run` needs from the environment, one variable per role, matching the
- *  naming `apps/worker`/`apps/keeper`/`DeployFleet.s.sol` already use (`FLEET_DEPLOYER_KEY`,
- *  `FLEET_AGENT_KEY`, `FLEET_KEEPER_KEY`) plus one `FLEET_AGENT_KEY_<n>` per fleet member, since
- *  `fleet.experiment.v1` itself only references keys "by reference to the secret store" (spec
- *  12.1) rather than carrying them inline. */
-export function loadRunKeysFromEnv(env: NodeJS.ProcessEnv, memberCount: number): FleetKeys {
-  const agentKeys: Record<number, Hex> = {};
-  for (let i = 0; i < memberCount; i++) {
-    agentKeys[i] = requirePrivateKeyEnv(env, `FLEET_AGENT_KEY_${i}`);
+/** The chain id `rpcUrl` reports, or `null` when it cannot be read. Used only to decide whether
+ *  the local-Anvil key fallback applies; an unreachable chain simply means no fallback, and
+ *  PREFLIGHT's own `chain_id` check reports the unreachability itself. */
+export async function probeChainId(rpcUrl: string): Promise<number | null> {
+  try {
+    return await createPublicClient({ transport: http(rpcUrl) }).getChainId();
+  } catch {
+    return null;
   }
-  return {
-    deployerKey: requirePrivateKeyEnv(env, "FLEET_DEPLOYER_KEY"),
-    operatorKey: requirePrivateKeyEnv(env, "FLEET_OPERATOR_KEY"),
-    guardianKey: requirePrivateKeyEnv(env, "FLEET_GUARDIAN_KEY"),
-    keeperKey: requirePrivateKeyEnv(env, "FLEET_KEEPER_KEY"),
-    agentKeys,
-  };
+}
+
+/**
+ * Where this run's `record.json` and `report.md` go. An explicit `--report-dir` always wins;
+ * otherwise the experiment's own `capture.reportDir` decides, resolved against the repository root
+ * when it is relative. Before this, `capture.reportDir` was dead config: `fleet run` always used
+ * the CLI default, so the field could say anything and change nothing.
+ */
+export function resolveReportDir(opts: {
+  explicit?: string | undefined;
+  captureReportDir?: string | undefined;
+  repoRoot: string;
+  fallback: string;
+}): string {
+  if (opts.explicit) return path.resolve(opts.explicit);
+  if (opts.captureReportDir && opts.captureReportDir.trim() !== "") {
+    return path.resolve(opts.repoRoot, opts.captureReportDir);
+  }
+  return opts.fallback;
+}
+
+/** Reads `capture.reportDir` out of a `fleet.experiment.v1` file without failing a CLI invocation
+ *  over a config the pipeline itself will parse and report on properly a moment later. */
+export function readCaptureReportDir(experimentPath: string): string | undefined {
+  try {
+    const parsed = ExperimentConfigV1.safeParse(JSON.parse(readFileSync(experimentPath, "utf8")));
+    return parsed.success ? parsed.data.capture.reportDir : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -161,10 +205,43 @@ export function rehydrateRunCtx(
 
   // Keys never round trip through the checkpoint (a run record is written to Postgres or a file
   // next to the report; no private key belongs in either), so they are always re-read from the
-  // environment, exactly as PREFLIGHT reads them.
-  const keys = loadRunKeysFromEnv(env, ctx.experiment.fleet.members.length);
+  // environment, exactly as PREFLIGHT reads them, including the local-Anvil fallback.
+  const keys = loadRunKeysFromEnv(env, ctx.experiment.fleet.members.length, {
+    chainId: manifest?.chainId ?? chainId,
+    log: (m) => (ctx.opts.log ?? (() => {}))(m),
+  });
 
-  return { ...ctx, chainId, manifestOutPath, manifest, addresses, client, keys, taskId };
+  // Fix-wave finding 1: a resume past AGENTS_RUNNING used to reach CAPTURED and REPORTED with
+  // `record`/`recordPath` still null and throw "missing prior stage output". The record is a file
+  // in the run directory, so it is re-read from disk rather than carried through the checkpoint
+  // (it contains bigint-derived values a JSON payload has no room for anyway).
+  const recordPath =
+    typeof payload["recordPath"] === "string" && payload["recordPath"].length > 0
+      ? payload["recordPath"]
+      : path.join(ctx.opts.reportDir, ctx.opts.runId, "record.json");
+  const reportPath = typeof payload["reportPath"] === "string" && payload["reportPath"].length > 0 ? payload["reportPath"] : null;
+  let record: RunRecordDocument | null = null;
+  if (existsSync(recordPath)) {
+    try {
+      record = readJsonRecord<RunRecordDocument>(recordPath);
+    } catch {
+      // An unreadable record is CAPTURED's problem; it will rewrite it.
+    }
+  }
+
+  return {
+    ...ctx,
+    chainId,
+    manifestOutPath,
+    manifest,
+    addresses,
+    client,
+    keys,
+    taskId,
+    record,
+    recordPath: record ? recordPath : null,
+    reportPath,
+  };
 }
 
 function requireChainId(ctx: RunPipelineCtx, stage: StageName): number {
@@ -175,6 +252,154 @@ function requireChainId(ctx: RunPipelineCtx, stage: StageName): number {
 function requireManifestPath(ctx: RunPipelineCtx, stage: StageName): string {
   if (ctx.manifestOutPath === null) throw new Error(`${stage}: manifest path unknown (CHAIN_READY did not run)`);
   return ctx.manifestOutPath;
+}
+
+/** The proposal a run payload names, for a resume and for the UI's own summary. A scripted run has
+ *  exactly one; a model run has however many the fleet made, so this is the first of them, or null
+ *  when the fleet never diverged. */
+export function primaryProposalId(result: FixtureRunResult | ModelRunResult | null): string | null {
+  if (!result) return null;
+  if ("kind" in result && result.kind === "model") return result.proposals[0]?.proposalId.toString() ?? null;
+  return (result as FixtureRunResult).proposalId.toString();
+}
+
+/** Reads and validates the charter file a model fixture names, relative to the repository root. */
+export function loadFixtureCharter(repoRoot: string, fixture: ModelFixtureV1): CharterV1Type {
+  const charterPath = path.resolve(repoRoot, fixture.charter);
+  let json: unknown;
+  try {
+    json = JSON.parse(readFileSync(charterPath, "utf8"));
+  } catch (err) {
+    throw new RunnerEnvError(
+      `model fixture "${fixture.name}" names charter ${fixture.charter}, which could not be read at ${charterPath}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  const parsed = CharterV1.safeParse(json);
+  if (!parsed.success) {
+    throw new RunnerEnvError(`model fixture "${fixture.name}"'s charter at ${charterPath} does not parse as fleet.charter.v1: ${parsed.error.message}`);
+  }
+  return parsed.data;
+}
+
+/** Everything a model fixture needs on disk: its charter, its repository, its overlay if it has
+ *  one, and one site directory per host it starts. Checked in PREFLIGHT, because a missing site
+ *  directory would otherwise surface as a fake host exiting early ten minutes into a run. */
+function assertModelFixturePaths(repoRoot: string, fixture: ModelFixtureV1): void {
+  loadFixtureCharter(repoRoot, fixture);
+
+  const repoDir = path.resolve(repoRoot, fixture.repoFixture);
+  if (!existsSync(repoDir)) {
+    throw new RunnerEnvError(`model fixture "${fixture.name}" names repoFixture ${fixture.repoFixture}, which does not exist at ${repoDir}`);
+  }
+  if (fixture.repoOverlay) {
+    const overlayDir = path.resolve(repoRoot, fixture.repoOverlay);
+    if (!existsSync(overlayDir)) {
+      throw new RunnerEnvError(`model fixture "${fixture.name}" names repoOverlay ${fixture.repoOverlay}, which does not exist at ${overlayDir}`);
+    }
+  }
+  for (const host of fixture.hosts) {
+    const siteDir = hostSitePath(repoRoot, host.site);
+    if (!existsSync(siteDir)) {
+      throw new RunnerEnvError(`model fixture "${fixture.name}" names host ${host.name} with site "${host.site}", which does not exist at ${siteDir}`);
+    }
+  }
+}
+
+/** A model run with an `openrouter` member and no API key would start five agents, spawn the
+ *  hosts, open nothing, and fail on the first inference. Refused in PREFLIGHT instead, naming the
+ *  variable only, never a value. */
+function assertModelProvidersConfigured(experiment: ExperimentConfigV1Type, env: NodeJS.ProcessEnv): void {
+  const usesOpenRouter = experiment.fleet.members.some((m) => m.provider === "openrouter");
+  if (usesOpenRouter && !env["OPENROUTER_API_KEY"]) {
+    throw new RunnerEnvError(
+      "this experiment configures at least one member with provider \"openrouter\", but OPENROUTER_API_KEY is not set (expected in the gitignored repo-root .env for local runs)",
+    );
+  }
+}
+
+/**
+ * `AGENTS_RUNNING`, as its own function so CAPTURED can re-enter it on a resume that lost the
+ * run's result. Branches on the fixture's own kind: a `fleet.fixture.v1` drives the scripted
+ * proposal-and-votes path, a `fleet.fixture.model.v1` drives real agents.
+ */
+async function runAgentsStage(
+  ctx: RunPipelineCtx,
+  env: NodeJS.ProcessEnv,
+  log: (ctx: RunPipelineCtx, message: string) => void,
+): Promise<RunPipelineCtx> {
+  if (!ctx.manifest || !ctx.addresses || !ctx.client || !ctx.keys || ctx.taskId === null) {
+    throw new Error("AGENTS_RUNNING: missing prior stage output");
+  }
+  const { fixture } = resolveFixture(ctx.opts.fixturesDir, ctx.experiment.scenario.fixture, {
+    prefer: ctx.experiment.scenario.agentsScripted ? "scripted" : "model",
+  });
+  const readSideSyncHandle = ctx.opts.readSide ? buildReadSideSyncConfig(ctx.opts.infraDir) : null;
+  const runDir = path.join(ctx.opts.reportDir, ctx.opts.runId);
+
+  // Task 8 finding 1: a per-proposal sub-checkpoint, written independently of the top-level stage
+  // checkpoint `runStages` only writes once this whole stage returns. `stage` is deliberately
+  // "TASK_OPENED" (the last stage that actually completed), not "AGENTS_RUNNING": writing the
+  // latter would make `runStages` skip this stage entirely on the next resume, when what a resume
+  // needs is for it to run again and find the existing proposals rather than re-submitting them.
+  const onProposalKnown = async (proposalId: bigint, txHash: Hex): Promise<void> => {
+    await ctx.opts.store.save({
+      runId: ctx.opts.runId,
+      stage: "TASK_OPENED",
+      updatedAt: new Date().toISOString(),
+      payload: { ...toRunPayload(ctx), proposalIdInProgress: proposalId.toString(), proposalTxHash: txHash },
+    });
+  };
+
+  try {
+    if (isModelFixture(fixture)) {
+      const modelCtx: ModelRunContext = {
+        client: ctx.client,
+        rpcUrl: ctx.experiment.target.rpcHttp,
+        chainId: ctx.manifest.chainId,
+        addresses: ctx.addresses,
+        keys: ctx.keys,
+        members: ctx.experiment.fleet.members,
+        governance: {
+          votingDelay: ctx.manifest.params.votingDelay,
+          votingPeriod: ctx.manifest.params.votingPeriod,
+          timelockDelay: ctx.manifest.params.timelockDelay,
+        },
+        runDir,
+        repoRoot: ctx.opts.repoRoot,
+        feeLimits: parseSignerFeeLimits(env),
+        submissionMarginSec: 20,
+        env,
+        log: (m) => log(ctx, m),
+        onProposalKnown,
+        ...(readSideSyncHandle ? { readSideSync: readSideSyncHandle.config } : {}),
+        ...(ctx.opts.modelProviderFactory ? { providerFactory: ctx.opts.modelProviderFactory } : {}),
+      };
+      const result = await runModelFixture(modelCtx, fixture, ctx.taskId);
+      log(
+        ctx,
+        `agents running: ${fixture.name} -> ${result.proposals.length} proposal(s) [${result.proposals.map((p) => p.finalStateName).join(", ")}] (${result.pass ? "PASS" : "FAIL"})`,
+      );
+      return { ...ctx, result };
+    }
+
+    const fixtureCtx: FixtureRunContext = {
+      client: ctx.client,
+      rpcUrl: ctx.experiment.target.rpcHttp,
+      chainId: ctx.manifest.chainId,
+      addresses: ctx.addresses,
+      keys: ctx.keys,
+      feeLimits: parseSignerFeeLimits(env),
+      submissionMarginSec: 20,
+      log: (m) => log(ctx, m),
+      ...(readSideSyncHandle ? { readSideSync: readSideSyncHandle.config } : {}),
+      onProposalKnown,
+    };
+    const result = await runFixture(fixtureCtx, fixture, ctx.taskId);
+    log(ctx, `agents running: ${fixture.name} -> ${result.finalStateName} (${result.pass ? "PASS" : "FAIL"})`);
+    return { ...ctx, result };
+  } finally {
+    if (readSideSyncHandle) await readSideSyncHandle.close();
+  }
 }
 
 /** Builds the ten spec 12.2 `fleet run` stages. Each stage checks chain or file state before
@@ -198,8 +423,28 @@ export function buildRunStages(env: NodeJS.ProcessEnv): readonly Stage<RunPipeli
     PREFLIGHT: async (ctx) => {
       log(ctx, `preflight: experiment "${ctx.experiment.name}", target ${ctx.experiment.target.kind}, fixture ${ctx.experiment.scenario.fixture}`);
 
-      const keys = loadRunKeysFromEnv(env, ctx.experiment.fleet.members.length);
+      // The RPC's own chain id, read before any key is resolved: the local-Anvil key fallback is
+      // gated on what the chain says it is, never on what the config claims.
+      const probedChainId = await probeChainId(ctx.experiment.target.rpcHttp);
+      const keys = loadRunKeysFromEnv(env, ctx.experiment.fleet.members.length, {
+        chainId: probedChainId,
+        log: (m) => log(ctx, `preflight: ${m}`),
+      });
       const readSideEnabled = ctx.opts.readSide === true;
+
+      // The fixture, its kind, and everything a model fixture needs on disk, before a single
+      // transaction is sent. Every one of these is unrecoverable at the point it would otherwise
+      // be discovered: halfway through AGENTS_RUNNING, on a chain that already has a task open.
+      const { fixture, filePath } = resolveFixture(ctx.opts.fixturesDir, ctx.experiment.scenario.fixture, {
+        prefer: ctx.experiment.scenario.agentsScripted ? "scripted" : "model",
+      });
+      assertScenarioMatchesFixture(fixture, ctx.experiment.scenario.agentsScripted, ctx.experiment.scenario.fixture);
+      log(ctx, `preflight: [ok] fixture: ${filePath} (${fixture.schema})`);
+      if (isModelFixture(fixture)) {
+        assertModelFixturePaths(ctx.opts.repoRoot, fixture);
+        log(ctx, `preflight: [ok] model fixture assets: charter, repo${fixture.repoOverlay ? ", overlay" : ""}${fixture.hosts.length > 0 ? `, ${fixture.hosts.length} host site(s)` : ""}`);
+        assertModelProvidersConfigured(ctx.experiment, env);
+      }
 
       const publicClient = createPublicClient({ transport: http(ctx.experiment.target.rpcHttp) });
       const keyAddresses: { label: string; address: Address }[] = [
@@ -287,8 +532,8 @@ export function buildRunStages(env: NodeJS.ProcessEnv): readonly Stage<RunPipeli
     DEPLOYED: async (ctx) => {
       // PREFLIGHT always runs first (it is the first stage; runStages only ever resumes strictly
       // after it) and already loaded and balance-checked every key, including the deployer's.
-      const keys = ctx.keys ?? loadRunKeysFromEnv(env, ctx.experiment.fleet.members.length);
       const chainId = requireChainId(ctx, "DEPLOYED");
+      const keys = ctx.keys ?? loadRunKeysFromEnv(env, ctx.experiment.fleet.members.length, { chainId, log: (m) => log(ctx, m) });
       const { latest, perRun } = manifestPathsForRun(ctx.opts.deploymentsDir, chainId, ctx.opts.runId);
       const configPath = path.join(ctx.opts.configDir, `${ctx.experiment.name}.deploy.json`);
       const { manifest, deployed } = await deployFleet({
@@ -343,82 +588,71 @@ export function buildRunStages(env: NodeJS.ProcessEnv): readonly Stage<RunPipeli
         return { ...ctx, addresses, client };
       }
 
+      // A model fixture names its own charter file, and that file is what the fleet is judged
+      // against: the fixture's expectations (an omitted `examples.internal`, a goal that points at
+      // a host the allowlist does not carry) only mean anything if the task was opened with it.
+      // The experiment's own `task.charter` is still the default for a scripted run.
+      const { fixture } = resolveFixture(ctx.opts.fixturesDir, ctx.experiment.scenario.fixture, {
+        prefer: ctx.experiment.scenario.agentsScripted ? "scripted" : "model",
+      });
+      let charter = ctx.experiment.task.charter;
+      if (isModelFixture(fixture)) {
+        charter = loadFixtureCharter(ctx.opts.repoRoot, fixture);
+        if (canonicalize(charter) !== canonicalize(ctx.experiment.task.charter)) {
+          log(
+            ctx,
+            `task opened: warning, the experiment's task.charter differs from model fixture "${fixture.name}"'s own charter file (${fixture.charter}); opening the task with the fixture's charter`,
+          );
+        }
+      }
+
       const { taskId } = await openTask({
         client,
         addresses,
         chainId: ctx.manifest.chainId,
         rpcUrl: ctx.experiment.target.rpcHttp,
         operatorKey: ctx.keys.operatorKey,
-        charter: ctx.experiment.task.charter,
+        charter,
         lifetimeSeconds: ctx.experiment.task.lifetime,
       });
       log(ctx, `task opened: ${taskId.toString()}`);
       return { ...ctx, addresses, client, taskId };
     },
 
-    AGENTS_RUNNING: async (ctx) => {
-      if (!ctx.manifest || !ctx.addresses || !ctx.client || !ctx.keys || ctx.taskId === null) {
-        throw new Error("AGENTS_RUNNING: missing prior stage output");
-      }
-      const fixturePath = path.join(ctx.opts.fixturesDir, `${ctx.experiment.scenario.fixture}.json`);
-      const fixture = loadFixture(fixturePath);
-      const readSideSyncHandle = ctx.opts.readSide ? buildReadSideSyncConfig(ctx.opts.infraDir) : null;
-      try {
-        const fixtureCtx: FixtureRunContext = {
-          client: ctx.client,
-          rpcUrl: ctx.experiment.target.rpcHttp,
-          chainId: ctx.manifest.chainId,
-          addresses: ctx.addresses,
-          keys: ctx.keys,
-          feeLimits: parseSignerFeeLimits(env),
-          submissionMarginSec: 20,
-          log: (m) => log(ctx, m),
-          ...(readSideSyncHandle ? { readSideSync: readSideSyncHandle.config } : {}),
-          // Task 8 finding 1: persists a per-fixture sub-checkpoint (the proposal id, once known)
-          // independent of the top-level stage checkpoint `runStages` writes only once this whole
-          // stage function returns. `stage` here is deliberately "TASK_OPENED" (the last stage that
-          // actually completed), not "AGENTS_RUNNING": writing "AGENTS_RUNNING" here would make
-          // `runStages` treat this stage as already done on the next resume and skip it entirely,
-          // when what a resume actually needs is for AGENTS_RUNNING to run again and find the
-          // existing proposal itself (`findExistingProposal`) rather than re-submitting it.
-          onProposalKnown: async (proposalId, txHash) => {
-            await ctx.opts.store.save({
-              runId: ctx.opts.runId,
-              stage: "TASK_OPENED",
-              updatedAt: new Date().toISOString(),
-              payload: { ...toRunPayload(ctx), proposalIdInProgress: proposalId.toString(), proposalTxHash: txHash },
-            });
-          },
-        };
-        const result = await runFixture(fixtureCtx, fixture, ctx.taskId);
-        log(ctx, `agents running: ${fixture.name} -> ${result.finalStateName} (${result.pass ? "PASS" : "FAIL"})`);
-        return { ...ctx, result };
-      } finally {
-        if (readSideSyncHandle) await readSideSyncHandle.close();
-      }
-    },
+    AGENTS_RUNNING: (ctx) => runAgentsStage(ctx, env, log),
 
     TASK_ENDED: async (ctx) => ctx,
 
     CAPTURED: async (ctx) => {
-      if (!ctx.client || !ctx.manifest || !ctx.result) throw new Error("CAPTURED: missing prior stage output");
+      let current = ctx;
+      if (!current.result) {
+        // Fix-wave finding 1: a run that crashed between the AGENTS_RUNNING checkpoint and this
+        // stage resumes here with no result in memory, and a result is not something a JSON
+        // checkpoint can carry (it holds chain-scale integers and a whole decision trace).
+        // AGENTS_RUNNING is idempotent by design (it finds the existing proposal rather than
+        // submitting a second one), so the honest recovery is to re-enter it.
+        log(current, "captured: no run result in memory (resumed run); re-entering AGENTS_RUNNING, which finds the existing proposals rather than making new ones");
+        current = await runAgentsStage(current, env, log);
+      }
+      if (!current.client || !current.manifest || !current.result) throw new Error("CAPTURED: missing prior stage output");
+      const runDir = path.join(current.opts.reportDir, current.opts.runId);
       const record = await buildRecord({
-        client: ctx.client,
-        runId: ctx.opts.runId,
-        config: ctx.experiment,
-        configHash: experimentConfigHash(ctx.experiment),
-        manifest: ctx.manifest,
-        results: [ctx.result],
+        client: current.client,
+        runId: current.opts.runId,
+        config: current.experiment,
+        configHash: experimentConfigHash(current.experiment),
+        manifest: current.manifest,
+        results: [current.result],
         // Spec 12.4's "timings per stage". CAPTURED is itself still running, so its own span and
         // REPORTED's are not in the record it writes; every earlier stage's is.
-        timings: { ...ctx.timings },
+        timings: { ...current.timings },
         versions: { node: process.version },
+        runDir,
       });
-      const runDir = path.join(ctx.opts.reportDir, ctx.opts.runId);
       const recordPath = path.join(runDir, "record.json");
       writeJsonRecord(recordPath, record);
-      log(ctx, `captured: wrote ${recordPath}`);
-      return { ...ctx, record, recordPath };
+      log(current, `captured: wrote ${recordPath}`);
+      return { ...current, record, recordPath };
     },
 
     REPORTED: async (ctx) => {
@@ -445,7 +679,7 @@ export function toRunPayload(ctx: RunPipelineCtx): Record<string, unknown> {
     manifestChainId: ctx.manifest?.chainId ?? null,
     taskId: ctx.taskId?.toString() ?? null,
     timings: ctx.timings,
-    proposalId: ctx.result?.proposalId?.toString() ?? null,
+    proposalId: primaryProposalId(ctx.result),
     pass: ctx.result?.pass ?? null,
     recordPath: ctx.recordPath,
     reportPath: ctx.reportPath,

@@ -1,5 +1,6 @@
 export * from "./policy.js";
 export * from "./scripted.js";
+export * from "./model-policy.js";
 export * from "./jobs.js";
 export * from "./worker.js";
 export * from "./sandbox/workspace.js";
@@ -7,6 +8,7 @@ export * from "./sandbox/tools.js";
 export * from "./sandbox/docker.js";
 export * from "./providers/types.js";
 export * from "./providers/scripted.js";
+export * from "./providers/forced.js";
 export * from "./providers/claude-cli.js";
 export * from "./providers/openrouter.js";
 export * from "./providers/env.js";

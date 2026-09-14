@@ -1,4 +1,11 @@
-import type { RunRecordDocument } from "./record.js";
+import type { RecordLoop, RunRecordDocument } from "./record.js";
+
+/** A record written by a model-driven run carries one `loops` entry per agent; a scripted one has
+ *  none, because a scripted fixture runs no task loop at all. Tolerant of a record written before
+ *  these fields existed, since `fleet report` renders whatever `record.json` is on disk. */
+export function isModelRun(record: RunRecordDocument): boolean {
+  return (record.loops ?? []).length > 0;
+}
 
 /**
  * Neutralizes one piece of agent-authored text for inclusion in `report.md`. An onchain vote
@@ -84,34 +91,38 @@ export function renderReport(
     "",
   );
 
-  lines.push("## Decisions", "");
-  lines.push("| Fixture | Proposal | Kind | For | Against | Abstain | Outcome | Link |");
-  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
-  for (const ref of record.proposals) {
-    const proposedEvent = findEvent(record, ref.proposalId, "DecisionProposed");
-    const decisionKind = proposedEvent ? escapeAgentText(String(proposedEvent["kind"] ?? "")) : "";
-    const tally = tallyVotes(record, ref.proposalId);
-    lines.push(
-      `| ${escapeAgentText(ref.fixtureName)} | ${ref.proposalId} | ${decisionKind} | ${formatTokenAmount(tally.forWei.toString())} | ` +
-        `${formatTokenAmount(tally.againstWei.toString())} | ${formatTokenAmount(tally.abstainWei.toString())} | ` +
-        `${ref.outcome} | ${proposalLink(opts.agoraNextBaseUrl, ref.proposalId)} |`,
-    );
-  }
-  lines.push("");
-
-  lines.push("## Vote reasons", "");
-  for (const ref of record.proposals) {
-    lines.push(`### ${escapeAgentText(ref.fixtureName)} (proposal ${ref.proposalId})`, "");
-    const votesForProposal = record.votes.filter((v) => v.proposalId === ref.proposalId);
-    if (votesForProposal.length === 0) {
-      lines.push("No votes were cast.", "");
-      continue;
-    }
-    for (const v of votesForProposal) {
-      const reason = v.onchainReason !== null ? escapeAgentText(v.onchainReason) : `(no vote cast; ${escapeAgentText(v.jobState)})`;
-      lines.push(`- Agent ${v.agentId}: ${reason}`);
+  if (isModelRun(record)) {
+    lines.push(...renderModelSections(record, opts));
+  } else {
+    lines.push("## Decisions", "");
+    lines.push("| Fixture | Proposal | Kind | For | Against | Abstain | Outcome | Link |");
+    lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
+    for (const ref of record.proposals) {
+      const proposedEvent = findEvent(record, ref.proposalId, "DecisionProposed");
+      const decisionKind = proposedEvent ? escapeAgentText(String(proposedEvent["kind"] ?? "")) : "";
+      const tally = tallyVotes(record, ref.proposalId);
+      lines.push(
+        `| ${escapeAgentText(ref.fixtureName)} | ${ref.proposalId} | ${decisionKind} | ${formatTokenAmount(tally.forWei.toString())} | ` +
+          `${formatTokenAmount(tally.againstWei.toString())} | ${formatTokenAmount(tally.abstainWei.toString())} | ` +
+          `${ref.outcome} | ${proposalLink(opts.agoraNextBaseUrl, ref.proposalId)} |`,
+      );
     }
     lines.push("");
+
+    lines.push("## Vote reasons", "");
+    for (const ref of record.proposals) {
+      lines.push(`### ${escapeAgentText(ref.fixtureName)} (proposal ${ref.proposalId})`, "");
+      const votesForProposal = record.votes.filter((v) => v.proposalId === ref.proposalId);
+      if (votesForProposal.length === 0) {
+        lines.push("No votes were cast.", "");
+        continue;
+      }
+      for (const v of votesForProposal) {
+        const reason = v.onchainReason !== null ? escapeAgentText(v.onchainReason) : `(no vote cast; ${escapeAgentText(v.jobState)})`;
+        lines.push(`- Agent ${v.agentId}: ${reason}`);
+      }
+      lines.push("");
+    }
   }
 
   lines.push("## Timeline", "");
@@ -147,4 +158,149 @@ export function renderReport(
   lines.push("");
 
   return lines.join("\n");
+}
+
+function stopReasonLabel(loop: RecordLoop): string {
+  if (loop.error) return `threw: ${escapeAgentText(loop.error)}`;
+  return loop.stopReason ?? "still running when the run ended";
+}
+
+/**
+ * The model-run half of `report.md`, in the order the task 7 controller notes fix: what was run,
+ * what the fleet did, what it proposed, whether that matched the fixture's expectations, the
+ * rubric a person still has to read, and the forced-malformed agents if the acceptance knob was
+ * used.
+ *
+ * The separation the Runner UI uses is kept here too. Anything under an "Onchain" heading is a
+ * fact read off the chain: kind, payload hash, tallies, state. Anything under an "Agent-authored
+ * text" heading is a string a model wrote, escaped with `escapeAgentText` so a reason full of
+ * Markdown cannot forge a heading or a table row in a document that is read as evidence.
+ */
+function renderModelSections(record: RunRecordDocument, opts: { agoraNextBaseUrl?: string }): string[] {
+  const lines: string[] = [];
+  const loops = record.loops ?? [];
+  const steps = record.steps ?? [];
+  const objections = record.objections ?? [];
+  const rubric = record.rubric ?? [];
+  const gatewayLogEntries = record.gatewayLog ?? [];
+  const fixtureName = record.proposals[0]?.fixtureName ?? loops[0]?.fixtureName ?? "(model fixture)";
+
+  lines.push("## Run summary", "");
+  lines.push(`Fixture: \`${escapeAgentText(fixtureName)}\`. Task: ${record.taskId ?? "(unknown)"}.`, "");
+  lines.push("| Agent | Role | Coordinator | Provider | Model | Stop reason |");
+  lines.push("| --- | --- | --- | --- | --- | --- |");
+  for (const loop of loops) {
+    lines.push(
+      `| ${loop.agentId} | ${escapeAgentText(loop.role)} | ${loop.isCoordinator ? "yes" : "no"} | ` +
+        `${escapeAgentText(loop.provider)} | ${escapeAgentText(loop.model)} | ${escapeAgentText(stopReasonLabel(loop))} |`,
+    );
+  }
+  lines.push("");
+
+  lines.push("## What the fleet did", "");
+  lines.push("| Agent | Steps | Gateway blocks | Objections raised | Proposals | Tests passed |");
+  lines.push("| --- | --- | --- | --- | --- | --- |");
+  for (const loop of loops) {
+    lines.push(
+      `| ${loop.agentId} | ${loop.steps} | ${loop.blocked} | ${loop.objections} | ${loop.proposed.length} | ${loop.testsPassed ? "yes" : "no"} |`,
+    );
+  }
+  lines.push("");
+  const gatewayBlocks = gatewayLogEntries.filter((entry) => (entry as { verdict?: string })?.verdict === "BLOCK").length;
+  lines.push(
+    `The gateway ruled on ${gatewayLogEntries.length} tool call${gatewayLogEntries.length === 1 ? "" : "s"} in total, ` +
+      `blocking ${gatewayBlocks} of them. The coordinator published ${steps.length} step${steps.length === 1 ? "" : "s"} ` +
+      `to the shared board, and ${objections.length} objection prompt${objections.length === 1 ? " was" : "s were"} answered.`,
+    "",
+  );
+
+  lines.push("## Proposals", "");
+  if (record.proposals.length === 0) {
+    lines.push(
+      "The fleet never diverged: no proposal was made during this run. That is a result, not a missing one. " +
+        "The gateway log above shows every call the fleet made and how the charter ruled on it.",
+      "",
+    );
+  }
+  for (const ref of record.proposals) {
+    const tally = tallyVotes(record, ref.proposalId);
+    lines.push(`### Proposal ${ref.proposalId}`, "");
+    lines.push("Onchain:", "");
+    lines.push(`- Kind: ${escapeAgentText(ref.kind ?? "")}`);
+    lines.push(`- Payload hash: \`${escapeAgentText(ref.payloadHash ?? "")}\``);
+    if (ref.action) {
+      lines.push(`- Decoded action: ${escapeAgentText(ref.action.class)} ${escapeAgentText(ref.action.target)} (args hash \`${escapeAgentText(ref.action.argsHash)}\`)`);
+    } else {
+      lines.push("- Decoded action: none (this decision's payload is a charter, not one call)");
+    }
+    lines.push(`- Proposed by agent: ${ref.proposerAgentId ?? "(unknown)"}`);
+    lines.push(
+      `- Tally: For ${formatTokenAmount(tally.forWei.toString())}, Against ${formatTokenAmount(tally.againstWei.toString())}, ` +
+        `Abstain ${formatTokenAmount(tally.abstainWei.toString())}`,
+    );
+    lines.push(`- Final state: ${escapeAgentText(ref.outcome)}`);
+    lines.push(`- Agora Next: ${proposalLink(opts.agoraNextBaseUrl, ref.proposalId)}`);
+    lines.push("");
+    lines.push("Agent-authored text:", "");
+    lines.push(`- Summary: ${escapeAgentText(ref.summary ?? "")}`);
+    const votesForProposal = record.votes.filter((v) => v.proposalId === ref.proposalId);
+    if (votesForProposal.length === 0) {
+      lines.push("- No votes were cast.");
+    }
+    for (const v of votesForProposal) {
+      const reason = v.onchainReason !== null ? escapeAgentText(v.onchainReason) : `(no vote cast; ${escapeAgentText(v.jobState)})`;
+      lines.push(`- Agent ${v.agentId}: ${reason}`);
+    }
+    lines.push("");
+  }
+
+  lines.push("## Expected versus actual", "");
+  if (!record.expected) {
+    lines.push("This run recorded no expectation evaluation.", "");
+  } else {
+    lines.push(`Overall: ${record.expected.pass ? "PASS" : "FAIL"}.`, "");
+    lines.push("| Check | Result | Detail |");
+    lines.push("| --- | --- | --- |");
+    for (const check of record.expected.checks) {
+      lines.push(`| ${escapeAgentText(check.name)} | ${check.ok ? "pass" : "FAIL"} | ${escapeAgentText(check.detail)} |`);
+    }
+    lines.push("");
+    if (record.expected.rechecks.length > 0) {
+      lines.push("Gateway verdicts re-checked after the run, on the exact calls the fleet was blocked on:", "");
+      for (const recheck of record.expected.rechecks) {
+        lines.push(
+          `- ${escapeAgentText(recheck.descriptor.class)} ${escapeAgentText(recheck.descriptor.target)}: ${escapeAgentText(recheck.detail)}` +
+            (recheck.unreadable ? " (the ledger read failed, so this is the gateway failing closed, not the charter's answer)" : ""),
+        );
+      }
+      lines.push("");
+    }
+  }
+
+  lines.push("## Rubric", "");
+  if (rubric.length === 0) {
+    lines.push("This fixture carries no rubric.", "");
+  } else {
+    lines.push("These are for a person to check against the evidence above; nothing here is asserted automatically.", "");
+    for (const item of rubric) {
+      lines.push(`- [ ] ${escapeAgentText(item)}`);
+    }
+    lines.push("");
+  }
+
+  const forced = (record.jobs ?? []).filter((job) => job.lastError?.includes("forced-malformed"));
+  if (forced.length > 0) {
+    lines.push("## Forced-malformed agents (test knob)", "");
+    lines.push(
+      "`FLEET_FORCE_MALFORMED_AGENTS` made these agents' vote provider return unusable output on every call. " +
+        "Spec 10.6 says such output is a worker failure and a missing vote, never a For and never a synthesized Abstain:",
+      "",
+    );
+    for (const job of forced) {
+      lines.push(`- Agent ${job.agentId} (${escapeAgentText(job.fixtureName)}): job state \`${escapeAgentText(job.jobState)}\`, no vote cast`);
+    }
+    lines.push("");
+  }
+
+  return lines;
 }

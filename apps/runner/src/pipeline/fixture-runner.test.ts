@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { FixtureV1 } from "@fleet/schemas";
 import type { FleetClient } from "@fleet/sdk";
-import { buildTriggerDecision, computeTriggerProposalId, findExistingProposal } from "./fixture-runner.js";
+import { buildTriggerDecision, computeFixtureMismatches, computeTriggerProposalId, findExistingProposal, findGuardianActionsOnChain } from "./fixture-runner.js";
 import type { FixtureRunContext } from "./fixture-runner.js";
 
 const fixture: FixtureV1 = {
@@ -148,5 +148,137 @@ describe("findExistingProposal (task 8 finding 1: resume must not re-submit)", (
     expect(resumed?.proposalId).toBe(idBeforeCrash);
     expect(resumed?.txHash).toBe("0xthetransactionthatlandedbeforethecrash");
     expect(getProposalCreated).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+const okGatewayAfter = {
+  ts: "t",
+  blockNumber: "9",
+  taskId: "1",
+  agentId: 1,
+  charterVersion: 1,
+  descriptor: { class: "network_fetch", target: "examples.internal", argsHash: `0x${"55".repeat(32)}` },
+  payloadHash: `0x${"44".repeat(32)}`,
+  verdict: "BLOCK" as const,
+  reason: "target_not_allowlisted",
+};
+
+describe("computeFixtureMismatches", () => {
+  const expected = { outcome: "Defeated" as const, decisionCount: 0, gatewayAfter: "BLOCK" as const };
+
+  function run(overrides: Partial<Parameters<typeof computeFixtureMismatches>[0]> = {}): string[] {
+    return computeFixtureMismatches({
+      expected,
+      finalStateName: "Defeated",
+      decisionCount: 0,
+      charterVersion: 1,
+      gatewayAfter: okGatewayAfter,
+      missingVotes: 0,
+      revertedAttempts: 0,
+      ...overrides,
+    });
+  }
+
+  it("reports nothing when every expectation holds", () => {
+    expect(run()).toEqual([]);
+  });
+
+  it("names each expectation that did not hold", () => {
+    expect(run({ finalStateName: "Executed" })[0]).toContain("outcome: expected Defeated, got Executed");
+    expect(run({ decisionCount: 1 })[0]).toContain("decisionCount: expected 0, got 1");
+    expect(run({ expected: { ...expected, charterVersion: 2 } })[0]).toContain("charterVersion: expected 2, got 1");
+    expect(run({ expected: { ...expected, missingVotes: 1 } })[0]).toContain("missingVotes: expected 1, got 0");
+    expect(run({ expected: { ...expected, revertedAttempts: 2 } })[0]).toContain("revertedAttempts: expected 2, got 0");
+  });
+
+  it("reports a gatewayAfter verdict that differs from the expected one", () => {
+    const after = { ...okGatewayAfter, verdict: "ALLOW" as const, reason: undefined, basis: "charter" };
+    expect(run({ gatewayAfter: after })[0]).toContain("gatewayAfter: expected BLOCK, got ALLOW");
+  });
+
+  it("treats a ledger_unreadable BLOCK as an expectation that could not be evaluated, never a satisfied one (fix-wave finding 3)", () => {
+    const unreadable = { ...okGatewayAfter, reason: "ledger_unreadable" };
+    const mismatches = run({ gatewayAfter: unreadable });
+    expect(mismatches.length).toBe(1);
+    expect(mismatches[0]).toContain("gatewayAfter: could not be evaluated");
+    expect(mismatches[0]).toContain("ledger_unreadable");
+    expect(mismatches[0]).toContain("failed closed");
+  });
+
+  it("fails an ALLOW expectation on a ledger_unreadable BLOCK too, rather than reporting a plain verdict mismatch", () => {
+    const mismatches = run({
+      expected: { ...expected, gatewayAfter: "ALLOW" },
+      gatewayAfter: { ...okGatewayAfter, reason: "ledger_unreadable" },
+    });
+    expect(mismatches[0]).toContain("could not be evaluated");
+  });
+
+  it("skips the gatewayAfter rule entirely when the fixture does not set one", () => {
+    const noExpectation = { outcome: "Defeated" as const, decisionCount: 0 };
+    expect(run({ expected: noExpectation, gatewayAfter: { ...okGatewayAfter, reason: "ledger_unreadable" } })).toEqual([]);
+  });
+});
+
+describe("findGuardianActionsOnChain (fix-wave finding 2: a resumed guardian fixture keeps its fees)", () => {
+  const OPERATION_ID = `0x${"ee".repeat(32)}` as const;
+
+  function guardianCtx(logs: {
+    cancelled: { blockNumber: bigint; transactionHash: string }[];
+    paused: { blockNumber: bigint; transactionHash: string }[];
+    unpaused: { blockNumber: bigint; transactionHash: string }[];
+  }): FixtureRunContext {
+    return {
+      addresses,
+      client: {
+        getProposalCreated: async () => ({ targets: [addresses.ledger], values: [0n], calldatas: ["0xdead"], description: "desc" }),
+        publicClient: {
+          readContract: async () => OPERATION_ID,
+          getContractEvents: async ({ eventName }: { eventName: string }) => {
+            if (eventName === "Cancelled") return logs.cancelled;
+            if (eventName === "Paused") return logs.paused;
+            return logs.unpaused;
+          },
+        },
+      },
+    } as unknown as FixtureRunContext;
+  }
+
+  it("recovers the pause, cancel and unpause that bracket the timelock cancel", async () => {
+    const ctx = guardianCtx({
+      cancelled: [{ blockNumber: 20n, transactionHash: "0xcancel" }],
+      paused: [
+        { blockNumber: 5n, transactionHash: "0xpause-older" },
+        { blockNumber: 19n, transactionHash: "0xpause" },
+        { blockNumber: 40n, transactionHash: "0xpause-later" },
+      ],
+      unpaused: [
+        { blockNumber: 6n, transactionHash: "0xunpause-older" },
+        { blockNumber: 21n, transactionHash: "0xunpause" },
+      ],
+    });
+
+    const result = await findGuardianActionsOnChain(ctx, 100n, "desc");
+
+    expect(result).toEqual({
+      operationId: OPERATION_ID,
+      pauseTxHash: "0xpause",
+      cancelTxHash: "0xcancel",
+      unpauseTxHash: "0xunpause",
+    });
+  });
+
+  it("returns null rather than inventing a hash when the cancel cannot be found", async () => {
+    const ctx = guardianCtx({ cancelled: [], paused: [{ blockNumber: 1n, transactionHash: "0xpause" }], unpaused: [] });
+    expect(await findGuardianActionsOnChain(ctx, 100n, "desc")).toBeNull();
+  });
+
+  it("returns null when the cancel is there but the pause or unpause is not", async () => {
+    const ctx = guardianCtx({
+      cancelled: [{ blockNumber: 20n, transactionHash: "0xcancel" }],
+      paused: [{ blockNumber: 30n, transactionHash: "0xpause-after-the-cancel" }],
+      unpaused: [{ blockNumber: 21n, transactionHash: "0xunpause" }],
+    });
+    expect(await findGuardianActionsOnChain(ctx, 100n, "desc")).toBeNull();
   });
 });

@@ -10,7 +10,7 @@ import {
   verifyDescriptionAgainstCalldata,
 } from "@fleet/sdk";
 import type { FleetClient, FleetSigner, NonceManager } from "@fleet/sdk";
-import type { AnchoredProposal, DecisionPolicy, PolicyOutput } from "./policy.js";
+import type { AnchoredProposal, DecisionPolicy, PolicyMeta, PolicyOutput } from "./policy.js";
 import type { JobKey, JobRecord, JobState, JobStore } from "./jobs.js";
 
 export type WorkerConfig = {
@@ -72,6 +72,20 @@ function parseRole(manifest: string): string {
     // fall through
   }
   return "unknown";
+}
+
+/** The job record's provider bookkeeping columns, from a policy's optional `meta`. An absent
+ *  `meta` (every `ScriptedPolicy` output) patches nothing at all, so the columns stay null rather
+ *  than being overwritten with placeholder values. */
+function providerPatch(meta: PolicyMeta | undefined): Partial<JobRecord> {
+  if (!meta) return {};
+  return {
+    providerId: meta.provider,
+    modelId: meta.model,
+    promptVersion: meta.promptVersion,
+    inferenceLatencyMs: meta.latencyMs,
+    usage: { inputTokens: meta.inputTokens, outputTokens: meta.outputTokens },
+  };
 }
 
 type SubmissionWindow = { ok: true } | { ok: false; reason: string };
@@ -264,7 +278,12 @@ export class Worker {
     } catch (err) {
       return this.persist(key, { state: "worker_failed", lastError: errorMessage(err) });
     }
-    await this.persist(key, { state: "EVALUATE" });
+    // A model-backed policy reports what the inference was and what it cost; a scripted one
+    // reports nothing and leaves every provider column null. Written here, before the output's
+    // own branch is taken, so a malformed or absent result still records its cost (spec 10.4's
+    // job fields and spec 15.5's per-run metrics both need the failures counted, not only the
+    // ballots).
+    await this.persist(key, { state: "EVALUATE", ...providerPatch(output.meta) });
 
     if (output.kind === "malformed") {
       // Spec 10.6: malformed output is a worker failure and a missing vote, never a For and

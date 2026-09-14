@@ -1,4 +1,5 @@
 import type { Hex } from "viem";
+import { roleSlug } from "./providers/prompts.js";
 import type { ToolCall } from "./sandbox/tools.js";
 
 /**
@@ -172,4 +173,21 @@ export class StepBoard {
       }
     }
   }
+}
+
+/**
+ * Which member of a fleet drives the task loop as coordinator (spec 10.3), by role rather than by
+ * position: the first member whose role slug equals the fixture's `coordinatorRole` slug, and
+ * agent 0 when no member carries that role. Both sides go through `roleSlug`, so `"Budget
+ * reviewer"` in a deploy manifest and `"budget-reviewer"` in a fixture name the same member.
+ *
+ * Returns an index into `members`, which the Runner builds in agent id order, so the return value
+ * is the coordinator's agent id. Falling back to 0 rather than throwing is deliberate: a fixture
+ * naming a role the deployed fleet does not have is a configuration mismatch worth a warning, not
+ * a reason to refuse to run a fleet that is otherwise ready.
+ */
+export function pickCoordinator(members: readonly { agentId: number; role: string }[], coordinatorRole: string): number {
+  const wanted = roleSlug(coordinatorRole);
+  const match = members.find((m) => roleSlug(m.role) === wanted);
+  return match ? match.agentId : 0;
 }

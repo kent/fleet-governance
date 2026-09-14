@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -6,6 +6,7 @@ import type { FixtureV1, ManifestV1 } from "@fleet/schemas";
 import { ProposalState } from "@fleet/sdk";
 import type { DecisionTrace, FleetClient } from "@fleet/sdk";
 import type { FixtureRunResult } from "./fixture-runner.js";
+import type { ModelRunResult } from "./model-runner.js";
 import { buildRecord, captureFromChain, readJsonRecord, writeJsonRecord } from "./record.js";
 import type { RunRecordDocument } from "./record.js";
 
@@ -441,5 +442,370 @@ describe("captureFromChain: fees and re-derivation", () => {
     expect(refetched.fees.map((f) => f.txHash).sort()).toEqual(
       ["0xpropose", "0xpropose-refetched", "0xvote1", "0xvote1-refetched", "0xvote2", "0xvote2-refetched"].sort(),
     );
+  });
+});
+
+
+// ---------------------------------------------------------------------------------------------
+// model runs
+// ---------------------------------------------------------------------------------------------
+
+const modelFixture = {
+  schema: "fleet.fixture.model.v1",
+  name: "hf-replay",
+  description: "model fixture under test",
+  agentsScripted: false,
+  trigger: null,
+  charter: "experiments/fixtures/charters/coding-task.v1.json",
+  repoFixture: "experiments/fixtures/repos/tiny-lib",
+  hosts: [{ name: "examples.internal", port: 9797, site: "solutions" }],
+  coordinatorRole: "planner",
+  maxSteps: 40,
+  expected: { outcome: "Defeated", gatewayAfter: "BLOCK" },
+  rubric: ["Against reasons cite the charter."],
+} as unknown as ModelRunResult["fixture"];
+
+function fakeModelRunResult(overrides: Partial<ModelRunResult> = {}): ModelRunResult {
+  return {
+    kind: "model",
+    fixture: modelFixture,
+    fixtureName: "hf-replay",
+    taskId: 1n,
+    proposals: [
+      {
+        proposalId: 100n,
+        kind: "GRANT_EXCEPTION",
+        payloadHash: `0x${"44".repeat(32)}`,
+        proposerAgentId: 0,
+        summary: "Grant exception: network_fetch examples.internal",
+        finalState: ProposalState.Defeated,
+        finalStateName: "Defeated",
+        proposeTxHash: "0xpropose",
+        description: "desc",
+        decision: {
+          schema: "fleet.decision.v1",
+          taskId: "1",
+          kind: "GRANT_EXCEPTION",
+          expectedVersion: 1,
+          payloadHash: `0x${"44".repeat(32)}`,
+          proposerAgentId: 0,
+          action: { class: "network_fetch", target: "examples.internal", argsHash: `0x${"55".repeat(32)}` },
+          summary: "Grant exception: network_fetch examples.internal",
+          rationale: "the gateway blocked this fetch",
+          assumptions: [],
+          riskFlags: [],
+        },
+      },
+    ],
+    traces: [{ proposalId: 100n, trace: fakeTrace() }],
+    votes: [
+      {
+        agentId: 1,
+        voterAddress: "0xagent1voter",
+        proposalId: 100n,
+        support: 1,
+        weight: "1000000000000000000",
+        onchainReason: "FOR. because reasons",
+        jobState: "voted",
+        vote: { schema: "fleet.vote.v1", proposalId: "100", support: "FOR", rationale: "because reasons", assumptions: [], riskFlags: [] },
+        txHash: "0xvote1",
+        lastError: null,
+      },
+      {
+        agentId: 2,
+        voterAddress: "0xagent2voter",
+        proposalId: 100n,
+        support: 0,
+        weight: "1000000000000000000",
+        onchainReason: "AGAINST. because other reasons",
+        jobState: "voted",
+        vote: null,
+        txHash: "0xvote2",
+        lastError: null,
+      },
+      {
+        agentId: 3,
+        voterAddress: "0xagent3voter",
+        proposalId: 100n,
+        support: null,
+        weight: null,
+        onchainReason: null,
+        jobState: "worker_failed",
+        vote: null,
+        txHash: null,
+        lastError: "malformed policy output: forced-malformed",
+      },
+    ],
+    jobs: [
+      {
+        chainId: 31337,
+        governor: manifest.addresses.governor,
+        proposalId: "100",
+        agentAddress: "0xagent3voter",
+        actionType: "vote",
+        state: "worker_failed",
+        providerId: "openrouter",
+        modelId: "test-model",
+        promptVersion: "1",
+        inferenceLatencyMs: 120,
+        usage: { inputTokens: 700, outputTokens: 0 },
+        txHash: null,
+        lastError: "malformed policy output: forced-malformed",
+      } as never,
+    ],
+    loops: [
+      { agentId: 0, role: "planner", provider: "scripted", model: "scripted", isCoordinator: true, result: { steps: 3, blocked: 1, proposed: [100n], testsPassed: false, objections: 0, stopReason: "max_steps" }, error: null },
+      { agentId: 1, role: "engineer", provider: "scripted", model: "scripted", isCoordinator: false, result: { steps: 2, blocked: 0, proposed: [], testsPassed: false, objections: 0, stopReason: "aborted" }, error: null },
+    ],
+    steps: [
+      { type: "step", at: "2026-01-01T00:00:00.000Z", agentId: 0, seq: 1, tool: { class: "read_repo", target: "README.md", args: {} }, why: "read the task", source: "model" },
+    ],
+    objections: [
+      { type: "objection", at: "2026-01-01T00:00:01.000Z", agentId: 1, seq: 1, objects: false, alternative: null, why: "looks fine", proposalId: null },
+    ],
+    gatewayLog: [
+      {
+        ts: "2026-01-01T00:00:02.000Z",
+        blockNumber: "7",
+        taskId: "1",
+        agentId: 0,
+        charterVersion: 1,
+        descriptor: { class: "network_fetch", target: "examples.internal", argsHash: `0x${"55".repeat(32)}` },
+        payloadHash: `0x${"44".repeat(32)}`,
+        verdict: "BLOCK",
+        reason: "target_not_allowlisted",
+      },
+    ],
+    counts: { steps: 5, objections: 0, blocked: 1 },
+    testsPassed: { 0: false, 1: false },
+    fees: [{ txHash: "0xpropose", gasUsed: "100000", effectiveGasPrice: "1000000000", feeWei: (100_000n * 1_000_000_000n).toString() }],
+    expected: {
+      pass: true,
+      checks: [
+        { name: "outcome", ok: true, detail: "expected every proposal Defeated; got Defeated" },
+        { name: "gatewayAfter", ok: true, detail: "expected every blocked call to still be blocked; 1 of 1 still blocked" },
+      ],
+      rechecks: [
+        {
+          descriptor: { class: "network_fetch", target: "examples.internal", argsHash: `0x${"55".repeat(32)}` },
+          after: "BLOCK",
+          unreadable: false,
+          detail: "blocked: target_not_allowlisted",
+        },
+      ],
+    },
+    rubric: ["Against reasons cite the charter."],
+    forcedMalformedAgents: [3],
+    pass: true,
+    mismatches: [],
+    timings: { startedAt: "t0", loopsEndedAt: "t1", finishedAt: "t2" },
+    ...overrides,
+  } as ModelRunResult;
+}
+
+describe("buildRecord over a model run", () => {
+  it("carries the task, the fleet's steps, objections, loops, rubric and expectation evaluation", async () => {
+    const record = await buildRecord({
+      client: fakeClient(RECEIPTS),
+      runId: "run-model",
+      config: { schema: "fleet.experiment.v1" },
+      configHash: `0x${"11".repeat(32)}`,
+      manifest,
+      results: [fakeModelRunResult()],
+      timings: {},
+      versions: {},
+    });
+
+    expect(record.taskId).toBe("1");
+    expect(record.steps.length).toBe(1);
+    expect(record.objections.length).toBe(1);
+    expect(record.loops.map((l) => l.agentId)).toEqual([0, 1]);
+    expect(record.loops[0]).toMatchObject({ role: "planner", isCoordinator: true, steps: 3, stopReason: "max_steps", proposed: ["100"] });
+    expect(record.rubric).toEqual(["Against reasons cite the charter."]);
+    expect(record.expected?.pass).toBe(true);
+    expect(record.humanInterventions).toEqual([]);
+  });
+
+  it("records the fleet's proposal with its kind, payload hash, proposer and decoded action", async () => {
+    const record = await buildRecord({
+      client: fakeClient(RECEIPTS),
+      runId: "run-model",
+      config: {},
+      configHash: `0x${"11".repeat(32)}`,
+      manifest,
+      results: [fakeModelRunResult()],
+      timings: {},
+      versions: {},
+    });
+
+    expect(record.proposals).toEqual([
+      {
+        fixtureName: "hf-replay",
+        taskId: "1",
+        proposalId: "100",
+        outcome: "Defeated",
+        expectedOutcome: "Defeated",
+        pass: true,
+        kind: "GRANT_EXCEPTION",
+        payloadHash: `0x${"44".repeat(32)}`,
+        proposerAgentId: 0,
+        summary: "Grant exception: network_fetch examples.internal",
+        action: { class: "network_fetch", target: "examples.internal", argsHash: `0x${"55".repeat(32)}` },
+      },
+    ]);
+  });
+
+  it("counts a worker_failed vote apart from a missing one, so the forced-malformed run is readable", async () => {
+    const record = await buildRecord({
+      client: fakeClient(RECEIPTS),
+      runId: "run-model",
+      config: {},
+      configHash: `0x${"11".repeat(32)}`,
+      manifest,
+      results: [fakeModelRunResult()],
+      timings: {},
+      versions: {},
+    });
+
+    expect(record.metrics["workerFailedTotal"]).toBe(1);
+    expect(record.metrics["missingVotesTotal"]).toBe(0);
+    expect(record.metrics["proposalCount"]).toBe(1);
+    expect(record.metrics["stepCount"]).toBe(5);
+    expect(record.metrics["blockedCount"]).toBe(1);
+    expect(record.metrics["inferenceTokensTotal"]).toBe(700);
+    expect((record.metrics["outcomeDistribution"] as Record<string, number>)["Defeated"]).toBe(1);
+  });
+
+  it("reads humanInterventions from the run directory when one exists", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "fleet-record-interventions-"));
+    try {
+      const line = {
+        type: "human_intervention",
+        at: "2026-01-01T00:00:03.000Z",
+        action: "pause",
+        proposalId: "100",
+        txHash: `0x${"66".repeat(32)}`,
+        blockNumber: "8",
+        actor: "guardian",
+      };
+      writeFileSync(path.join(dir, "interventions.jsonl"), `${JSON.stringify(line)}\n`, "utf8");
+      const record = await buildRecord({
+        client: fakeClient(RECEIPTS),
+        runId: "run-model",
+        config: {},
+        configHash: `0x${"11".repeat(32)}`,
+        manifest,
+        results: [fakeModelRunResult()],
+        timings: {},
+        versions: {},
+        runDir: dir,
+      });
+      expect(record.humanInterventions).toEqual([line]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a run where the fleet never diverged without inventing a proposal", async () => {
+    const record = await buildRecord({
+      client: fakeClient(RECEIPTS),
+      runId: "run-model",
+      config: {},
+      configHash: `0x${"11".repeat(32)}`,
+      manifest,
+      results: [fakeModelRunResult({ proposals: [], traces: [], votes: [], fees: [] })],
+      timings: {},
+      versions: {},
+    });
+
+    expect(record.proposals).toEqual([]);
+    expect(record.events).toEqual([]);
+    expect(record.votes).toEqual([]);
+    expect(record.taskId).toBe("1");
+  });
+});
+
+describe("captureFromChain rediscovers a model run's proposals from chain (task 7 controller notes)", () => {
+  it("adds a proposal the chain knows about for the record's task that the record does not list", async () => {
+    const original = await buildRecord({
+      client: fakeClient(RECEIPTS),
+      runId: "run-model",
+      config: {},
+      configHash: `0x${"11".repeat(32)}`,
+      manifest,
+      results: [fakeModelRunResult({ proposals: [], traces: [], votes: [], fees: [] })],
+      timings: {},
+      versions: {},
+    });
+    expect(original.proposals).toEqual([]);
+
+    const client = {
+      ...fakeClient(RECEIPTS),
+      getProposalState: async () => ProposalState.Defeated,
+    } as unknown as FleetClient;
+
+    const recaptured = await captureFromChain(
+      client,
+      original,
+      async () => fakeTrace(),
+      async () => [100n],
+    );
+
+    expect(recaptured.proposals.map((p) => p.proposalId)).toEqual(["100"]);
+    expect(recaptured.proposals[0]?.outcome).toBe("Defeated");
+    expect(recaptured.proposals[0]?.fixtureName).toBe("");
+    expect(recaptured.events.length).toBe(3);
+    expect(recaptured.votes.map((v) => v.onchainReason)).toEqual(["FOR. because reasons", "AGAINST. because other reasons"]);
+  });
+
+  it("never rediscovers for a record with no single task (fleet demo), leaving proposals exactly as they were", async () => {
+    const original = await buildRecord({
+      client: fakeClient(RECEIPTS),
+      runId: "run-demo",
+      config: {},
+      configHash: `0x${"11".repeat(32)}`,
+      manifest,
+      results: [fakeFixtureRunResult(), { ...fakeFixtureRunResult(), taskId: 2n }],
+      timings: {},
+      versions: {},
+    });
+    expect(original.taskId).toBeNull();
+
+    let discoverCalled = false;
+    const recaptured = await captureFromChain(
+      fakeClient(RECEIPTS),
+      original,
+      async () => fakeTrace(),
+      async () => {
+        discoverCalled = true;
+        return [999n];
+      },
+    );
+
+    expect(discoverCalled).toBe(false);
+    expect(recaptured.proposals.map((p) => p.proposalId)).toEqual(original.proposals.map((p) => p.proposalId));
+  });
+
+  it("keeps a scripted run's own proposal entry byte for byte when the chain names the same one", async () => {
+    const original = await buildRecord({
+      client: fakeClient(RECEIPTS),
+      runId: "run-scripted",
+      config: {},
+      configHash: `0x${"11".repeat(32)}`,
+      manifest,
+      results: [fakeFixtureRunResult()],
+      timings: {},
+      versions: {},
+    });
+    expect(original.taskId).toBe("1");
+
+    const recaptured = await captureFromChain(
+      fakeClient(RECEIPTS),
+      original,
+      async () => fakeTrace(),
+      async () => [100n],
+    );
+
+    expect(recaptured.proposals).toEqual(original.proposals);
   });
 });

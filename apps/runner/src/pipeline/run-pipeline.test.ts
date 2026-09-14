@@ -1,9 +1,19 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExperimentConfigV1, ManifestV1 } from "@fleet/schemas";
-import { experimentConfigHash, loadRunKeysFromEnv, manifestPathsForRun, rehydrateRunCtx } from "./run-pipeline.js";
+import {
+  LOCAL_ANVIL_CHAIN_ID,
+  experimentConfigHash,
+  loadRunKeysFromEnv,
+  manifestPathsForRun,
+  readCaptureReportDir,
+  rehydrateRunCtx,
+  resolveReportDir,
+} from "./run-pipeline.js";
+import { anvilDevKey, DEMO_ACCOUNT_INDEX } from "../anvil-keys.js";
 import type { RunPipelineCtx, RunPipelineOptions } from "./run-pipeline.js";
 import { MemoryRunStore } from "./state.js";
 
@@ -141,6 +151,7 @@ describe("rehydrateRunCtx (final review I1)", () => {
       runId: "run-1",
       experimentPath: "unused.json",
       fixturesDir: "unused",
+      repoRoot: "unused",
       contractsDir: "unused",
       configDir: "unused",
       infraDir: "unused",
@@ -200,6 +211,32 @@ describe("rehydrateRunCtx (final review I1)", () => {
     expect(rehydrated.taskId).toBeNull();
   });
 
+  it("re-reads record.json off disk so a resume past AGENTS_RUNNING can reach CAPTURED and REPORTED (fix-wave finding 1)", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "fleet-rehydrate-"));
+    const reportDir = path.join(dir, "reports");
+    const recordPath = path.join(reportDir, "run-1", "record.json");
+    mkdirSync(path.dirname(recordPath), { recursive: true });
+    writeFileSync(recordPath, JSON.stringify({ schema: "fleet.record.v1", runId: "run-1", proposals: [] }), "utf8");
+
+    const base = makeCtx(dir);
+    const ctx = { ...base, opts: { ...base.opts, reportDir } };
+    const rehydrated = rehydrateRunCtx(ctx, { chainId: 31337, taskId: null, recordPath, reportPath: path.join(reportDir, "run-1", "report.md") }, RUN_ENV);
+
+    expect(rehydrated.recordPath).toBe(recordPath);
+    expect(rehydrated.record?.runId).toBe("run-1");
+    expect(rehydrated.reportPath).toBe(path.join(reportDir, "run-1", "report.md"));
+  });
+
+  it("leaves record and recordPath null when no record has been written yet", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "fleet-rehydrate-"));
+    const base = makeCtx(dir);
+    const ctx = { ...base, opts: { ...base.opts, reportDir: path.join(dir, "reports") } };
+    const rehydrated = rehydrateRunCtx(ctx, { chainId: 31337, taskId: null }, RUN_ENV);
+    expect(rehydrated.record).toBeNull();
+    expect(rehydrated.recordPath).toBeNull();
+    expect(rehydrated.reportPath).toBeNull();
+  });
+
   it("leaves the manifest null when the checkpoint is from before DEPLOYED", () => {
     dir = mkdtempSync(path.join(tmpdir(), "fleet-rehydrate-"));
     const rehydrated = rehydrateRunCtx(makeCtx(dir), { chainId: 31337, taskId: null }, RUN_ENV);
@@ -242,5 +279,119 @@ describe("experimentConfigHash (final review I3)", () => {
     // The exact regression: hashing only {schema, name} made every config with this name equal.
     const schemaAndNameOnly = { schema: base.schema, name: base.name };
     expect(experimentConfigHash(base)).not.toBe(experimentConfigHash(schemaAndNameOnly));
+  });
+});
+
+
+describe("loadRunKeysFromEnv: the local-Anvil fallback", () => {
+  const BASE_SEPOLIA = 84532;
+
+  it("resolves every role to its well-known Anvil dev account when nothing is set and the chain is Anvil", () => {
+    const keys = loadRunKeysFromEnv({}, 3, { chainId: LOCAL_ANVIL_CHAIN_ID });
+
+    expect(keys.deployerKey).toBe(anvilDevKey(DEMO_ACCOUNT_INDEX.deployer));
+    expect(keys.operatorKey).toBe(anvilDevKey(DEMO_ACCOUNT_INDEX.operator));
+    expect(keys.guardianKey).toBe(anvilDevKey(DEMO_ACCOUNT_INDEX.guardian));
+    expect(keys.keeperKey).toBe(anvilDevKey(DEMO_ACCOUNT_INDEX.keeper));
+    expect(keys.agentKeys).toEqual({
+      0: anvilDevKey(DEMO_ACCOUNT_INDEX.agent(0)),
+      1: anvilDevKey(DEMO_ACCOUNT_INDEX.agent(1)),
+      2: anvilDevKey(DEMO_ACCOUNT_INDEX.agent(2)),
+    });
+  });
+
+  it("logs one line per fallback, naming the variable and the role and no key material", () => {
+    const lines: string[] = [];
+    const keys = loadRunKeysFromEnv({}, 1, { chainId: LOCAL_ANVIL_CHAIN_ID, log: (m) => lines.push(m) });
+
+    expect(lines.length).toBe(5);
+    expect(lines.some((l) => l.includes("FLEET_DEPLOYER_KEY") && l.includes("deployer"))).toBe(true);
+    expect(lines.some((l) => l.includes("FLEET_AGENT_KEY_0") && l.includes("agent 0"))).toBe(true);
+    for (const line of lines) {
+      expect(line).not.toContain("0x");
+      expect(line).toContain("public");
+    }
+    // and nothing in the log is any of the keys it resolved
+    const material = [keys.deployerKey, keys.operatorKey, keys.guardianKey, keys.keeperKey, keys.agentKeys[0]!];
+    for (const key of material) expect(lines.join("\n")).not.toContain(key);
+  });
+
+  it("lets an explicitly set variable win over the fallback", () => {
+    const keys = loadRunKeysFromEnv({ FLEET_OPERATOR_KEY: KEY(9) }, 1, { chainId: LOCAL_ANVIL_CHAIN_ID });
+
+    expect(keys.operatorKey).toBe(KEY(9));
+    expect(keys.deployerKey).toBe(anvilDevKey(DEMO_ACCOUNT_INDEX.deployer));
+  });
+
+  it("treats an empty string as unset, so an exported-but-blank variable still falls back", () => {
+    const keys = loadRunKeysFromEnv({ FLEET_KEEPER_KEY: "   " }, 0, { chainId: LOCAL_ANVIL_CHAIN_ID });
+    expect(keys.keeperKey).toBe(anvilDevKey(DEMO_ACCOUNT_INDEX.keeper));
+  });
+
+  it("refuses the fallback on any other chain, naming the missing variable", () => {
+    expect(() => loadRunKeysFromEnv({}, 1, { chainId: BASE_SEPOLIA })).toThrow(/FLEET_DEPLOYER_KEY/);
+    expect(() =>
+      loadRunKeysFromEnv(
+        {
+          FLEET_DEPLOYER_KEY: KEY(1),
+          FLEET_OPERATOR_KEY: KEY(2),
+          FLEET_GUARDIAN_KEY: KEY(3),
+          FLEET_KEEPER_KEY: KEY(4),
+        },
+        1,
+        { chainId: BASE_SEPOLIA },
+      ),
+    ).toThrow(/FLEET_AGENT_KEY_0/);
+  });
+
+  it("refuses the fallback when the chain id could not be read at all", () => {
+    expect(() => loadRunKeysFromEnv({}, 1, { chainId: null })).toThrow(/FLEET_DEPLOYER_KEY/);
+    expect(() => loadRunKeysFromEnv({}, 1)).toThrow(/FLEET_DEPLOYER_KEY/);
+  });
+});
+
+describe("resolveReportDir (fix-wave finding 4: capture.reportDir is no longer dead config)", () => {
+  it("prefers an explicit --report-dir over everything", () => {
+    expect(resolveReportDir({ explicit: "/tmp/explicit", captureReportDir: "experiments/reports", repoRoot: "/repo", fallback: "/fallback" })).toBe(
+      path.resolve("/tmp/explicit"),
+    );
+  });
+
+  it("uses the experiment's capture.reportDir, resolved against the repository root, when no flag is given", () => {
+    expect(resolveReportDir({ captureReportDir: "experiments/reports", repoRoot: "/repo", fallback: "/fallback" })).toBe(
+      path.join("/repo", "experiments", "reports"),
+    );
+  });
+
+  it("keeps an absolute capture.reportDir as it is", () => {
+    expect(resolveReportDir({ captureReportDir: "/var/fleet-reports", repoRoot: "/repo", fallback: "/fallback" })).toBe("/var/fleet-reports");
+  });
+
+  it("falls back to the CLI default when the config names nothing usable", () => {
+    expect(resolveReportDir({ repoRoot: "/repo", fallback: "/fallback" })).toBe("/fallback");
+    expect(resolveReportDir({ captureReportDir: "   ", repoRoot: "/repo", fallback: "/fallback" })).toBe("/fallback");
+  });
+});
+
+describe("readCaptureReportDir", () => {
+  it("reads capture.reportDir out of a valid experiment config", () => {
+    const repoRootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
+    const committed = path.join(repoRootDir, "experiments", "examples", "local-hf-replay.experiment.json");
+    expect(readCaptureReportDir(committed)).toBe("experiments/reports");
+
+    const dir = mkdtempSync(path.join(tmpdir(), "fleet-capture-dir-"));
+    try {
+      const edited = JSON.parse(readFileSync(committed, "utf8")) as { capture: { reportDir: string } };
+      edited.capture.reportDir = "my/reports";
+      const file = path.join(dir, "e.json");
+      writeFileSync(file, JSON.stringify(edited), "utf8");
+      expect(readCaptureReportDir(file)).toBe("my/reports");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns undefined for a file that does not exist or does not parse, rather than throwing", () => {
+    expect(readCaptureReportDir("/definitely/not/here.json")).toBeUndefined();
   });
 });

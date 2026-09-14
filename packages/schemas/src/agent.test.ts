@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AgentToolCall, BlockResponseV1, ObjectionV1, StepV1 } from "./agent.js";
+import { AgentToolCall, BlockResponseV1, ModelVoteV1, ObjectionV1, StepV1 } from "./agent.js";
 
 const toolCall = {
   class: "write_repo",
@@ -91,5 +91,40 @@ describe("BlockResponseV1 (fleet.blockresponse.v1)", () => {
 
   it("rejects an empty rationale", () => {
     expect(BlockResponseV1.safeParse({ choice: "drop", rationale: "" }).success).toBe(false);
+  });
+});
+
+describe("ModelVoteV1 (the ballot a model is asked for)", () => {
+  const modelVote = { support: "AGAINST", rationale: "The charter does not allowlist that host.", assumptions: [], riskFlags: [] };
+
+  it("accepts the five fields a voting model chooses", () => {
+    expect(ModelVoteV1.parse(modelVote)).toEqual(modelVote);
+  });
+
+  it("accepts an explicit null confidenceBps and an omitted one alike", () => {
+    expect(ModelVoteV1.parse({ ...modelVote, confidenceBps: null }).confidenceBps).toBeNull();
+    expect(ModelVoteV1.parse({ ...modelVote, confidenceBps: 7500 }).confidenceBps).toBe(7500);
+    expect("confidenceBps" in ModelVoteV1.parse(modelVote)).toBe(false);
+  });
+
+  it("rejects a confidenceBps outside 0..10000 or with a fraction", () => {
+    expect(ModelVoteV1.safeParse({ ...modelVote, confidenceBps: 10001 }).success).toBe(false);
+    expect(ModelVoteV1.safeParse({ ...modelVote, confidenceBps: -1 }).success).toBe(false);
+    expect(ModelVoteV1.safeParse({ ...modelVote, confidenceBps: 55.5 }).success).toBe(false);
+  });
+
+  it("rejects a fourth support value and an empty rationale", () => {
+    expect(ModelVoteV1.safeParse({ ...modelVote, support: "VETO" }).success).toBe(false);
+    expect(ModelVoteV1.safeParse({ ...modelVote, rationale: "" }).success).toBe(false);
+  });
+
+  it("carries no identity fields at all: a model that emits schema or proposalId fails the parse", () => {
+    expect(ModelVoteV1.safeParse({ ...modelVote, schema: "fleet.vote.v1" }).success).toBe(false);
+    expect(ModelVoteV1.safeParse({ ...modelVote, proposalId: "42" }).success).toBe(false);
+  });
+
+  it("requires assumptions and riskFlags to be present arrays of strings", () => {
+    expect(ModelVoteV1.safeParse({ support: "FOR", rationale: "ok", riskFlags: [] }).success).toBe(false);
+    expect(ModelVoteV1.safeParse({ ...modelVote, assumptions: [1] }).success).toBe(false);
   });
 });

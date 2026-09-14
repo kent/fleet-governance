@@ -32,12 +32,31 @@ export type AnchoredProposal = {
  * vote (a worker failure, never a For, never a synthesized Abstain, spec 10.6).
  */
 export type PolicyOutput =
-  | { kind: "vote"; vote: VoteV1 }
-  | { kind: "absent"; why: string }
-  | { kind: "malformed"; raw: string };
+  | { kind: "vote"; vote: VoteV1; meta?: PolicyMeta }
+  | { kind: "absent"; why: string; meta?: PolicyMeta }
+  | { kind: "malformed"; raw: string; meta?: PolicyMeta };
 
-/** A pluggable source of ballots. In this part, the only implementation is `ScriptedPolicy`;
- *  model-backed policies arrive in Part 4. */
+/**
+ * What a model-backed policy can tell the `Worker` about the inference behind its output, so the
+ * job record's provider, model, prompt version, latency and usage columns (spec 10.4) carry real
+ * values instead of the `null`s a scripted policy leaves. Present on every `PolicyOutput` variant,
+ * including the failures: a timeout or a malformed reply still cost tokens and latency, and a
+ * record that hides that cannot be used to compute spec 15.5's metrics honestly.
+ *
+ * Optional everywhere. `ScriptedPolicy` has no provider or model and leaves it undefined, and the
+ * `Worker` writes nothing for an output that does not carry it.
+ */
+export type PolicyMeta = {
+  provider: string;
+  model: string;
+  promptVersion: string;
+  latencyMs: number;
+  inputTokens: number;
+  outputTokens: number;
+};
+
+/** A pluggable source of ballots: `ScriptedPolicy` for fixture runs, `ModelPolicy` for the
+ *  model-driven ones. */
 export interface DecisionPolicy {
   evaluateProposal(input: AnchoredProposal): Promise<PolicyOutput>;
 }

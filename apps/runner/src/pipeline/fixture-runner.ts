@@ -667,6 +667,121 @@ async function insertVoteRowsFromChain(ctx: FixtureRunContext, proposalId: bigin
   return voteCasts.length;
 }
 
+
+/**
+ * Every way this fixture's `expected` block disagrees with what actually happened, as one line
+ * each. Pure, and exported so both the assertion rules and their edge cases are unit-testable
+ * without a chain.
+ *
+ * `gatewayAfter` carries one rule worth stating plainly (fix-wave finding 3): a BLOCK whose reason
+ * is `ledger_unreadable` is the gateway failing closed on a failed per-payload ledger read (final
+ * review M2), not the charter's answer. Counting it as a satisfied `BLOCK` expectation would let
+ * a transient RPC failure turn `hf-replay` green while proving nothing about the charter, so it is
+ * reported as an expectation that could not be evaluated.
+ */
+export function computeFixtureMismatches(input: {
+  expected: FixtureV1["expected"];
+  finalStateName: string;
+  decisionCount: number;
+  charterVersion: number;
+  gatewayAfter: GatewayLogRecord | null;
+  missingVotes: number;
+  revertedAttempts: number;
+}): string[] {
+  const mismatches: string[] = [];
+  const expected = input.expected;
+
+  if (input.finalStateName !== expected.outcome) {
+    mismatches.push(`outcome: expected ${expected.outcome}, got ${input.finalStateName}`);
+  }
+  if (input.decisionCount !== expected.decisionCount) {
+    mismatches.push(`decisionCount: expected ${expected.decisionCount}, got ${input.decisionCount}`);
+  }
+  if (expected.charterVersion !== undefined && input.charterVersion !== expected.charterVersion) {
+    mismatches.push(`charterVersion: expected ${expected.charterVersion}, got ${input.charterVersion}`);
+  }
+  if (expected.gatewayAfter !== undefined && input.gatewayAfter) {
+    const after = input.gatewayAfter;
+    if (after.verdict === "BLOCK" && after.reason === "ledger_unreadable") {
+      mismatches.push(
+        "gatewayAfter: could not be evaluated. The gateway returned BLOCK with reason ledger_unreadable, which means a per-payload ledger read failed and the gateway failed closed, not that the charter refused the action.",
+      );
+    } else if (after.verdict !== expected.gatewayAfter) {
+      mismatches.push(`gatewayAfter: expected ${expected.gatewayAfter}, got ${after.verdict}`);
+    }
+  }
+  if (expected.missingVotes !== undefined && input.missingVotes !== expected.missingVotes) {
+    mismatches.push(`missingVotes: expected ${expected.missingVotes}, got ${input.missingVotes}`);
+  }
+  if (expected.revertedAttempts !== undefined && input.revertedAttempts !== expected.revertedAttempts) {
+    mismatches.push(`revertedAttempts: expected ${expected.revertedAttempts}, got ${input.revertedAttempts}`);
+  }
+  return mismatches;
+}
+
+/**
+ * Recovers a guardian pause, cancel and unpause from the chain's own logs, for a resumed fixture
+ * whose guardian pre-step already ran (fix-wave finding 2). The cancel is found by the timelock
+ * operation id this proposal's own description hashes to, which is deterministic; the pause and
+ * unpause are the ledger's own `Paused`/`Unpaused` events bracketing that cancel. Returns `null`
+ * when any of the three cannot be found, so a partial recovery never invents a transaction hash.
+ */
+export async function findGuardianActionsOnChain(
+  ctx: FixtureRunContext,
+  proposalId: bigint,
+  description: string,
+): Promise<GuardianActionResult | null> {
+  const created = await ctx.client.getProposalCreated(proposalId);
+  const descriptionHash = keccak256(toHex(description));
+  const salt = timelockSalt(ctx.addresses.governor, descriptionHash);
+  const operationId = await ctx.client.publicClient.readContract({
+    address: ctx.addresses.timelock,
+    abi: timelockControllerAbi,
+    functionName: "hashOperationBatch",
+    args: [created.targets as Address[], created.values as bigint[], created.calldatas as Hex[], ZERO_BYTES32, salt],
+  });
+
+  const cancelLogs = await ctx.client.publicClient.getContractEvents({
+    address: ctx.addresses.timelock,
+    abi: timelockControllerAbi,
+    eventName: "Cancelled",
+    args: { id: operationId },
+    fromBlock: 0n,
+    toBlock: "latest",
+  });
+  const cancelLog = cancelLogs[0];
+  if (!cancelLog) return null;
+
+  const [pausedLogs, unpausedLogs] = await Promise.all([
+    ctx.client.publicClient.getContractEvents({
+      address: ctx.addresses.ledger,
+      abi: taskLedgerAbi,
+      eventName: "Paused",
+      fromBlock: 0n,
+      toBlock: "latest",
+    }),
+    ctx.client.publicClient.getContractEvents({
+      address: ctx.addresses.ledger,
+      abi: taskLedgerAbi,
+      eventName: "Unpaused",
+      fromBlock: 0n,
+      toBlock: "latest",
+    }),
+  ]);
+
+  // The pause that was in force when the cancel landed, and the unpause that lifted it.
+  const pause = [...pausedLogs].reverse().find((l) => l.blockNumber <= cancelLog.blockNumber);
+  const unpause = unpausedLogs.find((l) => l.blockNumber >= cancelLog.blockNumber);
+  if (!pause || !unpause) return null;
+
+  return {
+    operationId,
+    pauseTxHash: pause.transactionHash,
+    cancelTxHash: cancelLog.transactionHash,
+    unpauseTxHash: unpause.transactionHash,
+  };
+}
+
 /**
  * Runs one scripted fixture end to end on `taskId` (task 8 brief and controller notes): applies
  * `preSteps`, submits the trigger proposal, casts every scripted vote, drives the proposal to the
@@ -763,9 +878,18 @@ export async function runFixture(ctx: FixtureRunContext, fixture: FixtureV1, tas
     await driveToExecuted(ctx, keeperWallet, proposalId);
   } else if (wantsCancel && alreadyCanceled) {
     // A resumed guardian fixture: the pause, cancel and unpause already happened, and re-running
-    // them would cancel an operation that no longer exists. `guardian` stays null; the assertions
-    // below read the outcome off chain, which is what they check.
-    log(`fixture ${fixture.name}: proposal ${proposalId.toString()} was already canceled; skipping the guardian pre-step`);
+    // them would cancel an operation that no longer exists. The three transactions are still this
+    // run's, though, and `fees[]` is chain-derived (spec 12.4), so they are recovered from the
+    // chain's own logs rather than dropped. Fix-wave finding 2: leaving `guardian` null here wrote
+    // three fewer fee entries than a fresh run, exactly the omission finding I7 fixed for
+    // `capture --from-chain`.
+    log(`fixture ${fixture.name}: proposal ${proposalId.toString()} was already canceled; recovering the guardian transactions from chain rather than re-running them`);
+    guardian = await findGuardianActionsOnChain(ctx, proposalId, description);
+    if (guardian) {
+      extraTxHashes.push(guardian.pauseTxHash, guardian.cancelTxHash, guardian.unpauseTxHash);
+    } else {
+      log(`fixture ${fixture.name}: could not recover the guardian transactions for proposal ${proposalId.toString()} from chain`);
+    }
   } else if (wantsCancel) {
     const keeperWallet = buildWallet(ctx, ctx.keys.keeperKey);
     await driveToQueued(ctx, keeperWallet, proposalId);
@@ -815,28 +939,15 @@ export async function runFixture(ctx: FixtureRunContext, fixture: FixtureV1, tas
   const traceTxHashes = trace.events.map((e) => e.txHash);
   const fees = await computeFees(ctx, [...traceTxHashes, ...extraTxHashes]);
 
-  const mismatches: string[] = [];
-  if (finalStateName !== fixture.expected.outcome) {
-    mismatches.push(`outcome: expected ${fixture.expected.outcome}, got ${finalStateName}`);
-  }
-  if (task.decisionCount !== fixture.expected.decisionCount) {
-    mismatches.push(`decisionCount: expected ${fixture.expected.decisionCount}, got ${task.decisionCount}`);
-  }
-  if (fixture.expected.charterVersion !== undefined && task.charterVersion !== fixture.expected.charterVersion) {
-    mismatches.push(`charterVersion: expected ${fixture.expected.charterVersion}, got ${task.charterVersion}`);
-  }
-  if (fixture.expected.gatewayAfter !== undefined && gatewayAfter && gatewayAfter.verdict !== fixture.expected.gatewayAfter) {
-    mismatches.push(`gatewayAfter: expected ${fixture.expected.gatewayAfter}, got ${gatewayAfter.verdict}`);
-  }
-  if (fixture.expected.missingVotes !== undefined && missingVotes !== fixture.expected.missingVotes) {
-    mismatches.push(`missingVotes: expected ${fixture.expected.missingVotes}, got ${missingVotes}`);
-  }
-  if (fixture.expected.revertedAttempts !== undefined) {
-    const actual = impostor ? Number(impostor.proposeReverted) + Number(impostor.voteReverted) : 0;
-    if (actual !== fixture.expected.revertedAttempts) {
-      mismatches.push(`revertedAttempts: expected ${fixture.expected.revertedAttempts}, got ${actual}`);
-    }
-  }
+  const mismatches = computeFixtureMismatches({
+    expected: fixture.expected,
+    finalStateName,
+    decisionCount: task.decisionCount,
+    charterVersion: task.charterVersion,
+    gatewayAfter,
+    missingVotes,
+    revertedAttempts: impostor ? Number(impostor.proposeReverted) + Number(impostor.voteReverted) : 0,
+  });
 
   log(`fixture ${fixture.name}: finished at ${finalStateName} (${mismatches.length === 0 ? "PASS" : "FAIL"})`);
 

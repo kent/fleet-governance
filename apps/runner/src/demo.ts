@@ -43,6 +43,9 @@ export type DemoOptions = {
    *  fixture. Off by default so the demo needs no Docker (task 8 controller notes). */
   readside: boolean;
   reportDir: string;
+  /** The *scripted* fixtures directory (`experiments/fixtures/scripted`), not the fixtures root.
+   *  `fleet demo` only ever runs the eight scripted scenarios of spec 15.3; model-driven fixtures
+   *  are `fleet run`'s business, and the CLI joins `scripted` onto the root at its own call site. */
   fixturesDir: string;
   contractsDir: string;
   configPath: string;
@@ -190,6 +193,7 @@ export async function runDemo(opts: DemoOptions): Promise<DemoOutcome> {
         runtimeMs: Date.now() - start,
       },
       versions: { node: process.version, fleetSchemasSchema: "fleet.record.v1" },
+      runDir: path.join(opts.reportDir, runId),
     });
 
     const runDir = path.join(opts.reportDir, runId);

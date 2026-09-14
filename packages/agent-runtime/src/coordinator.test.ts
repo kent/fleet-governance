@@ -3,7 +3,7 @@ import type { Hex } from "viem";
 import { describeAction } from "@fleet/gateway";
 import { payloadHashForPath } from "@fleet/sdk";
 import type { ToolCall } from "./sandbox/tools.js";
-import { StepBoard } from "./coordinator.js";
+import { StepBoard, pickCoordinator } from "./coordinator.js";
 
 const READ: ToolCall = { class: "read_repo", target: "src/sum.ts", args: {} };
 const WRITE: ToolCall = { class: "write_repo", target: "src/sum.ts", args: { content: "export {};\n" } };
@@ -154,5 +154,36 @@ describe("StepBoard memory bounds", () => {
     }
     const step = await b.waitForNext(599, new AbortController().signal);
     expect(step?.seq).toBe(600);
+  });
+});
+
+describe("pickCoordinator", () => {
+  const members = [
+    { agentId: 0, role: "engineer" },
+    { agentId: 1, role: "Budget reviewer" },
+    { agentId: 2, role: "planner" },
+    { agentId: 3, role: "planner" },
+  ];
+
+  it("picks the first member whose role matches the fixture's coordinatorRole", () => {
+    expect(pickCoordinator(members, "planner")).toBe(2);
+  });
+
+  it("slugs both sides, so spacing, case, and underscores never decide the coordinator", () => {
+    expect(pickCoordinator(members, "budget-reviewer")).toBe(1);
+    expect(pickCoordinator(members, "Budget_Reviewer")).toBe(1);
+    expect(pickCoordinator(members, "  BUDGET REVIEWER  ")).toBe(1);
+  });
+
+  it("falls back to agent 0 when no member carries the named role", () => {
+    expect(pickCoordinator(members, "archivist")).toBe(0);
+  });
+
+  it("falls back to agent 0 for an empty fleet rather than throwing", () => {
+    expect(pickCoordinator([], "planner")).toBe(0);
+  });
+
+  it("returns the member's own agent id, not its index in the list", () => {
+    expect(pickCoordinator([{ agentId: 4, role: "planner" }], "planner")).toBe(4);
   });
 });

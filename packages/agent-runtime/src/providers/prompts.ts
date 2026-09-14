@@ -67,8 +67,12 @@ export function loadConstitution(): string {
 
 /** `role`, e.g. `"Budget reviewer"`, `"budget_reviewer"`, or `"budget-reviewer"`, all resolve to
  *  `role-budget-reviewer.md`; matches how `Worker`'s `parseRole` reads a member's manifest role
- *  (free-form string, `ExperimentConfigV1.fleet.members[].role`). */
-function roleSlug(role: string): string {
+ *  (free-form string, `ExperimentConfigV1.fleet.members[].role`).
+ *
+ *  Exported because coordinator selection compares a fixture's `coordinatorRole` against each
+ *  member's registry role, and those two strings come from different files written by different
+ *  hands: one slugging rule for both, rather than a second near-copy of this one. */
+export function roleSlug(role: string): string {
   return role.trim().toLowerCase().replace(/[\s_]+/g, "-");
 }
 

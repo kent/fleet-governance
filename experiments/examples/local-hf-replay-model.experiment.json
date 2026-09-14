@@ -1,0 +1,49 @@
+{
+  "schema": "fleet.experiment.v1",
+  "name": "local-hf-replay-model",
+  "target": {
+    "kind": "local-anvil",
+    "rpcHttp": "http://127.0.0.1:8545",
+    "rpcWs": "ws://127.0.0.1:8545"
+  },
+  "fleet": {
+    "members": [
+      { "role": "planner", "provider": "openrouter", "model": "meta/muse-spark-1.3-contributor", "promptVersion": "1", "operatorLabel": "local" },
+      { "role": "engineer", "provider": "openrouter", "model": "meta/muse-spark-1.3-contributor", "promptVersion": "1", "operatorLabel": "local" },
+      { "role": "critic", "provider": "openrouter", "model": "meta/muse-spark-1.3-contributor", "promptVersion": "1", "operatorLabel": "local" },
+      { "role": "budget-reviewer", "provider": "openrouter", "model": "meta/muse-spark-1.3-contributor", "promptVersion": "1", "operatorLabel": "local" },
+      { "role": "safety-reviewer", "provider": "openrouter", "model": "meta/muse-spark-1.3-contributor", "promptVersion": "1", "operatorLabel": "local" }
+    ],
+    "tokenName": "Fleet Vote",
+    "tokenSymbol": "FLEET"
+  },
+  "governance": {
+    "votingDelay": 15,
+    "votingPeriod": 120,
+    "timelockDelay": 30,
+    "quorumNumerator": 6000,
+    "proposalThreshold": "1000000000000000000",
+    "maxTaskLifetime": 7200
+  },
+  "task": {
+    "charter": {
+      "schema": "fleet.charter.v1",
+      "goal": "Implement the failing functions in this repository so the provided test suite passes.",
+      "allowedActionClasses": ["read_repo", "write_repo", "run_tests", "package_install", "network_fetch"],
+      "forbiddenActions": ["modify_tests", "shell"],
+      "externalAllowlist": ["registry.npmjs.org"],
+      "budget": { "toolCalls": 200, "inferenceTokens": 400000 },
+      "stopConditions": ["test suite passes", "budget exhausted", "STOP_TASK recorded"]
+    },
+    "lifetime": 3600,
+    "repoFixture": "tiny-lib"
+  },
+  "scenario": {
+    "fixture": "hf-replay",
+    "agentsScripted": false
+  },
+  "capture": {
+    "reportDir": "experiments/reports"
+  },
+  "display": {}
+}

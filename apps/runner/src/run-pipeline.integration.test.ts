@@ -25,12 +25,15 @@ import type { RunRecord } from "./pipeline/state.js";
  * INDEXERS_READY, TASK_OPENED, AGENTS_RUNNING (the `hf-replay` fixture: one proposal, five
  * scripted votes, Defeated), TASK_ENDED, CAPTURED, REPORTED.
  *
- * The next two passes are crashes. Rewinding the run store's checkpoint to `TASK_OPENED` is what a
+ * The next four passes are crashes. Rewinding the run store's checkpoint to `TASK_OPENED` is what a
  * process that died inside `AGENTS_RUNNING` leaves behind; rewinding it to `INDEXERS_READY` with a
  * task id already in the payload is what a process that died at the `TASK_OPENED` boundary leaves
- * behind. Before this wave the first of those threw "AGENTS_RUNNING: missing prior stage output"
- * and the second opened a brand new task. Both must now finish without opening a second task or
- * submitting a second proposal, which is what the assertions check against the chain itself.
+ * behind; `TASK_ENDED` is a process that died between `AGENTS_RUNNING` and `CAPTURED`; `CAPTURED`
+ * is one that died before it rendered the report. Before the fix waves the first of those threw
+ * "AGENTS_RUNNING: missing prior stage output", the second opened a brand new task, and the last
+ * two threw "CAPTURED/REPORTED: missing prior stage output". All four must now finish without
+ * opening a second task or submitting a second proposal, which is what the assertions check
+ * against the chain itself.
  *
  * Uses the well-known Anvil dev accounts (`anvil-keys.ts`, derived from the standard
  * `test test test ... junk` mnemonic) for every role. Gated on `FLEET_INTEGRATION=1` and skipped
@@ -145,7 +148,7 @@ describe.skipIf(!RUN_INTEGRATION)("fleet run (end to end, then resumed, on a fre
   });
 
   it(
-    "runs every stage, then resumes twice without opening a second task or submitting a second proposal",
+    "runs every stage, then resumes from four checkpoints without opening a second task or submitting a second proposal",
     async () => {
       const reportDir = path.join(workDir, "reports");
       const infraDir = path.join(workDir, "infra");
@@ -175,7 +178,8 @@ describe.skipIf(!RUN_INTEGRATION)("fleet run (end to end, then resumed, on a fre
       const options = {
         runId: "run-1",
         experimentPath: localExperimentPath,
-        fixturesDir: path.join(repoRoot, "experiments", "fixtures", "scripted"),
+        fixturesDir: path.join(repoRoot, "experiments", "fixtures"),
+        repoRoot,
         contractsDir: path.join(repoRoot, "contracts"),
         configDir,
         infraDir,
@@ -240,6 +244,35 @@ describe.skipIf(!RUN_INTEGRATION)("fleet run (end to end, then resumed, on a fre
       const resumedInTaskOpened = await runExperiment(options, env);
       expect(resumedInTaskOpened.taskId).toBe(first.taskId);
       expect(resumedInTaskOpened.result?.proposalId).toBe(first.result?.proposalId);
+
+      // ---- pass 4: a crash between AGENTS_RUNNING and CAPTURED (checkpoint at TASK_ENDED) ----
+      // Fix-wave finding 1: this used to throw "CAPTURED: missing prior stage output", because a
+      // run result is not something a JSON checkpoint can carry. CAPTURED now re-enters
+      // AGENTS_RUNNING, which is idempotent, rather than giving up on the run.
+      rmSync(recordPath, { force: true });
+      await store.save({ ...finished, stage: "TASK_ENDED", updatedAt: new Date().toISOString() });
+      const resumedAtCaptured = await runExperiment(options, env);
+      expect(resumedAtCaptured.result?.proposalId).toBe(first.result?.proposalId);
+      expect(existsSync(recordPath)).toBe(true);
+      const recapturedRecord = JSON.parse(readFileSync(recordPath, "utf8")) as RunRecordDocument;
+      expect(recapturedRecord.proposals.length).toBe(1);
+      expect(recapturedRecord.taskId).toBe(first.taskId?.toString());
+
+      // ---- pass 5: a crash between CAPTURED and REPORTED (checkpoint at CAPTURED) ----
+      // The record is on disk, so `rehydrateRunCtx` reads it back and REPORTED renders from it
+      // without re-running anything.
+      const reportPath = path.join(runDir, "report.md");
+      rmSync(reportPath, { force: true });
+      await store.save({
+        ...finished,
+        stage: "CAPTURED",
+        updatedAt: new Date().toISOString(),
+        payload: { ...finished.payload, recordPath },
+      });
+      const resumedAtReported = await runExperiment(options, env);
+      expect(resumedAtReported.reportPath).toBe(reportPath);
+      expect(existsSync(reportPath)).toBe(true);
+      expect(readFileSync(reportPath, "utf8")).toContain("hf-replay");
 
       const taskCountAfterResumes = await publicClient.readContract({
         address: ledger,

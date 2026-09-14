@@ -1,13 +1,18 @@
 import { loadRunnerEnv } from "../../../lib/env.js";
-import { requiredEnvVarNames } from "../../../lib/required-env.js";
+import { classifyRequiredEnvVars, requiredEnvVarNames } from "../../../lib/required-env.js";
+import type { EnvVarSource } from "../../../lib/required-env.js";
 
-export type EnvVarStatus = { name: string; present: boolean };
+export type EnvVarStatus = { name: string; present: boolean; source: EnvVarSource; anvilAccountIndex?: number };
 
 /**
- * `GET /api/env?n=<fleet size>&openrouter=<0|1>`: presence, never value, of every environment
- * variable the current draft config would need (controller notes item 4). The form calls this
- * whenever fleet size or a member's provider changes, so the key section's markers track the
- * draft rather than a fixed list.
+ * `GET /api/env?n=<fleet size>&openrouter=<0|1>&target=<local-anvil|base-sepolia>`: presence, never
+ * value, of every environment variable the current draft config would need (controller notes item
+ * 4). The form calls this whenever fleet size, a member's provider, or the target changes, so the
+ * key section's markers track the draft rather than a fixed list.
+ *
+ * `target=local-anvil` reports an unset private-key variable as satisfied by the well-known public
+ * Anvil test account rather than as missing, because that is what `fleet run` will actually do
+ * there. Anything else reports it missing, as before.
  */
 export async function GET(request: Request): Promise<Response> {
   loadRunnerEnv();
@@ -15,11 +20,9 @@ export async function GET(request: Request): Promise<Response> {
   const memberCountParam = Number.parseInt(url.searchParams.get("n") ?? "5", 10);
   const memberCount = Number.isFinite(memberCountParam) ? Math.min(64, Math.max(0, memberCountParam)) : 5;
   const anyOpenRouter = url.searchParams.get("openrouter") === "1";
+  const localAnvil = url.searchParams.get("target") === "local-anvil";
 
   const names = requiredEnvVarNames({ memberCount, anyOpenRouter });
-  const vars: EnvVarStatus[] = names.map((name) => ({
-    name,
-    present: process.env[name] !== undefined && process.env[name] !== "",
-  }));
+  const vars: EnvVarStatus[] = classifyRequiredEnvVars(names, process.env, { localAnvil });
   return Response.json({ vars });
 }

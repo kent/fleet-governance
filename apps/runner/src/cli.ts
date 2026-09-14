@@ -14,7 +14,7 @@ import { readJsonRecord, writeJsonRecord, captureFromChain } from "./pipeline/re
 import type { RunRecordDocument } from "./pipeline/record.js";
 import { renderReport } from "./pipeline/report.js";
 import { openTask } from "./pipeline/task.js";
-import { runExperiment } from "./pipeline/run-pipeline.js";
+import { readCaptureReportDir, resolveReportDir, runExperiment } from "./pipeline/run-pipeline.js";
 import { readside } from "./readside.js";
 import { FleetClient, addressesFromManifest } from "@fleet/sdk";
 
@@ -27,8 +27,10 @@ function defaultReportDir(): string {
   return path.join(repoRoot, "experiments", "reports");
 }
 
-function defaultFixturesDir(): string {
-  return path.join(repoRoot, "experiments", "fixtures", "scripted");
+/** The fixtures *root*. `fleet run` resolves `scenario.fixture` under `scripted/` and then
+ *  `model/`; `fleet demo` only ever wants the scripted ones, and says so at its own call site. */
+function defaultFixturesRoot(): string {
+  return path.join(repoRoot, "experiments", "fixtures");
 }
 
 function defaultAbiSourceDir(): string {
@@ -178,24 +180,33 @@ program
   .description("Run the full pipeline (spec 12.2) for one fleet.experiment.v1 config, resumable by --run-id.")
   .requiredOption("--experiment <path>", "fleet.experiment.v1 config JSON path")
   .option("--run-id <id>", "resume (or start) this run id")
-  .option("--report-dir <path>", "base report directory", defaultReportDir())
+  .option("--report-dir <path>", "base report directory (default: the experiment's own capture.reportDir)")
   .option("--readside", "bring up and sync the read side (Docker Compose, CPLS archive sync)", false)
-  .action(async (opts: { experiment: string; runId?: string; reportDir: string; readside: boolean }) => {
+  .action(async (opts: { experiment: string; runId?: string; reportDir?: string; readside: boolean }) => {
     try {
       const runId = opts.runId ?? `run-${Date.now()}`;
-      const runDir = path.join(opts.reportDir, runId);
+      // `--report-dir` wins; otherwise the experiment's own `capture.reportDir` decides, so that
+      // field is no longer dead config (fix-wave finding 4).
+      const reportDir = resolveReportDir({
+        explicit: opts.reportDir,
+        captureReportDir: readCaptureReportDir(opts.experiment),
+        repoRoot,
+        fallback: defaultReportDir(),
+      });
+      const runDir = path.join(reportDir, runId);
       mkdirSync(runDir, { recursive: true });
       const store = await openRunStore({ pgUrl: process.env["RUNNER_PG_URL"], runDir });
       const ctx = await runExperiment({
         runId,
         experimentPath: opts.experiment,
-        fixturesDir: defaultFixturesDir(),
+        fixturesDir: defaultFixturesRoot(),
+        repoRoot,
         contractsDir: defaultContractsDir(),
         configDir: path.join(repoRoot, "deployments", "configs"),
         infraDir: path.join(repoRoot, "infra"),
         abiSourceDir: defaultAbiSourceDir(),
         deploymentsDir: defaultDeploymentsDir(),
-        reportDir: opts.reportDir,
+        reportDir,
         readSide: opts.readside,
         store,
         log: (m) => {
@@ -286,7 +297,7 @@ program
         freshAnvil: opts.freshAnvil,
         readside: opts.readside,
         reportDir: opts.reportDir,
-        fixturesDir: defaultFixturesDir(),
+        fixturesDir: path.join(defaultFixturesRoot(), "scripted"),
         contractsDir: defaultContractsDir(),
         configPath: path.join(repoRoot, "deployments", "configs", "local-5.json"),
         manifestOutPath: path.join(repoRoot, "deployments", "demo-latest.json"),
