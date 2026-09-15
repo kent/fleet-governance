@@ -411,6 +411,7 @@ export class FleetClient {
       args: [taskId],
     });
     const indices = Array.from({ length: task.decisionCount }, (_, i) => i);
+    if (indices.length === 0) return [];
     const [decisions, logs] = await Promise.all([
       Promise.all(
         indices.map((index) =>
