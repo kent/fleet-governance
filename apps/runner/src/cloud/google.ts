@@ -23,7 +23,7 @@ export async function accessToken(): Promise<string> {
 }
 
 /** Error messages never contain provider URLs, credentials or response bodies. */
-export async function googleRequest(service: "storage" | "secretmanager" | "compute", resource: string, init: RequestInit = {}): Promise<Response> {
+export async function googleRequest(service: "storage" | "secretmanager" | "compute" | "run", resource: string, init: RequestInit = {}): Promise<Response> {
   let response: Response;
   try {
     response = await fetch(`https://${service}.googleapis.com/${resource}`, {

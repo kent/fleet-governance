@@ -52,6 +52,9 @@ export async function isComputeRunBlocked(runId: string): Promise<boolean> {
 export async function readComputeEvidence(): Promise<unknown> {
   return (await object("evidence/latest.json"))?.value ?? null;
 }
+export async function readComputeObject(name: string): Promise<unknown> {
+  return (await object(name))?.value ?? null;
+}
 export async function saveComputeState(value: ComputeRecord, generation: string): Promise<boolean> {
   const validated = recordSchema.parse(value);
   if (!/^[0-9]+$/.test(generation)) throw new Error("Invalid compute state generation.");
@@ -69,6 +72,7 @@ export async function saveComputeState(value: ComputeRecord, generation: string)
 /** Launcher and CI must consult this store, not worker-written status.json, before
  * restarting a worker. The worker has no permission to modify either allocation or halt. */
 export async function assertComputeStartAllowed(): Promise<void> {
+  if (await object("simulation-queue.json")) throw new Error("A protected simulation request owns this worker. Human recovery is required before a new run or restart.");
   const allocation = await readComputeAllocation();
   if (!allocation) return;
   const state = await readComputeState(allocation.allocationId);

@@ -4,7 +4,7 @@ import { baseSepolia } from "viem/chains";
 import { z } from "zod";
 import { ComputeAllocation } from "./compute-policy.js";
 import { COMPUTE_BUCKET, isComputeRunBlocked, readComputeAllocation, readComputeState } from "./compute-store.js";
-import { googleRequest, readSecret, writeObject } from "./google.js";
+import { CloudError, googleRequest, readSecret, writeObject } from "./google.js";
 
 export const COMPUTE_TARGET = "compute/v1/projects/fleet-governance/zones/us-central1-a/instances/fleet-research";
 export const AllocationRequest = z.object({
@@ -92,5 +92,15 @@ export async function releaseComputeAllocation(expectedId: string): Promise<void
   if (!/^[0-9]+$/.test(meta.generation)) throw new Error("Invalid active allocation generation.");
   const current = await (await googleRequest("storage", `${object}?alt=media&generation=${meta.generation}`)).json() as { allocationId: string };
   if (current.allocationId !== allocation.allocationId) throw new Error("Active allocation changed during recovery.");
+  // Release the matching human request only after the permanent run tombstone
+  // exists and the worker is verified off. Its work and evidence remain immutable.
+  const queueObject = `storage/v1/b/${COMPUTE_BUCKET}/o/simulation-queue.json`;
+  try {
+    const queueMeta = await (await googleRequest("storage", queueObject)).json() as { generation: string };
+    if (!/^[0-9]+$/.test(queueMeta.generation)) throw new Error("Invalid simulation generation.");
+    const queue = await (await googleRequest("storage", `${queueObject}?alt=media&generation=${queueMeta.generation}`)).json() as { runId: string };
+    if (queue.runId !== allocation.runId) throw new Error("A different simulation owns the queue.");
+    await googleRequest("storage", `${queueObject}?ifGenerationMatch=${queueMeta.generation}`, { method: "DELETE" });
+  } catch (error) { if (!(error instanceof CloudError && error.status === 404)) throw error; }
   await googleRequest("storage", `${object}?ifGenerationMatch=${meta.generation}`, { method: "DELETE" });
 }

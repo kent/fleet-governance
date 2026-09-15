@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { ACTIVE, runPath, type DemoRun, type DemoStatus } from "./control.js";
 import { readObject, writeObject } from "./google.js";
+import { readSimulationRequest, readSimulationWork, simulationPath } from "./simulation.js";
 import { isComputeRunBlocked } from "./compute-store.js";
 
 const delay = () => new Promise(resolve => setTimeout(resolve, 5000));
@@ -14,6 +15,18 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) process.on(signal, () => {
 });
 while (!stopping && process.env.FLEET_WORKER_ENABLED === "1") {
   try {
+    const simulation = await readSimulationRequest();
+    if (simulation) {
+      const state = await readObject<{ terminal?: boolean }>(simulationPath(simulation.runId));
+      if (!state?.terminal && !await isComputeRunBlocked(simulation.runId) && await readSimulationWork(simulation.runId)) {
+        const child = spawn("flock", ["--nonblock", "--conflict-exit-code", "75", "/srv/fleet/state/lifecycle.lock", process.execPath, "apps/runner/dist/cloud/simulation-worker.js", simulation.runId], { cwd: process.cwd(), stdio: "inherit", env: process.env, detached: true });
+        activeChild = child;
+        try { await new Promise<void>((resolve, reject) => { child.on("error", reject); child.on("exit", () => resolve()); }); }
+        finally { activeChild = undefined; }
+      }
+      // A reserved simulation owns the worker even after its process exits.
+      await delay(); continue;
+    }
     const active = await readObject<{ runId: string }>(ACTIVE);
     if (!active) { await delay(); continue; }
     if (await isComputeRunBlocked(active.runId)) { await delay(); continue; }

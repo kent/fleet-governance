@@ -6,6 +6,8 @@ import { ACTIVE, RUN_ID, controlDeps, queueDemo, runPath, type DemoRun } from ".
 import { BUCKET, googleRequest, readObject } from "./google.js";
 import { readComputeAllocation, readComputeState, readComputeEvidence } from "./compute-store.js";
 
+import { queueSimulation, readSimulationRequest, readSimulationWork, simulationPath } from "./simulation.js";
+
 const root = process.cwd();
 const users = new Set(["accounts.google.com:operator2@example.com", "accounts.google.com:fleet-provisioner@fleet-governance.iam.gserviceaccount.com"]);
 function json(response: ServerResponse, status: number, body: unknown) {
@@ -32,7 +34,13 @@ createServer(async (request, response) => {
         googleRequest("compute", "compute/v1/projects/fleet-governance/zones/us-central1-a/instances/fleet-research").then(async r => await r.json() as { id: string; status: string; machineType: string }),
         readComputeEvidence(),
       ]);
-      json(response, 200, { allocation, state: state?.value ?? null, vm: { id: vm.id, status: vm.status, machineType: vm.machineType.split("/").pop() }, evidence, observedAt: new Date().toISOString() }); return;
+      const simulation = await readSimulationRequest();
+      const simulationStatus = simulation ? await readObject(simulationPath(simulation.runId)) : null;
+      const simulationWork = simulation ? await readSimulationWork(simulation.runId) : null;
+      json(response, 200, { simulation, simulationStatus, simulationWork, allocation, state: state?.value ?? null, vm: { id: vm.id, status: vm.status, machineType: vm.machineType.split("/").pop() }, evidence, observedAt: new Date().toISOString() }); return;
+    }
+    if (url.pathname === "/api/simulations" && request.method === "POST") {
+      json(response, 202, await queueSimulation(String(request.headers["idempotency-key"] ?? ""))); return;
     }
     if (url.pathname === "/api/worker/start" && request.method === "POST") {
       await controlDeps().start();

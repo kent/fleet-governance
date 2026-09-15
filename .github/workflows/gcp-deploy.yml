@@ -149,6 +149,8 @@ jobs:
           done
       - name: Deploy independent compute governance controller
         run: bash infra/gcp/deploy-compute-controller.sh
+      - name: Deploy fixed simulation preparation job
+        run: bash infra/gcp/deploy-simulation.sh
       - name: Check and start the fixed worker
         run: |
           # A routine deployment must not revive an allocation that governance stopped.
