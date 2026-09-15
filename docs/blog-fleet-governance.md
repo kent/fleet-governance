@@ -52,6 +52,8 @@
 
 - We’ve built a sample using Agora Governor. The pinned Governor source is unchanged. Our contracts add fleet membership, a task constitution and permission checks around its existing proposal and voting system.
 
+- The indexing path should stay simple too. DAO Node and CPLS already turn governance data into what Agora displays. We want direct event pipelines feeding that path. The research demo currently imports its confirmed votes with a small adapter. A Goldsky pipeline can replace that adapter as we grow. We don't need a second governance projection in a subgraph. The stop controller still checks the chain itself. [Indexing architecture](indexing.md)
+
 - One example controls publication. An artifact store accepts writes from one executor. The executor checks that the exact call was approved and that the decision has settled. Even the operator cannot write directly to that store. [Executor code](../contracts/src/FleetExecutor.sol), [artifact store](../contracts/src/GovernedArtifactStore.sol)
 
 - Approval covers the agent, task, constitution version, target code, arguments and expiry. You cannot get approval for one artifact and quietly publish another. A successful call uses up its permission. Trying it twice fails.
