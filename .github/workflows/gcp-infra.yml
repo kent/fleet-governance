@@ -165,7 +165,13 @@ jobs:
           # Recreating this service and its Scheduler binding is part of the next deploy.
           gcloud scheduler jobs pause fleet-compute-policy --location=us-central1
           gcloud run services delete fleet-compute-controller --region=us-central1 --quiet
-          gcloud compute instances stop fleet-research --zone=us-central1-a --quiet
+          state=$(gcloud compute instances describe fleet-research --zone=us-central1-a --format='value(status)')
+          if [[ "$state" == RUNNING ]]; then
+            gcloud compute instances stop fleet-research --zone=us-central1-a --quiet
+          elif [[ "$state" != TERMINATED ]]; then
+            echo 'VM must finish its current operation before recovery.' >&2
+            exit 1
+          fi
           node apps/runner/dist/cloud/compute-admin-cli.js release
           echo 'Human recovery released the allocation. The VM remains stopped and this run remains blocked. Deploy through GitHub to restore the controller and start a fresh run.' >> "$GITHUB_STEP_SUMMARY"
       - name: Stop agent execution and preserve experiment files
