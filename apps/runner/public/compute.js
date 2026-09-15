@@ -35,6 +35,8 @@ function render() {
   const matchingEvidence = evidence && (replay || evidence.allocationId === allocation?.allocationId);
   const halted = replay ? stage >= 2 : state?.phase === "halted";
   const stopped = replay ? stage === 4 : data.vm?.status === "TERMINATED";
+  const authorityFresh = allocation && state && Date.parse(data.observedAt) / 1000 - state.observedAt <= allocation.maxObservationAgeSeconds;
+  const authorised = !replay && state?.phase === "authorised" && authorityFresh && data.vm?.status === "RUNNING";
   const showVotes = matchingEvidence && (!replay || stage >= 1);
   const votes = showVotes ? evidence.votes || [] : [];
   let index = replay ? stage : stopped && halted ? 4 : state?.stopRequestedAt ? 3 : halted ? 2 : showVotes ? 1 : 0;
@@ -43,9 +45,12 @@ function render() {
     label = "NO ACTIVE COMPUTE POLICY";
     headline = "Ready for a governed allocation.";
     explanation = "This worker is currently unarmed. Select Replay shutdown to inspect the recorded test, or use the GCP workflow to bind a required vote.";
-  } else if (!replay && state?.phase === "authorised") {
+  } else if (authorised) {
     label = "SETTLED APPROVAL"; headline = "Task work is authorised until expiry.";
     explanation = "The exact required proposals executed. The original VM limit still applies. Votes cannot add time or resources.";
+  } else if (!replay && state?.phase === "authorised" && !authorityFresh) {
+    label = "AUTHORITY STALE"; headline = "Fresh approval must be verified.";
+    explanation = "The controller's last authorisation has expired. New task dispatch is closed while verification is unavailable; the native VM deadline remains in force.";
   } else if (!replay && state?.reason && state.reason !== "vote_failed") {
     headline = "Compute authority closed.";
     explanation = `The controller recorded ${state.reason.replaceAll("_", " ")}. The halt remains until explicit human recovery.`;
@@ -64,7 +69,7 @@ function render() {
   $("power").classList.toggle("off", stopped);
   $("architecture").classList.toggle("halted", halted);
   $("machine").textContent = `${data.vm?.machineType || "Fixed machine type"} · fleet-research`;
-  $("task-badge").textContent = stopped ? "Off" : halted ? "Halted" : allocation ? state?.phase === "authorised" && !replay ? "Authorised" : "Task work paused" : "Unarmed";
+  $("task-badge").textContent = stopped ? "Off" : halted ? "Halted" : allocation ? authorised ? "Authorised" : "Task work paused" : "Unarmed";
   $("agents").replaceChildren();
   for (let i = 0; i < 5; i++) {
     const ballot = votes.find(vote => vote.agentId === i);
