@@ -19,7 +19,7 @@ describe("public viewing boundary", () => {
     expect(() => siteAccess("pubic")).toThrow();
   });
   it("limits the anonymous Agora proxy to pages and assets", () => {
-    for (const path of ["/info", "/proposals/123", "/delegates", "/_next/static/chunk.js", "/api/archive/votes/123", "/api/archive/non-voters/123"]) expect(publicProxyPath(path)).toBe(true);
+    for (const path of ["/info", "/proposals/123", "/delegates", "/_next/static/chunk.js", "/api/archive/votes/123", "/api/archive/non-voters/123", "/api/common/metrics", "/api/common/votableSupply", "/api/forum/settings", "/api/dao/settings"]) expect(publicProxyPath(path)).toBe(true);
     for (const path of ["/api/worker/start", "/api/admin", "/proposals/create-proposal", "/.env", "/api/experiments", "/api/archive/votes/../private", "/api/archive/votes/not-a-proposal"]) expect(publicProxyPath(path)).toBe(false);
   });
   it("preserves public vote evidence but removes attribution and credentials recursively", () => {
