@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdir, mkdtemp, rm, access, writeFile as fsWriteFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, access, writeFile as fsWriteFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -72,6 +72,9 @@ let workspace: Workspace;
 
 beforeEach(async () => {
   fixtureDir = await mkdtemp(join(tmpdir(), "fleet-tools-fixture-"));
+  // Match a repository root: fs.cp preserves this mode, and Linux enforces it
+  // for the test container's unprivileged UID. mkdtemp defaults to root-only.
+  await chmod(fixtureDir, 0o755);
   runDir = await mkdtemp(join(tmpdir(), "fleet-tools-run-"));
 
   await fsWriteFile(
@@ -416,7 +419,7 @@ describe("ToolRouter: run_tests", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     const parsed = JSON.parse(result.output) as RunTestsOutputShape;
-    expect(parsed.passed).toBe(true);
+    expect(parsed.passed, parsed.output).toBe(true);
     expect(parsed.fallback).toBeUndefined();
     expect(parsed.output).toContain("fixture tests passed");
   }, 60_000);
