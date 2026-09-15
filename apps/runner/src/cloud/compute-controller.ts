@@ -23,12 +23,13 @@ export async function reconcileComputeAllocation(
 ): Promise<ComputeRecord> {
   for (let attempt = 0; attempt < 4; attempt++) {
     const saved = await deps.readState();
-    const now = deps.now();
+    let now = deps.now();
     let observation: ComputeObservation | null = null;
     // A halt and the hard deadline do not depend on a healthy RPC or on new votes.
     if (saved?.value.phase !== "halted" && now < allocation.stopAt) {
       try { observation = await deps.observe(); } catch { /* Unverifiable authority halts. */ }
     }
+    now = deps.now();
     let next: ComputeRecord = evaluateComputeAllocation(allocation, saved?.value ?? null, observation, now);
     const vm = await deps.readVm();
     if (vm.id !== allocation.instanceId) {
