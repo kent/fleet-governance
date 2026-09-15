@@ -66,7 +66,8 @@ async function snapshot() {
       const attestations = readFileSync(attestationsPath, "utf8").trim().split("\n").slice(-50);
       for (const line of attestations) {
         try {
-          const record = JSON.parse(line) as ActivityAttestation;
+          // Verify the exact record that will be shown. Redaction can invalidate a signature.
+          const record = redact(JSON.parse(line)) as ActivityAttestation;
           if (record.runId !== runId || record.chainId !== 84532) continue;
           const signatureVerified = identities.get(record.agentId) === record.address.toLowerCase() && await verifyActivity(record);
           const event = record.event as { type?: string; why?: string; event?: { type: string } };
