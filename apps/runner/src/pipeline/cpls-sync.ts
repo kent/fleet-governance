@@ -128,6 +128,8 @@ export type ArchiveWaitConfig = {
   bucketName: string;
   /** Required (and only used) when `offline` is true: the fake-gcs base URL. */
   fakeGcsUrl?: string;
+  /** Trusted private archive reader, including bucket path. No credentials in the URL. */
+  archiveBaseUrl?: string;
 };
 
 /** Waits for `data/fleet/votes/<proposalId>.ndjson.gz` to actually exist in the archive store:
@@ -161,7 +163,8 @@ export async function waitForArchiveObject(
       }
     } else {
       try {
-        const res = await fetchFn(`https://storage.googleapis.com/${cfg.bucketName}/${objectName}`, { method: "HEAD" });
+        const base = cfg.archiveBaseUrl?.replace(/\/$/, "") ?? `https://storage.googleapis.com/${cfg.bucketName}`;
+        const res = await fetchFn(`${base}/${objectName}`, { method: "HEAD" });
         found = res.ok;
       } catch {
         found = false;

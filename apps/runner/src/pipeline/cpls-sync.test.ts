@@ -188,6 +188,17 @@ describe("waitForArchiveObject (fake-gcs bucket listing)", () => {
     await waitForArchiveObject(fetchFn, { offline: false, bucketName: "fleet-archive-dev" }, "7");
     expect(methods).toEqual(["HEAD"]);
   });
+
+  it("checks the private archive reader without attempting anonymous GCS access", async () => {
+    const requests: string[] = [];
+    const handle = await startFakeServer((req, res) => {
+      requests.push(`${req.method} ${req.url}`);
+      res.writeHead(200); res.end();
+    });
+    activeServer = handle;
+    await waitForArchiveObject(realFetch, { offline: false, bucketName: "private-bucket", archiveBaseUrl: `${handle.url}/private-bucket/` }, "42");
+    expect(requests).toEqual(["HEAD /private-bucket/data/fleet/votes/42.ndjson.gz"]);
+  });
 });
 
 describe("syncCplsAfterStage", () => {

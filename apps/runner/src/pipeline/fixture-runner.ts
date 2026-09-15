@@ -55,6 +55,7 @@ export type ReadSideSyncConfig = {
   cplsUrl: string;
   offline: boolean;
   fakeGcsUrl?: string;
+  archiveBaseUrl?: string;
   bucketName: string;
   fetchFn?: FetchLike;
 };
@@ -644,7 +645,7 @@ async function syncReadSideStage(
   await syncCplsAfterStage(fetchFn, {
     cplsUrl: sync.cplsUrl,
     identity: { governor: ctx.addresses.governor, chainId: ctx.chainId },
-    archive: { offline: sync.offline, bucketName: sync.bucketName, ...(sync.fakeGcsUrl ? { fakeGcsUrl: sync.fakeGcsUrl } : {}) },
+    archive: { offline: sync.offline, bucketName: sync.bucketName, ...(sync.fakeGcsUrl ? { fakeGcsUrl: sync.fakeGcsUrl } : {}), ...(sync.archiveBaseUrl ? { archiveBaseUrl: sync.archiveBaseUrl } : {}) },
     proposalId: proposalId.toString(),
     label,
     log,

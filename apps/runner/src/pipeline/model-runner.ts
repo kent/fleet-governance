@@ -993,7 +993,7 @@ async function syncReadSide(ctx: ModelRunContext, proposalId: bigint, label: str
     await syncCplsAfterStage(readSideFetch(sync), {
       cplsUrl: sync.cplsUrl,
       identity: { governor: ctx.addresses.governor, chainId: ctx.chainId },
-      archive: { offline: sync.offline, bucketName: sync.bucketName, ...(sync.fakeGcsUrl ? { fakeGcsUrl: sync.fakeGcsUrl } : {}) },
+      archive: { offline: sync.offline, bucketName: sync.bucketName, ...(sync.fakeGcsUrl ? { fakeGcsUrl: sync.fakeGcsUrl } : {}), ...(sync.archiveBaseUrl ? { archiveBaseUrl: sync.archiveBaseUrl } : {}) },
       proposalId: proposalId.toString(),
       label,
       log,

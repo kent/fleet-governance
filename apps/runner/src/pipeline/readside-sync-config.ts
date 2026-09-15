@@ -25,7 +25,7 @@ export function buildReadSideSyncConfig(infraDir: string): { config: ReadSideSyn
   const offline = readEnvValue(envText, "GCS_CREDENTIALS_FILE", "") === "" && readEnvValue(envText, "GCS_USE_ADC", "") !== "1";
 
   const votesPool = new pg.Pool({
-    connectionString: `postgres://${postgresUser}:${postgresPassword}@localhost:${postgresPort}/agora_web3`,
+    connectionString: `postgres://${encodeURIComponent(postgresUser)}:${encodeURIComponent(postgresPassword)}@localhost:${postgresPort}/agora_web3`,
   });
 
   const config: ReadSideSyncConfig = {
@@ -35,6 +35,7 @@ export function buildReadSideSyncConfig(infraDir: string): { config: ReadSideSyn
     offline,
     bucketName,
     ...(offline ? { fakeGcsUrl: `http://localhost:${fakeGcsPort}` } : {}),
+    ...(readEnvValue(envText, "FLEET_GCP_READSIDE", "") === "1" ? { archiveBaseUrl: `http://127.0.0.1:8082/${bucketName}` } : {}),
   };
 
   return { config, close: () => votesPool.end() };
