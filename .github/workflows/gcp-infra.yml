@@ -5,7 +5,7 @@ on:
       action:
         description: Infrastructure operation
         type: choice
-        options: [plan, apply, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes]
+        options: [plan, apply, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation]
         default: plan
       machine_type:
         description: Pilot VM type
@@ -85,7 +85,7 @@ jobs:
           pnpm exec vitest run --project unit apps/runner/src/cloud/wallets.test.ts
           node apps/runner/dist/cloud/prepare-wallets.js
       - name: Build and verify compute policy administration
-        if: contains(fromJSON('["arm-compute","inspect-compute","compute-drill","release-compute"]'), inputs.action)
+        if: contains(fromJSON('["arm-compute","inspect-compute","compute-drill","release-compute","verify-simulation"]'), inputs.action)
         run: |
           npm install -g pnpm@11.9.0
           pnpm install --frozen-lockfile
@@ -126,8 +126,19 @@ jobs:
             exit 1
           fi
           echo 'A real required vote was defeated. The independent controller verified the VM TERMINATED. Routine CI restart was rejected. Ballots were scripted; no model credits used.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify five actual model votes and independent GCP shutdown
+        if: inputs.action == 'verify-simulation'
+        env:
+          FLEET_GCP_CLI_AUTH: '1'
+        run: |
+          node apps/runner/dist/cloud/simulation-evidence.js
+          if python3 -B infra/gcp/assert-compute-unarmed.py; then
+            echo 'Restart gate unexpectedly allowed a halted simulation' >&2
+            exit 1
+          fi
+          echo 'Five actual agent ballots independently verified on Base Sepolia. The separate controller stopped the VM and routine restart was denied.' >> "$GITHUB_STEP_SUMMARY"
       - name: Verify the stop caller in GCP audit logs
-        if: inputs.action == 'compute-drill'
+        if: contains(fromJSON('["compute-drill","verify-simulation"]'), inputs.action)
         run: |
           for attempt in $(seq 1 12); do
             gcloud logging read 'resource.type="gce_instance" AND protoPayload.methodName:"compute.instances.stop" AND protoPayload.authenticationInfo.principalEmail="fleet-compute-controller@fleet-governance.iam.gserviceaccount.com"' --freshness=15m --limit=10 --format='json(timestamp,protoPayload.authenticationInfo.principalEmail,protoPayload.methodName,protoPayload.resourceName)' > compute-audit.json
@@ -140,7 +151,7 @@ jobs:
           echo 'The controller stop call was not found in the audit-log window.' >&2
           exit 1
       - name: Preserve public shutdown evidence
-        if: always() && inputs.action == 'compute-drill'
+        if: always() && contains(fromJSON('["compute-drill","verify-simulation"]'), inputs.action)
         run: |
           for file in compute-allocation.json compute-drill-votes.json compute-drill-evidence.json compute-audit.json; do
             if [[ -f "$file" ]]; then gcloud storage cp "$file" "gs://fleet-governance-control-449245570324/evidence/$GITHUB_RUN_ID/$file"; fi
@@ -149,7 +160,7 @@ jobs:
             gcloud storage cp compute-drill-evidence.json gs://fleet-governance-control-449245570324/evidence/latest.json
           fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always() && inputs.action == 'compute-drill'
+        if: always() && contains(fromJSON('["compute-drill","verify-simulation"]'), inputs.action)
         with:
           name: compute-shutdown-evidence
           path: compute-*.json

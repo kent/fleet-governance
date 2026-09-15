@@ -69,7 +69,7 @@ try {
     await progress("voting", "Confirmed agent ballots are being collected from Base Sepolia.");
   }));
   const votes = await client.listVotes(proposalId);
-  status.votes = votes.map(vote => { const agent = agents.find(a => a.address.toLowerCase() === vote.voter.toLowerCase()); return { agentId: agent?.agentId, voter: vote.voter, directive: ["AGAINST", "FOR", "ABSTAIN"][vote.support], reason: agent?.vote, txHash: vote.txHash, blockNumber: vote.blockNumber.toString() }; });
+  status.votes = votes.map(vote => { const agent = agents.find(a => a.address.toLowerCase() === vote.voter.toLowerCase()); return { agentId: agent?.agentId, voter: vote.voter, directive: ["AGAINST", "FOR", "ABSTAIN"][vote.support], reason: vote.parsedReason, txHash: vote.txHash, blockNumber: vote.blockNumber.toString() }; });
   status.inference = inference.summary();
   await progress("voting", `${votes.length} actual ballots are confirmed. Waiting for the voting deadline and independent controller.`);
   pool = new pg.Pool({ host: "127.0.0.1", port: 55432, user: "agora", password: process.env.POSTGRES_PASSWORD, database: "agora_web3" });
