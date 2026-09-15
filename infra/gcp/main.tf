@@ -34,6 +34,15 @@ resource "google_service_account" "runtime" {
   depends_on   = [google_project_service.enabled["iam.googleapis.com"]]
 }
 
+# The project auto-granted Editor to its unused default Compute account during activation.
+# Workloads use fleet-runtime, so remove broad grants from the default accounts.
+resource "google_project_default_service_accounts" "unused" {
+  project        = var.project_id
+  action         = "DEPRIVILEGE"
+  restore_policy = "NONE"
+  depends_on     = [google_project_iam_member.runtime_observability, google_project_iam_member.ci_access]
+}
+
 resource "google_project_iam_member" "runtime_observability" {
   for_each = toset(["roles/logging.logWriter", "roles/monitoring.metricWriter"])
   project  = var.project_id

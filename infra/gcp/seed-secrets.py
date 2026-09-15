@@ -25,7 +25,7 @@ def gcloud(*arguments, value=None):
 def main():
     missing = []
     for name in NAMES:
-        versions = json.loads(gcloud('secrets', 'versions', 'list', f'--secret={name}', '--format=json'))
+        versions = json.loads(gcloud('secrets', 'versions', 'list', name, '--format=json'))
         if versions:
             print(f'{name}: existing versions preserved')
         else:
