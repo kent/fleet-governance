@@ -166,7 +166,7 @@ program
       await assertRpcChainAllowed(opts.rpc);
       const manifest = loadManifest(opts.manifest);
       const addresses = addressesFromManifest(manifest);
-      const client = new FleetClient({ rpcUrl: opts.rpc, chainId: manifest.chainId, addresses });
+      const client = new FleetClient({ rpcUrl: opts.rpc, chainId: manifest.chainId, deploymentBlock: BigInt(manifest.deploymentBlock), addresses });
       // M7: the client's configured chain against the RPC's own, once, before the first read.
       await client.assertChain();
       const operatorKey = requirePrivateKeyEnv(process.env, opts.operatorKeyEnv);
@@ -259,7 +259,7 @@ program
 
       await assertRpcChainAllowed(opts.rpc);
       const addresses = addressesFromManifest(existing.manifest);
-      const client = new FleetClient({ rpcUrl: opts.rpc, chainId: existing.manifest.chainId, addresses });
+      const client = new FleetClient({ rpcUrl: opts.rpc, chainId: existing.manifest.chainId, deploymentBlock: BigInt(existing.manifest.deploymentBlock), addresses });
       await client.assertChain();
       const recaptured = await captureFromChain(client, existing);
       writeJsonRecord(recordPath, recaptured);

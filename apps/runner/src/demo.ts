@@ -134,7 +134,7 @@ export async function runDemo(opts: DemoOptions): Promise<DemoOutcome> {
   }
 
   const addresses = addressesFromManifest(manifest);
-  const client = new FleetClient({ rpcUrl: opts.rpcUrl, chainId: manifest.chainId, addresses });
+  const client = new FleetClient({ rpcUrl: opts.rpcUrl, chainId: manifest.chainId, deploymentBlock: BigInt(manifest.deploymentBlock), addresses });
   const keys = buildDemoKeys();
   const advanceTime = opts.freshAnvil ? makeAdvanceTime(client) : undefined;
 

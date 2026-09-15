@@ -1,3 +1,4 @@
+import { logBoundedHttp } from "./log-transport.js";
 import {
   BaseError,
   ContractFunctionRevertedError,
@@ -109,7 +110,7 @@ export class FleetClient {
   readonly addresses: FleetAddresses;
   readonly chainId: number;
 
-  constructor(opts: { rpcUrl: string; chainId: number; addresses: FleetAddresses }) {
+  constructor(opts: { rpcUrl: string; chainId: number; addresses: FleetAddresses; deploymentBlock?: bigint }) {
     // Final review I2: a client is never built for a chain v1 refuses to operate on, so a
     // manifest that somehow named Base mainnet cannot get as far as a read, let alone a report
     // that presents another chain's ledger as this fleet's.
@@ -122,7 +123,7 @@ export class FleetClient {
       nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
       rpcUrls: { default: { http: [opts.rpcUrl] } },
     });
-    this.publicClient = createPublicClient({ chain, transport: http(opts.rpcUrl) });
+    this.publicClient = createPublicClient({ chain, transport: opts.chainId === 84532 && opts.deploymentBlock !== undefined ? logBoundedHttp(opts.rpcUrl, opts.deploymentBlock) : http(opts.rpcUrl) });
   }
 
   /**

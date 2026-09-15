@@ -198,7 +198,7 @@ export function rehydrateRunCtx(
 
   const addresses = manifest ? addressesFromManifest(manifest) : null;
   const client = manifest && addresses
-    ? new FleetClient({ rpcUrl: ctx.experiment.target.rpcHttp, chainId: manifest.chainId, addresses })
+    ? new FleetClient({ rpcUrl: ctx.experiment.target.rpcHttp, chainId: manifest.chainId, deploymentBlock: BigInt(manifest.deploymentBlock), addresses })
     : null;
 
   const rawTaskId = payload["taskId"];
@@ -581,7 +581,7 @@ export function buildRunStages(env: NodeJS.ProcessEnv): readonly Stage<RunPipeli
     TASK_OPENED: async (ctx) => {
       if (!ctx.manifest || !ctx.keys) throw new Error("TASK_OPENED: manifest/keys missing (DEPLOYED did not run)");
       const addresses = addressesFromManifest(ctx.manifest);
-      const client = new FleetClient({ rpcUrl: ctx.experiment.target.rpcHttp, chainId: ctx.manifest.chainId, addresses });
+      const client = new FleetClient({ rpcUrl: ctx.experiment.target.rpcHttp, chainId: ctx.manifest.chainId, deploymentBlock: BigInt(ctx.manifest.deploymentBlock), addresses });
 
       // Spec 12.2: "Each stage is idempotent and resumable by run ID". `openTask` has no natural
       // key on chain, so re-entering this stage with a task already opened for this run id would

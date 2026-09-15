@@ -9,7 +9,7 @@ import { FleetClient, addressesFromManifest } from "@fleet/sdk";
  * experiment config (`target.rpcHttp`).
  */
 export function buildFleetClientFromManifest(manifest: ManifestV1, rpcUrl: string): FleetClient {
-  return new FleetClient({ rpcUrl, chainId: manifest.chainId, addresses: addressesFromManifest(manifest) });
+  return new FleetClient({ rpcUrl, chainId: manifest.chainId, deploymentBlock: BigInt(manifest.deploymentBlock), addresses: addressesFromManifest(manifest) });
 }
 
 /**
