@@ -17,6 +17,7 @@ reference implementation, with the enforcement boundaries described below.
 [Read the blog post](docs/blog-fleet-governance.md) ·
 [Inspect the 2,000-member results](docs/evidence/execution-2000-1789411525744/report.md) ·
 [Understand the execution permissions](docs/execution-permits.md) ·
+[Read the fleet shutdown requirements](docs/stop-enforcement.md) ·
 [Rebuild the public record](docs/record-reconstruction.md)
 
 GCP infrastructure and deployment run through GitHub Actions, configured for a dedicated project
