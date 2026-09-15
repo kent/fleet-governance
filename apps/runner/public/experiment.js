@@ -69,7 +69,19 @@ $("refresh").addEventListener("click", () => void refreshHistory());
 
 function renderActivity(status) {
   const rows = [];
-  for (const item of status.activity || []) rows.push({ at: item.at, title: `Agent ${item.agentId} · ${item.type}`, detail: item.why || item.message || item.event?.type, txHash: item.txHash, signed: item.signatureVerified === true });
+  const activity = status.activity || [];
+  const attested = new Set(activity.filter(item => item.type === "attestation" && item.signedRecord?.event).map(item => JSON.stringify(item.signedRecord.event)));
+  for (const item of activity) {
+    if (item.type !== "attestation" && attested.has(JSON.stringify(item))) continue;
+    const event = item.type === "attestation" ? item.signedRecord?.event || item : item;
+    // The pipeline records every peer review, including agreement, as an objection record.
+    if (event.type === "loop_event" && event.event?.type === "objection") continue;
+    const label = event.type === "objection" ? (event.objects ? "Objection" : "Review")
+      : event.type === "loop_event" ? (event.event?.type || "Activity").replaceAll("_", " ") : event.type;
+    rows.push({ at: event.at || item.at, title: `Agent ${item.agentId} · ${label}`,
+      detail: event.why || event.event?.why || item.message || event.event?.type,
+      txHash: event.txHash, signed: item.signatureVerified === true });
+  }
   for (const item of status.view?.gatewayRecords || []) rows.push({ at: item.ts, title: `${item.verdict === "BLOCK" ? "Blocked" : "Allowed"} · Agent ${item.agentId}`, detail: `${item.descriptor?.class}: ${item.reason || item.basis || item.descriptor?.target}` });
   for (const item of status.view?.chainEvents || []) rows.push({ at: item.at, title: `Confirmed · ${item.type}`, detail: `Block ${item.blockNumber}`, txHash: item.txHash });
   $("activity").replaceChildren();
