@@ -8,9 +8,10 @@ Choose the number of agents, give them a goal, choose a constitution and press R
 - [x] Verify CDP credentials and Base Sepolia HTTP and WebSocket RPC. Store credentials in Secret Manager.
 - [x] Store a separate, capped OpenRouter experiment key.
 - [x] Carry the submitted goal and constitution into work and voting prompts. Capture the exact text with each run.
-- [ ] Add an authenticated experiment launcher that remains available while the worker VM is stopped.
+- [x] Add an authenticated experiment launcher that remains available while the worker VM is stopped.
 - [x] Queue immutable run requests in private Cloud Storage. Start the existing GCP worker and report observed provisioning states.
-- [ ] Generate reusable test wallets on GCP, fund them through the CDP faucet and check gas requirements.
+- [x] Generate reusable test wallets on GCP and fund the pilot through the CDP faucet.
+- [ ] Verify those balances cover the full public-testnet deployment and voting run.
 - [ ] Deploy FleetGov ERC20Votes and the existing governor contracts on Base Sepolia.
 - [ ] Show agent steps, objections, proposals, votes, reasons and execution evidence as they arrive.
 - [ ] Deploy Agora's production read side. Index actual votes and link the experiment and constitution from `/info`.
@@ -34,6 +35,13 @@ Custom constitutions change the agents' instructions. They cannot change the gat
 The dedicated OpenRouter key keeps the operator's $50 total credit limit. A run defaults to a $1 inference budget, enforced by the Runner's token and dollar reservations, maximum provider prices and output limits. The $50 provider pool is separate from each run's allowance. Its current setting excludes bring-your-own-key charges, so it is a cap on OpenRouter credits rather than a universal cap on external provider accounts. The demo uses the configured Muse Spark model through OpenRouter.
 
 The initial task environment is a small coding workspace with governed artifact publication. Free text sets the goal within that environment. It does not give agents arbitrary GCP access.
+
+## Deployed launcher
+
+The [experiment launcher](https://fleet-governance-449245570324.us-central1.run.app/experiments)
+is live behind Google sign-in for `operator2@example.com`. Its default settings, run history endpoint,
+layout and custom constitution control were checked in the browser on September 15, 2026.
+The first onchain pilot remains unverified until the evidence below is captured.
 
 ## Completion evidence
 

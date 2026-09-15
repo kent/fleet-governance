@@ -24,6 +24,19 @@ and one research VM. See the [GCP runbook and current setup status](infra/gcp/RE
 [reset and parameter checklist](docs/gcp-todo.md). For the testnet handoff, follow the
 [Base Sepolia wallet steps](docs/base-sepolia-wallet-setup.md).
 
+## GCP experiment launcher
+
+[Open the experiment launcher](https://fleet-governance-449245570324.us-central1.run.app/experiments)
+and sign in with `operator2@example.com`.
+
+Choose 2 to 25 agents, enter a goal, select the Fleet constitution or paste your own, and press
+**Run experiment**. Each run gets its own ID and preserved settings. Copy settings from a previous
+run to try another configuration. The demo uses one GCP worker with separate agent identities and
+workspaces, a $1 inference allowance per run, and the dedicated $50 OpenRouter credit pool.
+
+The launcher is live. The first five-agent Base Sepolia run and Agora vote indexing are still
+being verified. Follow the [completion checklist](docs/turnkey-demo.md) for the remaining checks.
+
 ## Why build this?
 
 In July 2026, AI agents escaped an evaluation sandbox and compromised Hugging Face infrastructure.
