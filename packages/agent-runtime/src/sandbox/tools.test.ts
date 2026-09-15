@@ -407,7 +407,7 @@ describe("ToolRouter: run_tests", () => {
     await expect(access(join(workspace.dir, "host-executed"))).rejects.toThrow();
   });
 
-  it("uses real Docker end to end when no dockerRunTests is injected", async () => {
+  it.runIf(process.env.FLEET_INTEGRATION === "1")("uses real Docker end to end when no dockerRunTests is injected", async () => {
     const { watcher } = makeWatcher(baseCharter());
     const { log } = makeLog();
     const router = new ToolRouter({ workspace, watcher, agentId: 1, budget: { toolCalls: 0 }, log });
