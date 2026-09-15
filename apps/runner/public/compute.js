@@ -60,7 +60,7 @@ function render() {
   }
   if (!replay && actual && !halted && !authorised) {
     label = (simulation?.phase || "provisioning").replaceAll("-", " ").toUpperCase();
-    headline = simulation?.phase === "reviewing" ? "Five agents. Five independent reviews." : simulation?.phase === "voting" || simulation?.phase === "settling" ? "The agents are deciding on Base Sepolia." : simulation?.terminal ? "The run has finished its work." : "Starting a real governed run.";
+    headline = simulation?.phase === "reviewing" ? "Five agents. Five independent reviews." : simulation?.phase === "voting" || simulation?.phase === "settling" ? "The agents are deciding on Base Sepolia." : simulation?.phase === "preparation-failed" ? "Preparation needs attention." : simulation?.phase === "failed" ? "The run could not finish." : simulation?.terminal ? "The run has finished its work." : "Starting a real governed run.";
     explanation = simulation?.message || "A protected request is preparing the worker and exact required proposal.";
   }
   if (showVotes && index === 1) {
@@ -68,7 +68,7 @@ function render() {
     explanation = current?.scripted === false ? "These are confirmed ballots from actual model agents, each with its own public reason. The voting deadline still applies." : explanation;
   }
   $("run-simulation").disabled = submitting || !!data.simulation || !!data.allocation;
-  $("run-simulation").textContent = submitting ? "Starting…" : data.simulation || data.allocation ? halted ? "Locked until human recovery" : "Run in progress" : "Run simulation";
+  $("run-simulation").textContent = submitting ? "Starting…" : data.simulation || data.allocation ? halted || simulation?.terminal ? "Locked until human recovery" : "Run in progress" : "Run simulation";
   $("live-tab").classList.toggle("selected", !replay);
   $("replay-tab").classList.toggle("selected", replay);
   $("live-tab").setAttribute("aria-pressed", String(!replay));
