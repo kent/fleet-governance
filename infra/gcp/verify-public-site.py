@@ -30,6 +30,8 @@ for path in ["/api/compute-policy", "/api/experiments", "/api/experiment-default
     body = check(PUBLIC, path, [200])
     json.loads(body)
     assert b'"requestedBy"' not in body
+votes = json.loads(check(PUBLIC, "/api/archive/votes/17758453720459259775115348801772992791284533307697182874480707147019297120429", [200]))["data"]
+assert len(votes) == 5 and all(vote.get("reason") for vote in votes), "The five indexed vote reasons must be publicly readable"
 for path in ["/api/simulations", "/api/experiments", "/api/worker/start", "/proposals"]:
     # All requests must fail before their bodies or idempotency keys are considered.
     check(PUBLIC, path, [403], "POST", {"Origin": PUBLIC, "x-goog-authenticated-user-email": "accounts.google.com:operator2@example.com"})

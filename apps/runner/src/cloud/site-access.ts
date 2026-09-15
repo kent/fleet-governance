@@ -19,6 +19,7 @@ export function authorisedRequest(access: SiteAccess, method: string, headers: I
 }
 export function publicProxyPath(pathname: string): boolean {
   return /^\/(?:info|proposals(?:\/[0-9]+)?|delegates(?:\/0x[0-9a-fA-F]{40})?)\/?$/.test(pathname)
+    || /^\/api\/archive\/(?:votes|non-voters)\/[0-9]{1,78}$/.test(pathname)
     || pathname.startsWith("/_next/static/") || pathname === "/_next/image"
     || /^\/[a-zA-Z0-9_./-]+\.(?:svg|png|jpg|webp|ico|woff2?|ttf)$/.test(pathname);
 }

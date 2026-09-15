@@ -19,8 +19,8 @@ describe("public viewing boundary", () => {
     expect(() => siteAccess("pubic")).toThrow();
   });
   it("limits the anonymous Agora proxy to pages and assets", () => {
-    for (const path of ["/info", "/proposals/123", "/delegates", "/_next/static/chunk.js"]) expect(publicProxyPath(path)).toBe(true);
-    for (const path of ["/api/worker/start", "/api/admin", "/proposals/create-proposal", "/.env", "/api/experiments"]) expect(publicProxyPath(path)).toBe(false);
+    for (const path of ["/info", "/proposals/123", "/delegates", "/_next/static/chunk.js", "/api/archive/votes/123", "/api/archive/non-voters/123"]) expect(publicProxyPath(path)).toBe(true);
+    for (const path of ["/api/worker/start", "/api/admin", "/proposals/create-proposal", "/.env", "/api/experiments", "/api/archive/votes/../private", "/api/archive/votes/not-a-proposal"]) expect(publicProxyPath(path)).toBe(false);
   });
   it("preserves public vote evidence but removes attribution and credentials recursively", () => {
     expect(publicSnapshot({ requestedBy: "operator@example.com", votes: [{ reason: "Outside the charter", txHash: "0x123", privateKey: "private", nested: { rpcUrl: "secret" } }], error: "sk-or-v1-example alch_example" })).toEqual({ votes: [{ reason: "Outside the charter", txHash: "0x123", nested: {} }], error: "[redacted] [redacted]" });
