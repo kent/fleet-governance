@@ -20,8 +20,10 @@ export const TASK_LOOP_TIMEOUT_MS = 60_000;
 /** How many of the agent's own tool results go into the next-step prompt (controller notes). */
 const RECENT_TOOL_RESULTS = 10;
 
-/** How many of those keep a full output excerpt; older ones stay as one-line outcomes. */
-const RECENT_TOOL_OUTPUTS = 3;
+/** Keep enough bounded observations to combine a source file with several test files.
+ * Three excerpts made the live coding pilot cycle through four files without retaining all
+ * requirements at once. The ten-result window still caps excerpts at 20,000 characters. */
+const RECENT_TOOL_OUTPUTS = RECENT_TOOL_RESULTS;
 
 /** Characters of a tool's output carried into the prompt, before `... [truncated]`. */
 const MAX_OUTPUT_EXCERPT_CHARS = 2000;

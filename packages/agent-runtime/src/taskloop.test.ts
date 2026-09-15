@@ -978,21 +978,29 @@ describe("TaskLoop, what the next-step prompt carries", () => {
     expect(second).toContain("x".repeat(2000));
   });
 
-  it("keeps only the last three outputs in excerpt form, older ones as one-line outcomes", async () => {
-    let n = 0;
-    const tools = new FakeTools(() => {
-      n += 1;
-      return { ok: true, output: `OUTPUT_MARKER_${n}` };
-    });
+  it("retains a source file and three test files together for the next coding step", async () => {
+    const files = ["src/index.js", "test/slugify.test.js", "test/parse-duration.test.js", "test/group-by.test.js"];
+    const tools = new FakeTools(tool => ({ ok: true, output: `REQUIREMENT_FROM_${tool.target}` }));
     const sink = collector();
-    const { provider, users } = scripted({ step: [{ tool: READ, why: "read the failing module" }] });
+    const { provider, users } = scripted({ step: files.map(target => ({ tool: { ...READ, target }, why: "inspect the implementation and its requirements" })) });
 
     await coordinator({ provider, tools, sink, maxSteps: 5 }).run(new AbortController().signal);
 
+    const nextCodingStep = users[4] ?? "";
+    for (const file of files) expect(nextCodingStep).toContain(`REQUIREMENT_FROM_${file}`);
+  });
+
+  it("bounds retained tool output to the latest ten observations", async () => {
+    const tools = new FakeTools((_tool, n) => ({ ok: true, output: `OUTPUT_MARKER_${n}_END` }));
+    const sink = collector();
+    const { provider, users } = scripted({ step: [{ tool: READ, why: "inspect task evidence" }] });
+
+    await coordinator({ provider, tools, sink, maxSteps: 12 }).run(new AbortController().signal);
+
     const last = users[users.length - 1] ?? "";
-    expect(last).not.toContain("OUTPUT_MARKER_1");
-    expect(last).toContain("OUTPUT_MARKER_4");
-    expect(last).toContain("read_repo src/sum.ts: ok");
+    expect(last).not.toContain("OUTPUT_MARKER_1_END");
+    expect(last).toContain("OUTPUT_MARKER_2_END");
+    expect(last).toContain("OUTPUT_MARKER_11_END");
   });
 
   it("cannot have its untrusted section closed by a payload that spells the closing tag", async () => {
