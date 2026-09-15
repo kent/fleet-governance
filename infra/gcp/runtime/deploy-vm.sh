@@ -71,6 +71,11 @@ for _ in $(seq 1 60); do
     # Serving the UI does not prove the Runner can manage its test containers.
     docker exec fleet-runner docker version --format 'Docker client {{.Client.Version}} connected to server {{.Server.Version}}'
     docker exec fleet-runner docker compose version
+    # Use a path mounted at the same location in Runner and on the Docker host.
+    install -d -m 700 /srv/fleet/state/verification
+    docker exec -e FLEET_INTEGRATION=1 -e TMPDIR=/srv/fleet/state/verification \
+      fleet-runner pnpm exec vitest run --project integration \
+      packages/agent-runtime/src/sandbox/docker.integration.test.ts
     docker exec fleet-runner node --input-type=module -e '
       const response = await fetch("https://openrouter.ai/api/v1/key", {
         headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },

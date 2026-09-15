@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -10,6 +10,8 @@ describe.skipIf(process.env.FLEET_INTEGRATION !== "1")("real test sandbox contai
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), "fleet-containment-"));
+    // Linux enforces the fixture root's mode for the sandbox's unprivileged UID.
+    await chmod(dir, 0o755);
     await writeFile(join(dir, "package.json"), JSON.stringify({ scripts: { test: "node probe.cjs" } }));
   });
 
