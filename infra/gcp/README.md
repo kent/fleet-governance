@@ -1,139 +1,75 @@
 # GCP research environment
 
-Infrastructure and deployment run in GitHub Actions. This directory keeps the configuration
-in the repository so a new machine can reproduce it. Local access is only needed for the
-initial identity bootstrap and entering secret values.
+GitHub Actions provisions the infrastructure and deploys the application. The browser starts experiments. Servers, agent sandboxes, signing keys and model calls stay on GCP.
 
-Status on September 14, 2026: GitHub federation, both service accounts, the private state and
-data buckets, Artifact Registry and all three secret versions are configured. The stored
-OpenRouter credential authenticates without an inference request. Its provider credit limit
-is still unset, so the model pilot's budget preflight remains blocked.
+## Current state
 
-Compute Engine is enabled and `fleet-research` is running. The
-[infrastructure apply](https://github.com/kent/fleet-governance/actions/runs/34922016649) succeeded,
-and the [follow-up plan](https://github.com/kent/fleet-governance/actions/runs/34922261902) reported
-no changes. The unused default service account has no project roles. Google initially failed
-Compute activation; a subsequent GitHub retry completed it without replacing the project or
-discarding Terraform state.
+On September 15, 2026, the [foundation apply](https://github.com/kent/fleet-governance/actions/runs/34980731766) completed successfully. Compute Engine is enabled. The worker, private buckets, Artifact Registry, service accounts and experiment secrets are configured. The dedicated OpenRouter key retains the operator's **$50 non-resetting credit limit**. Each run defaults to a **$1 inference budget** from that pool.
 
-The [sandbox deployment check](https://github.com/kent/fleet-governance/actions/runs/34922683351)
-passed all three live tests on the VM: ordinary execution, isolation and timeout cleanup.
-The Runner UI is active. The chain, indexer and public read-side services will be configured
-in the Base Sepolia stage.
+The [wallet preparation run](https://github.com/kent/fleet-governance/actions/runs/34979195987) generated reusable testnet keys in Secret Manager and funded the deployer, operator, guardian, keeper and five agents with Base Sepolia ETH. The HTTP and WebSocket RPCs were verified against chain ID 84532. Production application deployment and the first live model experiment are still being verified. See the [demo checklist](../../docs/turnkey-demo.md) for completion evidence.
 
-Project: `fleet-governance`. Region: `us-central1`. VM: `fleet-research` in `us-central1-a`.
-The configured VM is an `e2-standard-8` with 8 vCPUs and 32 GiB RAM. It stops automatically after
-four hours. The workflow accepts a smaller machine and a runtime limit of 1 to 24 hours.
-Persistent disks and stored objects remain after compute stops and continue to incur charges.
+## Services and access
 
-The dedicated provisioner is `fleet-provisioner@fleet-governance.iam.gserviceaccount.com`.
-It has project-level Owner access, as requested. GitHub uses Workload Identity Federation;
-there is no service account JSON key. The identity provider accepts only repository ID
-`1370431845`, owner ID `12737`, `refs/heads/main`, and manual executions of `gcp-infra.yml`
-or `gcp-deploy.yml`. Forks and pull-request jobs cannot use this provider.
+- Project: `fleet-governance`; region: `us-central1`.
+- `fleet-governance` on Cloud Run serves the experiment launcher behind Google Identity-Aware Proxy. It can read and write experiment records and start the fixed worker. It has no wallet or model secrets.
+- `fleet-research` in `us-central1-a` runs the trusted Runner, isolated test containers, Agora, DAO Node, CPLS and Postgres. It is an `e2-standard-8` with 8 vCPUs and 32 GiB RAM. The VM stops after four hours; its disks and records remain.
+- The launcher reaches Agora over the private VPC. Application ports are closed to public ingress. IAP provides administrative SSH access. OS Login and Shielded VM protections are enabled.
+- Sign-in is restricted to `operator2@example.com`. The CI provisioner also has IAP access for verification.
 
-The VM uses `fleet-runtime`, a separate account with access to the experiment's secrets,
-image repository, data buckets, logging and metrics. It cannot provision resources. The VM
-has an outbound IP to avoid running a separate NAT gateway for one research machine. The
-only ingress rule is SSH through IAP; application ports are not public. OS Login and Shielded
-VM protections are enabled.
+Agents share the worker, with separate identities, workspaces and inference calls. The launcher supports 2 to 25 agents, with five selected by default. Agent count does not mean one VM per agent.
 
-Use the [GCP infrastructure workflow](https://github.com/kent/fleet-governance/actions/workflows/gcp-infra.yml)
-on `main`:
+## Deploy or change infrastructure
 
-1. Choose `plan` to inspect changes. The first run also creates the private Terraform state bucket.
-2. Choose `apply` to create or update the environment from a saved Terraform plan.
-3. Choose `start` or `stop` to control the VM without removing its data.
+1. Commit and push the change to `main`.
+2. For infrastructure, open the [GCP infrastructure workflow](https://github.com/kent/fleet-governance/actions/workflows/gcp-infra.yml). Run `plan`, then `apply` after reviewing the plan. Use `start` or `stop` to control the existing worker without removing its data.
+3. For application changes, run [GCP deploy Fleet demo](https://github.com/kent/fleet-governance/actions/workflows/gcp-deploy.yml). Leave `deploy` enabled. Disabling it builds and publishes images only.
+4. Review the workflow summary and checks. The workflow builds four images, tests the Runner and contracts, checks Agora's vote archive reader, deploys immutable image digests, configures Cloud Run with IAP, and releases the worker through IAP SSH.
+5. The worker deployment checks the UI, Docker compatibility, sandbox isolation, timeout cleanup and the real tool-to-Docker path. It authenticates the inference key without making a model call.
 
-The state bucket is `fleet-governance-tfstate-449245570324`. Terraform creates private buckets
-for artifacts and the governance archive. Public archive access is deferred until the web3
-deployment is configured. State, data buckets, secrets and the data disk are preserved by
-default. Replacing a VM is different from resetting a research run.
+Deployment and experiments share a filesystem lock. A deployment stops if an experiment owns the worker. Finish that run before retrying deployment.
 
-Secret Manager contains three runtime secret containers:
+## Run, adjust and repeat
 
-- `fleet-openrouter-api-key`
-- `fleet-postgres-password`
-- `fleet-jwt-secret`
+1. Open `/experiments` at the deployed service URL and sign in with Google.
+2. Choose the number of agents, enter a goal, and select the existing constitution or paste your own.
+3. Press Run. The launcher saves an immutable request and starts the worker if it is stopped.
+4. Follow funding, deployment, agent activity, proposals, ballots and execution evidence. Open a proposal in Agora to read the indexed vote reasons.
+5. Use the completed run's copy-settings action, adjust the inputs and press Run again. That creates a new run ID and preserves the previous result.
 
-Secret values are entered separately and never appear in Terraform configuration or state.
-After Terraform creates the containers, an authenticated operator can run
-`python3 infra/gcp/seed-secrets.py` once. It hides OpenRouter input, generates the two application
-secrets, uploads values through standard input, and preserves any existing versions. This is
-the one-time secret input step; routine builds and deployments use GitHub.
+One experiment runs at a time. Each run deploys a fleet for its submitted configuration, and Agora follows the active fleet. Previous run records remain available in the launcher. A stopped VM pauses availability of Agora; the launcher remains available and the next Run can start the worker.
 
-CDP credentials use two separate containers, `fleet-cdp-api-key-id` and
-`fleet-cdp-api-key-secret`. The provisioner can access them. They are not granted to the
-Runner service account or injected into the application. To import an Ed25519 credential:
+The first task environment is a small coding repository with governed artifact publication. The goal field changes what agents attempt within that environment. Custom constitutions change instructions; they cannot bypass the gateway or contract executor.
 
-1. Run infrastructure `apply` to create the containers.
-2. Load an encrypted GitHub repository secret named `CDP_BOOTSTRAP_CREDENTIALS` from your
-   password manager. Its JSON fields must be exactly `api_key_id` and `api_key_secret`.
-   Pass the JSON through standard input to `gh secret set`, keeping values out of command
-   arguments, files and terminal output.
-3. Run infrastructure `import-cdp`. The importer checks both existing values before writing,
-   preserves matching versions, completes partial imports and refuses implicit rotation.
-   It reads the stored values back and reports only their secret names and version numbers.
-4. After successful verification, delete `CDP_BOOTSTRAP_CREDENTIALS` from the repository's
-   Actions secrets. Keep the durable copies in Secret Manager and your password manager.
+A stale heartbeat is shown as stale. It is not treated as success. Review a failed run before starting another. A confirmed blockchain transaction cannot be undone by resetting the UI or stopping a VM.
 
-This import does not start the VM, create wallets, request faucet ETH or deploy contracts.
-RPC credentials, wallet provisioning and funding are separate steps.
+## Identity and secrets
 
-On September 15, the [CDP import](https://github.com/kent/fleet-governance/actions/runs/34976004864)
-verified enabled version 1 for both credentials. The key also passed a read-only CDP
-authentication request. The temporary GitHub secret was removed after verification.
+`fleet-provisioner` has project Owner access, as requested. GitHub uses Workload Identity Federation, with no service account JSON key. The provider accepts repository ID `1370431845`, owner ID `12737`, `refs/heads/main`, and manual executions of `gcp-infra.yml` or `gcp-deploy.yml`. Fork and pull-request jobs cannot obtain this identity.
 
-The OpenRouter credit cap remains a provider-side setting. The model preflight requires a
-non-resetting cap, positive remaining credit no greater than the run budget, and BYOK usage
-included. Storing a key does not approve an unlimited model run.
+`fleet-runtime` can read the experiment's secrets, pull images, write the two data buckets and emit logs and metrics. `fleet-control` can start only the fixed worker and access experiment queue records. Neither runtime identity can provision resources.
 
-Once those secret versions exist, use the
-[GCP deploy Runner workflow](https://github.com/kent/fleet-governance/actions/workflows/gcp-deploy.yml).
-Leave `deploy` enabled to release the application. Disable it to build and publish an image
-without starting or connecting to the VM.
-It checks the secret versions, builds the current `main` revision, runs TypeScript checks and
-the production Next build, verifies that the image serves the UI without credentials or
-external network access, pushes it to Artifact Registry, and deploys its immutable
-digest through IAP. Node, Foundry, the Docker client and workflow actions are pinned.
-Credentials generated by GitHub authentication are excluded from the image context.
+Secret Manager holds:
 
-The VM fetches numbered secret versions using its own identity. Values live in a root-only
-file under `/run`, and are injected only into the trusted Runner container. The agent test
-containers receive neither these credentials nor the Docker socket. Runner itself needs the
-host Docker socket to manage those sandboxes; it is trusted control software, not an agent
-workspace. Completed reports and deployment records live on the separate persistent data disk.
+- `fleet-openrouter-experiment-api-key`: the dedicated $50 experiment key.
+- `fleet-postgres-password` and `fleet-jwt-secret`: application credentials.
+- `fleet-cdp-api-key-id` and `fleet-cdp-api-key-secret`: testnet faucet credentials.
+- `fleet-base-sepolia-rpc-url` and `fleet-base-sepolia-ws-url`: Alchemy endpoints.
+- `fleet-base-sepolia-wallets`: the reusable testnet signing keys.
 
-Deployment checks the private UI, Docker client/daemon compatibility, Compose and the real
-sandbox containment tests, then authenticates the OpenRouter key without requesting inference.
-The sandbox tests verify normal execution, isolation from the network and host credentials,
-and container removal after a timeout. Their temporary workspaces use the shared data mount.
-Deployment stops if it finds an active headless experiment or cannot inspect the Runner's
-processes. This is a research deployment, not a claim of recovery for every crash or external
-workload.
+The earlier `fleet-openrouter-api-key` secret is retained for the previous setup. New experiment deployments use the dedicated experiment key.
 
-For private browser access after deployment, tunnel from an account with IAP and OS Login
-access and the right to use the VM's service account:
+The worker loads numbered secret versions using its own identity. Application secrets live in a root-only file under `/run`. Wallet and RPC credentials are loaded into the trusted run process when needed. Agent test containers receive no credentials or Docker socket, have no network access and run as a non-root user. Runner has the host Docker socket because it manages those containers and is trusted control software.
 
-```sh
-gcloud compute ssh fleet-research --project=fleet-governance --zone=us-central1-a \
-  --tunnel-through-iap -- -N -L 13100:127.0.0.1:3100
-```
+Values never enter Terraform state or Git. The import actions accept temporary encrypted GitHub secrets, validate and read back the imported values, then report only names and version numbers. Remove the temporary repository secret after verification. Rotation is explicit; import actions refuse to overwrite a different existing credential silently.
 
-Then open `http://localhost:13100`. The browser is local; the server, agents and tools run on GCP.
-No public application port is opened by these workflows.
+The OpenRouter pool caps OpenRouter credits. Its current setting excludes external BYOK charges. The Runner separately reserves token and dollar budgets and enforces provider price and output limits. It does not change the provider's $50 setting.
 
-Wallet keys, Base Sepolia RPC credentials and public chain deployment are the next stage.
-Follow the [wallet setup steps](../../docs/base-sepolia-wallet-setup.md) for that handoff.
-The broader [experiment checklist](../../docs/gcp-todo.md) describes the remaining reset,
-parameter and scaling work. A stopped VM does not revoke onchain permissions or recall a
-request that was already sent.
+## Records and recovery
 
-The initial bootstrap enabled IAM, IAM Credentials and STS, created the provisioner and
-GitHub identity pool/provider, and granted the repository `roles/iam.workloadIdentityUser`
-on that service account. Subsequent resource changes belong in the workflows. The provider
-condition and role grants can be inspected through GCP IAM.
+Terraform state is private and versioned in `fleet-governance-tfstate-449245570324`. The private data buckets are `fleet-governance-artifacts-449245570324` and `fleet-governance-archive-449245570324`.
 
-References: [Google's GitHub federation setup](https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines),
-[service account access scopes](https://docs.cloud.google.com/compute/docs/access/service-accounts),
-[VM runtime limits](https://docs.cloud.google.com/compute/docs/instances/limit-vm-runtime).
+Requests, progress and completed evidence live under `demo/runs/<run-id>/` in the artifacts bucket. Reports and deployment records also live on the VM's separate data disk under `/srv/fleet/state`. The archive bucket contains Agora's indexed proposal and vote data. A loopback reader uses the VM identity to serve that private archive to Agora.
+
+Stopping compute does not delete disks, secrets, objects or onchain permissions. Stored resources continue to incur charges. Replacing a VM and starting a new experiment are separate operations. Preserve the data disk when repairing the worker.
+
+References: [Google's GitHub federation setup](https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines), [Cloud Run with IAP](https://docs.cloud.google.com/run/docs/securing/identity-aware-proxy-cloud-run), [Direct VPC](https://docs.cloud.google.com/run/docs/configuring/vpc-direct-vpc), [VM runtime limits](https://docs.cloud.google.com/compute/docs/instances/limit-vm-runtime).

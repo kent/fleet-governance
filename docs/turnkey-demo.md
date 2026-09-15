@@ -6,10 +6,10 @@ Choose the number of agents, give them a goal, choose a constitution and press R
 
 - [x] GCP foundation and GitHub Actions deployment with workload identity.
 - [x] Verify CDP credentials and Base Sepolia HTTP and WebSocket RPC. Store credentials in Secret Manager.
-- [ ] Store a separate, capped OpenRouter experiment key.
-- [ ] Carry the submitted goal and constitution into work and voting prompts. Capture the exact text with each run.
+- [x] Store a separate, capped OpenRouter experiment key.
+- [x] Carry the submitted goal and constitution into work and voting prompts. Capture the exact text with each run.
 - [ ] Add an authenticated experiment launcher that remains available while the worker VM is stopped.
-- [ ] Queue immutable run requests in private Cloud Storage. Start the existing GCP worker and report observed provisioning states.
+- [x] Queue immutable run requests in private Cloud Storage. Start the existing GCP worker and report observed provisioning states.
 - [ ] Generate reusable test wallets on GCP, fund them through the CDP faucet and check gas requirements.
 - [ ] Deploy FleetGov ERC20Votes and the existing governor contracts on Base Sepolia.
 - [ ] Show agent steps, objections, proposals, votes, reasons and execution evidence as they arrive.
