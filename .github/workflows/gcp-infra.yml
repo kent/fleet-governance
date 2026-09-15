@@ -5,7 +5,7 @@ on:
       action:
         description: Infrastructure operation
         type: choice
-        options: [plan, apply, start, stop, import-cdp]
+        options: [plan, apply, start, stop, import-cdp, import-rpc]
         default: plan
       machine_type:
         description: Pilot VM type
@@ -39,14 +39,21 @@ jobs:
           workload_identity_provider: projects/449245570324/locations/global/workloadIdentityPools/github/providers/github
           service_account: fleet-provisioner@fleet-governance.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
-      - name: Verify CDP secret importer
-        if: inputs.action == 'import-cdp'
-        run: python3 -m unittest discover -s infra/gcp/tests -v
+      - name: Verify secret importer
+        if: inputs.action == 'import-cdp' || inputs.action == 'import-rpc'
+        run: python3 -B -m unittest discover -s infra/gcp/tests -v
       - name: Import CDP credentials into Secret Manager
         if: inputs.action == 'import-cdp'
         env:
           CDP_BOOTSTRAP_CREDENTIALS: ${{ secrets.CDP_BOOTSTRAP_CREDENTIALS }}
-        run: python3 infra/gcp/import-cdp-secrets.py
+        run: python3 -B infra/gcp/import-secrets.py --kind cdp
+      - name: Verify and import Base Sepolia RPC endpoints
+        if: inputs.action == 'import-rpc'
+        env:
+          RPC_BOOTSTRAP_CREDENTIALS: ${{ secrets.RPC_BOOTSTRAP_CREDENTIALS }}
+        run: |
+          node infra/gcp/verify-rpc.mjs
+          python3 -B infra/gcp/import-secrets.py --kind rpc
       - name: Start or stop the research VM
         if: inputs.action == 'start' || inputs.action == 'stop'
         env:

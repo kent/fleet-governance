@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 
-spec = importlib.util.spec_from_file_location('cdp_import', Path(__file__).parents[1] / 'import-cdp-secrets.py')
+spec = importlib.util.spec_from_file_location('secret_import', Path(__file__).parents[1] / 'import-secrets.py')
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
@@ -82,6 +82,16 @@ class ImportTests(unittest.TestCase):
             with self.subTest(raw=raw), self.assertRaises(module.ImportFailure) as caught:
                 module.credentials_from_json(raw)
             self.assertNotIn('sensitive', str(caught.exception))
+
+    def test_rpc_urls_are_scoped_and_share_the_same_key(self):
+        urls = {'rpc_http_url': 'https://base-sepolia.g.alchemy.com/v2/test-fixture-key',
+                'rpc_ws_url': 'wss://base-sepolia.g.alchemy.com/v2/test-fixture-key'}
+        self.assertEqual(set(module.credentials_from_json(json.dumps(urls), 'rpc')), set(module.RPC_FIELDS.values()))
+        for bad in ('wss://base-mainnet.g.alchemy.com/v2/test-fixture-key',
+                    'wss://base-sepolia.g.alchemy.com/v2/different-fixture-key',
+                    'wss://base-sepolia.g.alchemy.com.evil.invalid/v2/test-fixture-key'):
+            with self.assertRaises(module.ImportFailure):
+                module.credentials_from_json(json.dumps({**urls, 'rpc_ws_url': bad}), 'rpc')
 
 
 if __name__ == '__main__':
