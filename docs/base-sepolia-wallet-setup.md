@@ -7,6 +7,11 @@ which means nine accounts: deployer, operator, guardian, keeper and five voters.
 The GCP Runner is deployed. Wallet generation, faucet automation and the Base Sepolia
 deployment are the next stage. No experiment wallets have been generated or funded yet.
 
+As of September 15, 2026, the CDP key passes a read-only authentication check. Both CDP
+credentials are stored as enabled version 1 in Secret Manager, verified by the
+[GitHub import](https://github.com/kent/fleet-governance/actions/runs/34976004864).
+The temporary encrypted GitHub copy was removed. HTTP and WSS RPC credentials are next.
+
 ## What you need to do
 
 1. **Create a Coinbase Developer Platform project and Secret API Key.** In the
@@ -21,10 +26,11 @@ deployment are the next stage. No experiment wallets have been generated or fund
    only, so changing `https://sepolia.base.org` to `wss://` is not sufficient.
    [Base RPC documentation](https://docs.base.org/base-chain/api-reference/rpc-overview)
 
-3. **Store those credentials in Secret Manager during the web3 setup.** The next Terraform
-   change should create the four secret containers below through GitHub. Then add their
-   values in the GCP console. These containers are not part of the current foundation yet.
-   Keep values out of GitHub workflow inputs, repository files and logs.
+3. **Store those credentials in Secret Manager during the web3 setup.** Terraform now creates
+   the two CDP containers. The infrastructure workflow's `import-cdp` action imports a
+   temporary encrypted GitHub secret and verifies the stored values. See the
+   [GCP runbook](../infra/gcp/README.md) for that procedure. The HTTP and WSS containers and
+   credentials are still pending. Keep values out of workflow inputs, repository files and logs.
 
    | Secret | Value |
    | --- | --- |

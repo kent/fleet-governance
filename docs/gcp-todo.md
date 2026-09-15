@@ -57,6 +57,9 @@ parameter generation and Base Sepolia are follow-on work. Agora Governor stays p
      to preserve that local convention.
 
 4. **Prepare Base Sepolia access and funded identities.**
+   - [x] Import CDP API credentials into Secret Manager through GitHub and verify the stored
+     values. Both are enabled version 1, and the key authenticates. Faucet requests and
+     wallet provisioning remain separate work in the [wallet guide](base-sepolia-wallet-setup.md).
    - [ ] Get reliable HTTP and WebSocket RPC endpoints for **chain ID 84532**. Confirm request
      quotas, log range limits and receipt availability with the provider. Base publishes
      standard endpoints, but the fleet's measured workload should determine the RPC plan.

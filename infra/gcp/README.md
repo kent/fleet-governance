@@ -50,7 +50,7 @@ for artifacts and the governance archive. Public archive access is deferred unti
 deployment is configured. State, data buckets, secrets and the data disk are preserved by
 default. Replacing a VM is different from resetting a research run.
 
-Secret Manager contains three secret containers:
+Secret Manager contains three runtime secret containers:
 
 - `fleet-openrouter-api-key`
 - `fleet-postgres-password`
@@ -61,6 +61,28 @@ After Terraform creates the containers, an authenticated operator can run
 `python3 infra/gcp/seed-secrets.py` once. It hides OpenRouter input, generates the two application
 secrets, uploads values through standard input, and preserves any existing versions. This is
 the one-time secret input step; routine builds and deployments use GitHub.
+
+CDP credentials use two separate containers, `fleet-cdp-api-key-id` and
+`fleet-cdp-api-key-secret`. The provisioner can access them. They are not granted to the
+Runner service account or injected into the application. To import an Ed25519 credential:
+
+1. Run infrastructure `apply` to create the containers.
+2. Load an encrypted GitHub repository secret named `CDP_BOOTSTRAP_CREDENTIALS` from your
+   password manager. Its JSON fields must be exactly `api_key_id` and `api_key_secret`.
+   Pass the JSON through standard input to `gh secret set`, keeping values out of command
+   arguments, files and terminal output.
+3. Run infrastructure `import-cdp`. The importer checks both existing values before writing,
+   preserves matching versions, completes partial imports and refuses implicit rotation.
+   It reads the stored values back and reports only their secret names and version numbers.
+4. After successful verification, delete `CDP_BOOTSTRAP_CREDENTIALS` from the repository's
+   Actions secrets. Keep the durable copies in Secret Manager and your password manager.
+
+This import does not start the VM, create wallets, request faucet ETH or deploy contracts.
+RPC credentials, wallet provisioning and funding are separate steps.
+
+On September 15, the [CDP import](https://github.com/kent/fleet-governance/actions/runs/34976004864)
+verified enabled version 1 for both credentials. The key also passed a read-only CDP
+authentication request. The temporary GitHub secret was removed after verification.
 
 The OpenRouter credit cap remains a provider-side setting. The model preflight requires a
 non-resetting cap, positive remaining credit no greater than the run budget, and BYOK usage
