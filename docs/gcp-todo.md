@@ -1,186 +1,74 @@
-# Repeatable fleet experiments on GCP
+# Run and repeat the fleet experiment on GCP
 
-Use GCP for the agents, sandboxes and services. Use a private Anvil chain on GCP for fast
-experiments, then Base Sepolia for public demonstrations. A new Anvil instance can start with
-an empty chain. Base Sepolia keeps its history: a fresh experiment opens a new task or deploys
-a new fleet.
+Use the browser to run experiments. Use GitHub to change infrastructure or deploy code. Nothing needs to stay running on your computer.
 
-This is the experiment checklist, updated September 14, 2026. The current GCP setup and its
-verification status live in the [infrastructure runbook](../infra/gcp/README.md). Infrastructure
-and deployments run through GitHub Actions. Start with one research VM. Reset automation,
-parameter generation and Base Sepolia are follow-on work. Agora Governor stays pinned and unchanged.
+This checklist is updated September 15, 2026. The [GCP runbook](../infra/gcp/README.md) records the deployed resources, identities and secret names. The [demo checklist](turnkey-demo.md) tracks the live pilot's verification.
 
-1. **Create the GCP project and choose its limits.**
-   - [x] Use the billing-enabled `fleet-governance` project in `us-central1`, with a dedicated
-     provisioner and GitHub Workload Identity Federation. No service account key is needed.
-   - [x] Complete the Terraform apply for Compute Engine, Artifact Registry, Secret Manager,
-     Cloud Storage, Logging, Monitoring and IAP. Confirm regional CPU and disk quota for the pilot.
-   - [x] Set a maximum VM runtime. The research VM stops after four hours by default; the
-     infrastructure workflow accepts one to 24 hours. Disks and stored data remain billable.
-   - [ ] Set a project budget and alerts. An alerts-only budget does not stop a VM.
-     [Google Cloud budget documentation](https://docs.cloud.google.com/billing/docs/how-to/budgets)
+## One-time setup
 
-2. **Provision the pilot machine and private access.**
-   - [x] Start with one Compute Engine VM: **8 vCPUs, 32 GiB RAM, Ubuntu 24.04, a 100 GB boot
-     disk and a separate 100 GB balanced data disk**. The pilot VM is provisioned; capacity for
-     2,000 model agents still needs measurement. Hosted models need no GPU here.
-   - [x] Use the research VPC, an outbound IP on the VM, and IAP access for administration.
-     One VM does not need a separate Cloud NAT gateway.
-     Keep Runner, Postgres, DAO Node, CPLS and the Docker socket off the public internet.
-     Runner can start work and use signing keys. Public access belongs on a separately
-     configured read-only site. [IAP TCP forwarding](https://docs.cloud.google.com/iap/docs/using-tcp-forwarding)
-   - [x] Run the existing Docker sandbox on Compute Engine. All three live containment tests
-     pass on the research VM, including removal after timeout. Moving the runner to Cloud Run
-     would require a different sandbox execution adapter; the current code expects control
-     of a Docker daemon. Cloud Run restricts host operations and privileged containers.
-     [Cloud Run runtime contract](https://docs.cloud.google.com/run/docs/container-contract)
-   - [ ] Keep one active experiment per workspace initially. The current CLI shares deployment
-     pointers, indexer settings and an inference coordinator. Adding VM replicas does not turn
-     it into a distributed fleet runner.
+- [x] Create the billing-enabled `fleet-governance` project in `us-central1`.
+- [x] Configure GitHub Workload Identity Federation and a dedicated provisioner. No service account JSON key is needed.
+- [x] Provision the worker, private network, disks, image registry, private buckets, logging and Secret Manager through Terraform in GitHub Actions.
+- [x] Keep the worker runtime separate from the provisioner. Give the browser launcher access to the experiment queue and permission to start only the fixed worker.
+- [x] Store the dedicated OpenRouter key with its existing **$50 non-resetting credit limit**. Keep the default run allowance at **$1**. Resetting an experiment does not reset the provider's credit pool.
+- [x] Store and verify Alchemy HTTP and WebSocket endpoints for Base Sepolia, chain ID **84532**.
+- [x] Store the CDP faucet credentials, generate reusable testnet signing keys in Secret Manager and fund the nine identities needed for five agents.
+- [x] Set the worker to stop automatically after four hours. Disks and stored objects remain billable while it is stopped.
+- [ ] Finish the production deployment and verify Google sign-in, Agora `/info`, an actual proposal, indexed votes and public reasons.
+- [ ] Set a separate GCP billing budget and alerts if desired. The OpenRouter $50 limit applies to inference credits, not GCP charges. A [GCP budget alert](https://docs.cloud.google.com/billing/docs/how-to/budgets) does not stop compute.
 
-3. **Store credentials outside the experiment files.**
-   - [ ] Put the capped OpenRouter key, RPC credentials, testnet signing keys and application
-     secrets in Secret Manager. Use a dedicated VM service account with access only to its
-     required secrets, image repository and buckets. Pin secret versions in a private run
-     manifest. [Secret Manager guidance](https://docs.cloud.google.com/secret-manager/docs/best-practices)
-   - [ ] For the first model pilot, set the OpenRouter key to a **$1 credit limit, no reset,
-     with BYOK usage included**. The current preflight also requires positive remaining credit
-     no greater than the experiment's dollar budget. Increase the budget deliberately for
-     later runs; resetting local files must never reset provider spending authority.
-   - [x] Verify the deployment's Secret Manager loader and systemd service on the VM. The
-     three application secrets load successfully. Wallet and RPC secrets are the next step.
-     Never mount those credentials or the Docker socket into agent test containers.
-   - [ ] Adapt CPLS to use the VM service account through Application Default Credentials.
-     Its Python client supports ADC, but the current Compose file mounts a JSON credential
-     file and preflight uses that file setting to distinguish real GCS from the emulator.
-     Both need an explicit GCP configuration. Avoid downloading a service account key just
-     to preserve that local convention.
+## Start a run
 
-4. **Prepare Base Sepolia access and funded identities.**
-   - [x] Import CDP API credentials into Secret Manager through GitHub and verify the stored
-     values. Both are enabled version 1, and the key authenticates. Faucet requests and
-     wallet provisioning remain separate work in the [wallet guide](base-sepolia-wallet-setup.md).
-   - [ ] Get reliable HTTP and WebSocket RPC endpoints for **chain ID 84532**. Confirm request
-     quotas, log range limits and receipt availability with the provider. Base publishes
-     standard endpoints, but the fleet's measured workload should determine the RPC plan.
-     [Base RPC reference](https://docs.base.org/base-chain/api-reference/rpc-overview)
-   - [ ] Create separate deployer, operator, guardian and keeper identities, plus one funded
-     identity per voting agent. A five-agent pilot needs **nine funded addresses**; 2,000
-     agents currently need **2,004**. The code has no automatic gas sponsorship layer.
-   - [ ] Fund them with **Base Sepolia test ETH**. Estimate deployment and transaction fees
-     before choosing amounts; a nonzero balance passes the current preflight but does not
-     prove it can finish a run. The [wallet setup guide](base-sepolia-wallet-setup.md) covers
-     CDP faucet automation and manual funding. Do not use published Anvil keys on Sepolia.
-   - [ ] Keep guardian authority under operator control. The current runner expects a guardian
-     key too; moving it to a separate signer is implementation work, not a feature already
-     provided by Secret Manager.
-   - [ ] Deploy and verify the registry, token, timelock, ledger, hook, Governor, executor and
-     artifact store. Record their addresses, code hashes and deployment block. Configure fee
-     bounds for agents and the keeper, and separately review deployment gas.
+1. Open `/experiments` at the deployed service URL and sign in as `operator2@example.com`.
+2. Choose the agent count. The demo supports **2 to 25**, with **5** selected by default.
+3. Enter the goal. The current task environment is a small coding repository with a governed artifact publication tool.
+4. Use the existing constitution or paste a custom one. The chosen text and its hash are saved with the run and supplied to work and voting prompts.
+5. Press Run. The launcher saves the request, starts the GCP worker if needed, and shows observed progress.
+6. Follow the agents' activity and open the proposal in Agora. Read the decision, ballots and reasons, then check whether the exact protected action executed.
 
-5. **Keep results when compute is reset.**
-   - [ ] Create a private GCS bucket for complete run bundles and a separate bucket for the
-     public governance archive. Retain the private bucket across VM replacement and reset.
-   - [ ] Publish only the intended proposals, ballots, manifests and reports. Remove private
-     RPC credentials and other secrets from exported configurations and logs.
-   - [ ] The current Agora archive reader uses unauthenticated URLs. A dedicated public archive
-     is the existing path. If project policy prohibits public objects, implement authenticated
-     archive reads or a read-only proxy before enabling the site.
-   - [ ] Run Postgres privately on the VM for the pilot, with separate state for each experiment
-     environment. Use consistent database backups and uploaded run bundles for recovery.
-     Cloud SQL is a later option; it is not required to begin.
-   - [ ] Upload the config, effective fixture and charter, source commit, image digests,
-     deployment manifest, task ID, inference journal, tool events, receipts, artifact hashes,
-     report and checksums under a unique run ID. Preserve failed and stopped runs too.
-     Pinning these inputs makes a run inspectable; it does not make model output deterministic.
+The agents use Muse Spark through OpenRouter. Each has a separate identity, workspace and model requests. They share one worker VM. Five agents do not mean five servers.
 
-6. **Build the remote release and launcher.**
-   - [x] Add Terraform for IAM, network, VM, buckets, secrets and image registry. Keep its state
-     in a separate private bucket that experiment reset cannot delete. Apply through GitHub.
-   - [x] Build and tag images with the Git commit, and launch by image digest. Install the
-     pinned dependencies and Foundry tools in the build. Build in GitHub Actions and deploy
-     to GCP so nothing needs to remain running on a laptop.
-   - [ ] Start services through systemd and Compose, persist the runner's state and inference
-     journal, and take a single-experiment lock before dispatch. Retry startup without creating
-     a second coordinator or granting a fresh inference budget to a resumed run.
-   - [ ] Verify a production build of Agora Next before exposing it. Its current container runs
-     `next dev`, and the local detail-page audit failed during compilation with the tested
-     memory settings. More VM memory is a starting point, not proof that this is fixed.
+## Change parameters and run again
 
-7. **Make parameter changes produce a complete, versioned configuration.**
-   - [ ] Add one configuration generator that writes the experiment, its matching
-     `deployments/configs/<experiment.name>.deploy.json`, and any model fixture/charter copies.
-     Validate all of them before starting a run.
-   - [ ] Show the effective parameters and estimated maximum spend before dispatch. A model
-     fixture currently supplies its own charter and repository, overriding a different
-     `task.charter` in the experiment. Editing only that field can leave the actual task
-     unchanged. The generator must resolve this explicitly.
-   - [ ] Record every variant as a new run. Change one parameter at a time initially and repeat
-     each variant to measure variation in model behaviour.
+1. Open a completed run and copy its settings.
+2. Change the agent count, goal or constitution.
+3. Press Run to create a new experiment. Previous results remain available under their original run IDs.
+4. Compare the proposal, ballots, missing votes, cost and protected-operation outcome. Change one parameter at a time initially.
 
-| Parameter to change | Existing source | Reset needed |
-| --- | --- | --- |
-| Agent count, roles and model | `fleet.members[]` and matching deployment config | Fresh fleet for membership changes; record any model change in the fleet manifest |
-| Task, constitution, allowed tools, hosts and task tool budget | Effective model fixture and its charter file | New task with the resolved charter |
-| Agent step limit | Model fixture `maxSteps` | New run/fixture version |
-| Concurrent model calls and reserved vote capacity | `inference.concurrency`, `reservedVoteSlots`, `reservedVoteCalls` | New run |
-| Call, token, dollar and output limits | `inference.maxCalls`, `inference.budget` | New run with matching provider credit authority |
-| Concurrent tools and vote jobs | `runtime.toolConcurrency`, `runtime.voteConcurrency` | New run |
-| Quorum, voting period, timelock and proposal threshold | `governance` plus matching deployment config | Fresh fleet for a clean comparison |
-| Task duration and stop conditions | `task.lifetime` and effective charter | New task |
+One experiment runs at a time. Each run gets a configuration and deployment. Agora follows the current fleet; the launcher preserves earlier evidence. Base Sepolia transactions remain public after the run finishes.
 
-Temperature and seed are not exposed as experiment parameters today. Add provider support and
-record the effective values before presenting either as a reproducibility control.
+Additional parameters belong in a reviewed code change and GitHub deployment:
 
-8. **Implement three explicit restart operations.**
-   - [ ] **Resume:** use the same run ID, config, deployment, task and budget journal. Reconcile
-     outstanding transactions and provider calls before retrying. Test a crash during a vote
-     and during publication; the existing checkpoints are not proof of recovery at every point.
-   - [ ] **Fresh task:** keep the deployed fleet, start a new task and run ID, and use clean
-     workspaces and counters. This is useful for task or prompt comparisons.
-   - [ ] **Fresh environment:** archive the current results, stop its work, and replace only
-     that environment's state. On GCP Anvil, start a new chain and matching indexer/database
-     state. On Base Sepolia, deploy fresh contracts and point a new archive/indexer environment
-     at their deployment block. Existing public history remains.
-   - [ ] Give each environment its own checkout or work directory, Compose project, database
-     state and archive namespace. The current `latest.json` and `data/fleet/` archive paths
-     make unrestricted parallel resets unsafe. Namespace them in the launcher.
-   - [ ] Keep keys, archived results, Terraform state and unrelated environments outside reset
-     targets. Never make a global Docker volume prune or bucket deletion part of reset.
+| Parameter | Where to change it |
+| --- | --- |
+| Model and roles | `apps/runner/src/lib/demo-config.ts` |
+| Inference call, token, dollar and output limits | The demo generator and its experiment template |
+| Concurrent inference and reserved voting capacity | `inference` in the generated configuration |
+| Concurrent tools and vote jobs | `runtime` in the generated configuration |
+| Quorum, voting period, timelock and proposal threshold | `governance` in the generated configuration |
+| Task duration and stop conditions | The generated task charter |
+| Agent step limit and repository fixture | The selected model fixture |
+| VM size and automatic stop time | Inputs to the GCP infrastructure workflow |
 
-9. **Make stop and denial observable.**
-   - [ ] Keep the existing permission gates: no settled approval means no protected publication
-     and no dispatch of the disputed tool request. Preserve the network-isolated test containers
-     and package broker checks on GCP, including denial of cloud metadata access.
-   - [ ] Add an operator stop command that prevents new dispatch, cancels queued work, terminates
-     owned containers and reconciles pending jobs. Record whether cleanup succeeded.
-   - [ ] Pause or close the affected task and revoke permissions or cancel queued timelock work
-     where needed, then confirm the transactions. Stopping a VM does not revoke onchain authority.
-   - [ ] Test an RPC outage, a rejected proposal, no ballots, a budget stop, a process crash and
-     a manual stop. Prove that no new protected action is released. Already sent HTTP calls
-     cannot be recalled; remote workloads need their own termination and credential controls.
-   - [ ] Monitor actual model spend, queue depth, RPC errors, missing ballots, indexer lag,
-     memory, disk use and containers left after a run. Keep these operational logs private.
+Do not expose RPC URLs, signing keys, filesystem paths or infrastructure permissions as browser parameters. A custom constitution changes instructions, not the executor's authority.
 
-10. **Increase scale after the reset loop works.**
-    - [ ] Complete a five-agent run, save its evidence, reset it, change a parameter and run again.
-    - [ ] Run the scripted approval/rejection checks on Base Sepolia, then the small model pilot
-      without prescribing its votes.
-    - [ ] Increase to 50, 200 and then 2,000 model agents. Measure before increasing concurrency.
-      Two thousand agents do not need 2,000 simultaneous API calls or test containers.
-    - [ ] Size the voting window from measured latency and throughput. A useful planning
-      estimate is `ceil(voters / effective concurrent votes) × p95 vote-call time`, plus
-      repair, queueing and transaction confirmation headroom. A short five-agent window should
-      not be copied unchanged to a 2,000-agent run.
-    - [ ] If multiple worker VMs become necessary, first implement remote sandbox dispatch,
-      durable job ownership and a fleet-wide budget authority. The current coordinator owns
-      these limits in one process. Kubernetes or autoscaling alone cannot supply that logic.
+## Stop, recover and inspect
 
-The GCP project, region and provisioning identity are configured. The model pilot still needs
-a capped OpenRouter key. The next web3 stage needs Base Sepolia HTTP/WSS endpoints and funded
-public wallet addresses. A domain is optional until the read-only site is ready. Keep credential
-values in Secret Manager.
+- Use the infrastructure workflow's `stop` action to stop the worker without deleting its data. The launcher remains available. Stopping a VM does not revoke an already settled onchain permission or undo a transaction.
+- Use `inspect-demo` for read-only service checks, redacted logs and OpenRouter credit metadata. Diagnostics run in GitHub through IAP.
+- A deployment refuses to replace the worker while an experiment holds its execution lock. Finish the run, then retry deployment.
+- A failed or stale run is shown as failed or stale. Review its evidence before rerunning. A fresh run is a new experiment, not an assertion that the earlier one never happened.
+- Preserve Secret Manager, Terraform state, `/srv/fleet/state` and the data buckets during repair. Do not make Docker volume pruning or bucket deletion part of reset.
 
-The current [Base Sepolia runbook](deployment-runbook.md) contains the CLI and environment names.
-The [cost guide](scale-costs.md) explains the 2,000-agent model estimate. Infrastructure sizing,
-RPC capacity and public-chain fees still need measurement on the proposed deployment.
+The gateway holds disputed calls while permission is unresolved. The contract executor requires an exact, settled and unused approval. Rejection, missing ballots, timeout, expiry and changed arguments cannot become approval by default. The deployment also tests sandbox isolation and timeout cleanup.
+
+## Before increasing scale
+
+- [ ] Complete the five-agent Base Sepolia pilot and save the proposal, indexed reasons and execution evidence.
+- [ ] Copy its settings, change a parameter and verify that another run preserves the first result.
+- [ ] Exercise failure cases on the deployed stack: rejection, no ballots, RPC outage, budget exhaustion and interrupted work.
+- [ ] Measure model spend, RPC load, voting latency, missing ballots, indexer lag, memory and disk use.
+- [ ] Increase beyond 25 only after expanding wallet capacity, funding, voting windows and worker limits together.
+- [ ] Implement durable job ownership, shared budget enforcement and remote sandbox dispatch before adding worker replicas. Autoscaling alone does not distribute the current runner.
+
+The [cost guide](scale-costs.md) estimates a 2,000-agent model experiment. That scale has been exercised with scripted votes on a local chain. It has not yet been demonstrated with 2,000 independently deciding model agents.
