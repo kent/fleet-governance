@@ -24,8 +24,12 @@ try {
     chainId: number; deploymentBlock: number; addresses: FleetAddresses;
   };
   const rpcUrl = await readSecret("fleet-base-sepolia-rpc-url");
-  const client = new FleetClient({ rpcUrl, chainId: config.chainId, addresses: config.addresses, deploymentBlock: BigInt(config.deploymentBlock) });
-  await client.assertChain();
+  const reader = new FleetClient({ rpcUrl, chainId: config.chainId, addresses: config.addresses, deploymentBlock: BigInt(config.deploymentBlock) });
+  await reader.assertChain();
+  // This task is new. Its event scan can begin now instead of paging through the
+  // earlier model experiment's history on the same Governor.
+  const startBlock = await reader.publicClient.getBlockNumber();
+  const client = new FleetClient({ rpcUrl, chainId: config.chainId, addresses: config.addresses, deploymentBlock: startBlock });
   const wallets = JSON.parse(await readSecret("fleet-base-sepolia-wallets")) as { schema: string; chainId: number; keys: Record<string, Hex> };
   if (wallets.schema !== "fleet.wallets.v1" || wallets.chainId !== 84532) throw new Error("Invalid testnet wallet bundle.");
   const keys = { deployerKey: wallets.keys.FLEET_DEPLOYER_KEY!, operatorKey: wallets.keys.FLEET_OPERATOR_KEY!,
@@ -57,7 +61,7 @@ try {
       console.log(JSON.stringify({ event: "allocation_armed", ...allocation }));
     },
   }, fixture, task.taskId);
-  const voteResult = { runId, scripted: true, modelCalls: 0, allocationId, taskId: task.taskId.toString(),
+  const voteResult = { runId, scripted: true, modelCalls: 0, allocationId, startBlock: startBlock.toString(), taskId: task.taskId.toString(),
     taskTxHash: task.txHash, proposalId: result.proposalId.toString(), proposeTxHash: result.proposeTxHash,
     outcome: result.finalStateName, votingClosedAt: result.timings.votingClosedAt,
     votes: result.votes.map(vote => ({ agentId: vote.agentId, directive: vote.directive, voter: vote.voterAddress, txHash: vote.txHash, jobState: vote.jobState, reason: vote.vote })),
