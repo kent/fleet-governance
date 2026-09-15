@@ -39,6 +39,7 @@ export async function writeControlObject(name: string, value: unknown): Promise<
  * create-only active pointer is the lock: an armed or halted allocation cannot be replaced. */
 export async function armComputeAllocation(input: unknown): Promise<ComputeAllocation> {
   const request = AllocationRequest.parse(input);
+  if (await isComputeRunBlocked(request.runId)) throw new Error("This run was permanently retired. A new allocation requires a new run identity.");
   if (await readComputeAllocation()) throw new Error("A compute allocation is already armed. Operator recovery is required.");
   const rpc = await readSecret("fleet-base-sepolia-rpc-url");
   const client = createPublicClient({ chain: baseSepolia, transport: http(rpc, { timeout: 10000, retryCount: 1 }) });

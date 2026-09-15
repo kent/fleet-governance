@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
-import { readComputeAllocation, readComputeObject, COMPUTE_BUCKET } from "./compute-store.js";
+import { readComputeAllocation, readComputeObject, isComputeRunBlocked, COMPUTE_BUCKET } from "./compute-store.js";
 import { googleRequest, readObject, writeObject } from "./google.js";
 import { ACTIVE, runPath, type DemoStatus } from "./control.js";
 import type { FleetAddresses } from "@fleet/sdk";
@@ -39,6 +39,7 @@ export async function readSimulationWork(runId: string): Promise<SimulationWork 
  * protected bucket. A retry can return it; it cannot create another allocation. */
 export async function queueSimulation(id = `run-${randomUUID()}`): Promise<SimulationRequest> {
   const request = simulationRequest.parse({ schema: "fleet.simulation-request.v1", runId: id, createdAt: new Date().toISOString(), requestedBy: "operator2@example.com" });
+  if (await isComputeRunBlocked(id)) throw new Error("This run was permanently retired. Use a new run identity after human recovery.");
   const prior = await readSimulationRequest();
   if (prior) {
     if (prior.runId === id) return prior;

@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ control: vi.fn(), allocation: vi.fn(), read: vi.fn(), request: vi.fn(), write: vi.fn() }));
-vi.mock("./compute-store.js", () => ({ COMPUTE_BUCKET: "protected", readComputeObject: mocks.control, readComputeAllocation: mocks.allocation }));
+const mocks = vi.hoisted(() => ({ control: vi.fn(), blocked: vi.fn(), allocation: vi.fn(), read: vi.fn(), request: vi.fn(), write: vi.fn() }));
+vi.mock("./compute-store.js", () => ({ COMPUTE_BUCKET: "protected", readComputeObject: mocks.control, readComputeAllocation: mocks.allocation, isComputeRunBlocked: mocks.blocked }));
 vi.mock("./google.js", () => ({ googleRequest: mocks.request, readObject: mocks.read, writeObject: mocks.write }));
 vi.mock("./control.js", () => ({ ACTIVE: "demo/active.json", runPath: (id: string) => `demo/runs/${id}/status.json` }));
 import { queueSimulation } from "./simulation.js";
 const runId = "run-00000000-0000-4000-8000-000000000001";
-beforeEach(() => { vi.resetAllMocks(); mocks.control.mockResolvedValue(null); mocks.allocation.mockResolvedValue(null); mocks.read.mockResolvedValue(null); mocks.request.mockResolvedValue({ json: async () => ({ status: "RUNNING", state: "ENABLED", terminalCondition: { state: "CONDITION_SUCCEEDED" } }) }); });
+beforeEach(() => { vi.resetAllMocks(); mocks.blocked.mockResolvedValue(false); mocks.control.mockResolvedValue(null); mocks.allocation.mockResolvedValue(null); mocks.read.mockResolvedValue(null); mocks.request.mockResolvedValue({ json: async () => ({ status: "RUNNING", state: "ENABLED", terminalCondition: { state: "CONDITION_SUCCEEDED" } }) }); });
 describe("real simulation request", () => {
   it("creates protected reservation and invokes only the fixed job with no overrides", async () => {
     await queueSimulation(runId);
@@ -18,6 +18,11 @@ describe("real simulation request", () => {
     await expect(queueSimulation(runId)).rejects.toThrow("not ready");
     expect(mocks.write).not.toHaveBeenCalled();
     expect(mocks.request.mock.calls.some(call => call[2]?.method === "POST")).toBe(false);
+  });
+  it("rejects a previously retired run identity before creating a request or starting anything", async () => {
+    mocks.blocked.mockResolvedValue(true);
+    await expect(queueSimulation(runId)).rejects.toThrow("permanently retired");
+    expect(mocks.request).not.toHaveBeenCalled();
   });
   it("never repeats the job for a retried request or permits another request to replace it", async () => {
     mocks.control.mockResolvedValue({ runId, createdAt: new Date().toISOString(), requestedBy: "operator2@example.com", schema: "fleet.simulation-request.v1" });
