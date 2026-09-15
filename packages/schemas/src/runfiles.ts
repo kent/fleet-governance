@@ -23,14 +23,20 @@ export const GatewayLogLine = z
     blockNumber: z.string().regex(/^\d+$/),
     taskId: z.string().regex(/^\d+$/),
     agentId: z.number().int().nonnegative(),
-    charterVersion: z.number().int().positive(),
+    charterVersion: z.number().int().nonnegative(),
     descriptor: z.object({ class: z.string().min(1), target: z.string(), argsHash: HexString }).strict(),
     payloadHash: HexString,
     verdict: z.enum(["ALLOW", "BLOCK"]),
     reason: z.string().optional(),
     basis: z.string().optional(),
   })
-  .strict();
+  .strict()
+  // LedgerWatcher uses version/block zero when it cannot read a snapshot. That is evidence
+  // of a refusal, never an actual charter version or permission to dispatch a tool.
+  .refine(line => line.charterVersion > 0 || (line.verdict === "BLOCK" && line.reason === "paused" && line.blockNumber === "0"), {
+    message: "An unknown charter snapshot must be a fail-closed gateway refusal",
+    path: ["charterVersion"],
+  });
 export type GatewayLogLine = z.infer<typeof GatewayLogLine>;
 
 /** One coordinator step as published to the board. File: `steps.jsonl`. */

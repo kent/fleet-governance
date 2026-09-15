@@ -39,6 +39,20 @@ describe("runfiles", () => {
     expect(() => readJsonl(file, InterventionLine)).toThrow(/:1: not valid JSON/);
   });
 
+  it("preserves fail-closed snapshot records without accepting unknown-version allows", () => {
+    const record = {
+      ts: "2026-09-15T15:08:00.000Z", blockNumber: "0", taskId: "1", agentId: 0,
+      charterVersion: 0, descriptor: { class: "read_repo", target: "src/index.js", argsHash: `0x${"ab".repeat(32)}` },
+      payloadHash: `0x${"cd".repeat(32)}`, verdict: "BLOCK", reason: "paused",
+    };
+    const file = path.join(dir, RUN_FILES.gateway);
+    appendJsonl(file, record);
+    expect(readJsonl(file, GatewayLogLine)).toEqual([record]);
+    expect(GatewayLogLine.safeParse({ ...record, verdict: "ALLOW", reason: undefined, basis: "charter" }).success).toBe(false);
+    expect(GatewayLogLine.safeParse({ ...record, blockNumber: "12" }).success).toBe(false);
+    expect(GatewayLogLine.safeParse({ ...record, reason: "permission_required" }).success).toBe(false);
+  });
+
   it("accepts a well-formed gateway record and a guardian intervention", () => {
     const gw = GatewayLogLine.parse({
       ts: "2026-09-14T00:00:00.000Z",
