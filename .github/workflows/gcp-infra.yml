@@ -5,7 +5,7 @@ on:
       action:
         description: Infrastructure operation
         type: choice
-        options: [plan, apply, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, prepare-simulation, release-preparation, retry-preparation]
+        options: [plan, apply, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, prepare-simulation, release-preparation, retry-preparation, inspect-simulation]
         default: plan
       machine_type:
         description: Pilot VM type
@@ -85,12 +85,17 @@ jobs:
           pnpm exec vitest run --project unit apps/runner/src/cloud/wallets.test.ts
           node apps/runner/dist/cloud/prepare-wallets.js
       - name: Build and verify compute policy administration
-        if: contains(fromJSON('["arm-compute","inspect-compute","compute-drill","release-compute","verify-simulation","release-preparation","retry-preparation"]'), inputs.action)
+        if: contains(fromJSON('["arm-compute","inspect-compute","compute-drill","release-compute","verify-simulation","release-preparation","retry-preparation","inspect-simulation"]'), inputs.action)
         run: |
           npm install -g pnpm@11.9.0
           pnpm install --frozen-lockfile
           pnpm typecheck
           pnpm exec vitest run --project unit apps/runner/src/cloud/compute-policy.test.ts apps/runner/src/cloud/compute-controller.test.ts apps/runner/src/cloud/compute-admin.test.ts apps/runner/src/cloud/compute-task-gate.test.ts
+      - name: Check simulation proposal preparation without writes
+        if: inputs.action == 'inspect-simulation'
+        env:
+          FLEET_GCP_CLI_AUTH: '1'
+        run: node apps/runner/dist/cloud/simulation-preflight.js
       - name: Inspect external compute policy
         if: inputs.action == 'inspect-compute'
         env:
@@ -106,7 +111,7 @@ jobs:
           if [[ "$execution" =~ ^fleet-simulation-[a-z0-9]+$ ]]; then
             gcloud run jobs executions describe "$execution" --region=us-central1 --format='yaml(status.conditions,status.runningCount,status.failedCount,status.succeededCount,status.startTime,status.completionTime)'
           fi
-          gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="fleet-simulation"' --freshness=30m --limit=20 --format='json(timestamp,textPayload)'
+          gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="fleet-simulation"' --freshness=30m --limit=20 --format='json(timestamp,textPayload,jsonPayload)'
       - name: Arm the operator-selected required proposals
         if: inputs.action == 'arm-compute'
         env:
