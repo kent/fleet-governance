@@ -68,6 +68,9 @@ systemctl daemon-reload
 systemctl enable --now fleet-runner.service
 for _ in $(seq 1 60); do
   if curl --fail --silent --output /dev/null http://127.0.0.1:3100; then
+    # Serving the UI does not prove the Runner can manage its test containers.
+    docker exec fleet-runner docker version --format 'Docker client {{.Client.Version}} connected to server {{.Server.Version}}'
+    docker exec fleet-runner docker compose version
     docker exec fleet-runner node --input-type=module -e '
       const response = await fetch("https://openrouter.ai/api/v1/key", {
         headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
