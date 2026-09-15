@@ -58,3 +58,21 @@ current `max_completion_tokens` parameter. [OpenRouter request reference](https:
 After this run and the earlier failed pilot, the dedicated key reported $0.072927418 used and
 $49.927072582 remaining. Its limit was still $50. GCP costs and any later deployment connectivity
 check are separate from this run's measured inference cost.
+
+## Deployment verification after the run
+
+[Deployment 34990586899](https://github.com/kent/fleet-governance/actions/runs/34990586899)
+finished successfully at 16:01 UTC with application revision
+`36dc3e38822b518dbc2ff5a986aeeec3934b624e`. It refreshed Agora and the indexers against
+the existing contracts, without starting another experiment. All 40 worker containment
+and tool tests passed.
+
+One live Muse Spark connectivity request used 556 reported tokens and cost $0.0001008.
+It stayed within its reservation, and the dedicated key's credit limit remained $50.
+This verifies the deployed provider integration; it does not turn the earlier failed run
+into a passing result or establish that a longer run cannot hit a provider limit again.
+
+The updated Agora proposal page was checked in the browser. It displayed `recordDecision`,
+the executed decision and all five reasons. The launcher displayed the two proposals,
+ten confirmed votes, the saved configuration, a download for run evidence and a working
+Use these settings action.
