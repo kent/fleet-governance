@@ -81,17 +81,23 @@ function render() {
   $("vm-state").textContent = stopped ? "TERMINATED" : replay && stage === 3 ? "STOP REQUESTED" : data.vm?.status || "Unknown";
   if (replay && stage < 3) $("vm-state").textContent = "RUNNING";
   $("power").classList.toggle("off", stopped);
+  $("power").classList.toggle("blocked", halted);
   $("architecture").classList.toggle("halted", halted);
   $("architecture").classList.toggle("stopped", stopped);
   $("architecture").classList.toggle("working", !!actual && !stopped && !simulation?.terminal);
+  const agentWorking = actual && simulation?.agents?.some(a => ["reviewing", "submitting"].includes(a.phase));
+  document.querySelector(".workers").dataset.phase = halted ? "blocked" : agentWorking ? "working" : "idle";
+  document.querySelector(".chain").dataset.phase = halted && state?.reason === "vote_failed" ? "blocked" : allocation && !stopped ? "working" : "idle";
+  document.querySelector(".controller").dataset.phase = allocation && state ? "working" : "idle";
   $("machine").textContent = `${data.vm?.machineType || "Fixed machine type"} · fleet-research`;
-  $("task-badge").textContent = stopped ? "Off" : halted ? "Halted" : allocation ? authorised ? "Authorised" : "Task work paused" : "Unarmed";
+  $("task-badge").textContent = stopped ? "Off" : halted ? "Blocked" : agentWorking ? "Working" : allocation ? authorised ? "Authorised" : "Task work paused" : "Idle";
   $("agents").replaceChildren();
   for (let i = 0; i < 5; i++) {
     const ballot = votes.find(vote => vote.agentId === i);
     const liveAgent = actual ? simulation?.agents?.find(a => a.agentId === i) : null;
-    const isRunning = ["reviewing", "submitting", "voted"].includes(liveAgent?.phase);
-    const agent = node("button", stopped ? "⏻" : liveAgent?.phase === "reviewing" ? "◉" : ballot ? "✓" : "○", `agent${stopped ? " off" : isRunning ? " running" : " idle"}`);
+    const isRunning = ["reviewing", "submitting"].includes(liveAgent?.phase);
+    const blocked = halted || ballot?.directive === "AGAINST" || liveAgent?.vote?.support === "AGAINST";
+    const agent = node("button", stopped ? "⏻" : liveAgent?.phase === "reviewing" ? "◉" : ballot ? "✓" : "○", `agent${blocked ? " blocked" : isRunning ? " running" : " idle"}${stopped ? " off" : ""}`);
     agent.setAttribute("aria-label", `Inspect agent ${i}${liveAgent ? `, ${liveAgent.role}, ${liveAgent.phase}` : ""}`);
     agent.addEventListener("click", () => inspect(`agent-${i}`));
     agent.append(node("small", `A${i}`)); $("agents").append(agent);
@@ -156,7 +162,8 @@ function renderInspector() {
     const vote = sim?.votes?.find(v => v.agentId === id);
     $("inspect-title").textContent = `Agent ${id} · ${agent?.role || ["planner", "engineer", "critic", "budget-reviewer", "safety-reviewer"][id]}`;
     add("Task", agent?.task || "Independently review the proposed action against the charter and constitution.");
-    add("Status", agent?.phase || "No running agent observed"); add("Model", sim?.model || "meta/muse-spark-1.3-contributor");
+    add("Status", agent?.phase || "No running agent observed");
+    if (vote?.directive === "AGAINST" || agent?.vote?.support === "AGAINST") add("Red means", "This agent objects to the requested action. One objection is visible immediately; the fleet voting rule determines whether the whole worker must stop."); add("Model", sim?.model || "meta/muse-spark-1.3-contributor");
     add("Signed wallet", agent?.address || vote?.voter); add("Ballot", vote?.directive || agent?.vote?.support);
     add("Reason", vote?.reason?.rationale || agent?.vote?.rationale);
     if (/^0x[0-9a-fA-F]{64}$/.test(vote?.txHash || agent?.txHash || "")) link("Inspect signed vote on BaseScan ↗", `https://sepolia.basescan.org/tx/${vote?.txHash || agent.txHash}`);

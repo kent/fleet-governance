@@ -175,3 +175,25 @@ async function refreshHistory() {
   await Promise.all([refreshRun(), refreshHistory()]);
   const poll = async () => { await refreshRun(); setTimeout(poll, 5000); }; setTimeout(poll, 5000);
 })();
+
+// The main page starts the same protected real run as the live diagram.
+$("run-simulation").addEventListener("click", async () => {
+  const button = $("run-simulation"); button.disabled = true;
+  const id = sessionStorage.getItem("fleet-simulation-request") || `run-${crypto.randomUUID()}`;
+  sessionStorage.setItem("fleet-simulation-request", id);
+  try {
+    await api("/api/simulations", { method: "POST", headers: { "idempotency-key": id, "content-type": "application/json" }, body: "{}" });
+    sessionStorage.removeItem("fleet-simulation-request"); location.assign("/compute");
+  } catch (error) { $("simulation-error").textContent = error.message; button.disabled = false; }
+});
+async function refreshSimulation() {
+  try {
+    const state = await api("/api/compute-policy");
+    const active = state.simulation || state.allocation;
+    $("run-simulation").disabled = !!active;
+    $("run-simulation").textContent = active ? state.state?.phase === "halted" ? "Blocked · human recovery required" : "Run in progress" : "Run simulation →";
+    $("simulation-summary").textContent = active ? `GCP: ${state.vm?.status || "unknown"}. ${state.simulationStatus?.message || "Inspect the current allocation in the live diagram."}` : `GCP: ${state.vm?.status || "unknown"}. Ready for a new governed review.`;
+  } catch { $("simulation-summary").textContent = "Live state unavailable. Open the diagram to inspect the connection."; }
+  setTimeout(refreshSimulation, 5000);
+}
+void refreshSimulation();

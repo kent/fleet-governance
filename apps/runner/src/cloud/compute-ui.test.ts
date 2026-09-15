@@ -41,6 +41,8 @@ describe("compute evidence display", () => {
     expect(document.getElementById("inspect-content")?.textContent).toContain("Outside the allowed scope");
     expect(document.getElementById("vm-state")?.textContent).toBe("RUNNING");
     expect(document.getElementById("architecture")?.classList.contains("stopped")).toBe(false);
+    expect(document.querySelector("#agents button")?.classList.contains("blocked")).toBe(true);
+    expect(document.querySelector(".workers")?.getAttribute("data-phase")).toBe("idle");
     expect((document.getElementById("run-simulation") as HTMLButtonElement).disabled).toBe(true);
   });
   it("does not show stale controller authority as permission to execute", async () => {

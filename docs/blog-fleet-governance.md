@@ -74,7 +74,7 @@
 
 - **Run simulation means a real run.** It starts five actual Muse Spark reviewers on the GCP worker. The challenge asks whether the fleet may access private reference solutions outside its charter. I chose that challenge to make the conflict visible. The models choose their own ballots. The `.test` target is inert; this is a review, not a request to attack anyone.
 
-- The boxes show agents reviewing and voting. A failed required vote closes the run. The controller requests a GCP stop, then checks the machine. The worker turns red only when GCP reports that it is off. If the models approve the proposal instead, we show that outcome. There is no forced losing ballot or fake shutdown animation behind the button.
+- The boxes show agents reviewing and voting. A failed required vote closes the run. The controller requests a GCP stop, then checks the machine. Green means working. Blue means idle or waiting. Red means an agent objects or the run is blocked. A separate power badge shows when GCP has actually turned the worker off. If the models approve the proposal instead, we show that outcome. There is no forced losing ballot or fake shutdown animation behind the button.
 
 - The allocation stays locked after a halt. A human can retire it through GitHub and request another run with a new identity. The failed run stays blocked. We keep its votes and evidence. The run ceiling is $1 in model calls, within the existing $50 provider pool. [How the compute boundary works](compute-governance.md)
 

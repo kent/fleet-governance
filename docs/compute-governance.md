@@ -68,7 +68,9 @@ archive against the project owner.
 
 ## Run five actual agents from the site
 
-1. Deploy through GitHub and open `/compute` with your authorised Google account.
+1. Deploy through GitHub and open `/experiments` with your authorised Google account.
+   This is the main experiment page; its Run simulation button opens the live diagram at
+   `/compute`. Green means working, blue means idle or waiting, and red means blocked.
 2. Press **Run simulation**. The launcher reserves one protected request and invokes a fixed
    Cloud Run preparation job without image, identity, environment or task-count overrides.
    The job submits an operator-selected challenge and arms its exact proposal as a required
@@ -82,8 +84,9 @@ archive against the project owner.
    identities on one fixed host, not five separately provisioned servers. Confirmed votes are
    inserted into Agora's read-side database and synchronized before the voting deadline.
 5. Wait for the actual vote. There is no forced red animation. If approval fails, the external
-   controller persists the halt and asks GCP to stop the VM. The worker box turns red only
-   when GCP reports TERMINATED. If the proposal passes and executes, the original hard expiry
+   controller persists the halt and asks GCP to stop the VM. The agent boxes turn red for an objection and the worker turns red when its compute
+   authority is blocked. The separate power badge says RUNNING, STOPPING or TERMINATED
+   according to the GCP observation. If the proposal passes and executes, the original hard expiry
    remains; a vote cannot add compute time.
 6. Choose `verify-simulation` in GitHub to independently check all five onchain receipts,
    Governor defeat, the controller's durable halt, GCP termination and restart denial. CI
