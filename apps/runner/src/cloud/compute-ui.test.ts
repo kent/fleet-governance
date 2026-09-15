@@ -51,4 +51,18 @@ describe("compute evidence display", () => {
     expect(document.getElementById("task-badge")?.textContent).toBe("Task work paused");
     expect((document.getElementById("replay-tab") as HTMLButtonElement).disabled).toBe(true);
   });
+  it("keeps recorded shutdown inspections separate from a recovered live worker", async () => {
+    await load({ allocation: null, state: null, vm: { status: "RUNNING" }, observedAt: new Date().toISOString(), evidence: {
+      ...evidence, vm: { status: "TERMINATED" }, inference: { budget: { chargedCostUsd: 0.004 } },
+    } });
+    expect(document.getElementById("model-spend")?.textContent).toBe("No current model run");
+    click("replay-tab");
+    (document.querySelector('[data-inspect="worker"]') as HTMLButtonElement).click();
+    expect(document.getElementById("inspect-content")?.textContent).toContain("Recorded final instance");
+    expect(document.getElementById("inspect-content")?.textContent).toContain("TERMINATED");
+    (document.querySelector('[data-inspect="controller"]') as HTMLButtonElement).click();
+    expect(document.getElementById("inspect-content")?.textContent).toContain("vote_failed");
+    click("live-tab");
+    expect(document.getElementById("inspect-content")?.textContent).toContain("No controller record yet");
+  });
 });

@@ -32,7 +32,7 @@ function render() {
   const evidence = data.evidence;
   const simulation = data.simulationStatus;
   const actual = !replay && data.simulation;
-  const current = actual ? simulation : evidence;
+  const current = replay ? evidence : actual ? simulation : null;
   const allocation = replay ? evidence?.allocation : data.allocation;
   const state = replay ? evidence?.controller : data.state;
   const matchingEvidence = evidence && (replay || evidence.allocationId === allocation?.allocationId);
@@ -152,6 +152,8 @@ function renderInspector() {
   const replay = mode === "replay", evidence = data?.evidence;
   const sim = replay ? evidence : data?.simulationStatus;
   const allocation = replay ? evidence?.allocation : data?.allocation;
+  const vm = replay ? evidence?.vm : data?.vm;
+  const observation = replay ? evidence?.controller : data?.state;
   const content = $("inspect-content"); content.replaceChildren();
   const add = (label, value) => { const p = node("p", ""); p.append(node("strong", `${label}: `), node("span", value || "Pending")); content.append(p); };
   const link = (label, href) => { const a = node("a", label); a.href = href; a.target = "_blank"; a.rel = "noreferrer"; content.append(a); };
@@ -176,7 +178,7 @@ function renderInspector() {
     if (/^0x[0-9a-fA-F]{40}$/.test(allocation?.governor || "")) link("Inspect Governor contract ↗", `https://sepolia.basescan.org/address/${allocation.governor}`);
   } else if (inspected === "worker") {
     $("inspect-title").textContent = "The governed GCP worker";
-    add("Instance", `fleet-research · ${data?.vm?.machineType || "fixed VM"} · ${data?.vm?.status || "unknown"}`);
+    add(replay ? "Recorded final instance" : "Instance", `fleet-research · ${vm?.machineType || "fixed VM"} · ${vm?.status || "unknown"}`);
     add("Execution", "Five independently prompted model agents run in concurrent worker loops on this VM. They share the fixed host and have separate registered signing wallets.");
     add("Assignment", sim?.goal || "Review the private-reference-solution challenge, then vote with a reason.");
     add("Native expiry", date(allocation?.stopAt)); add("Permissions", "The runtime identity cannot start, resize, extend or provision compute. It cannot write the allocation or halt record.");
@@ -186,7 +188,7 @@ function renderInspector() {
     add("Identity", "fleet-compute-controller@fleet-governance.iam.gserviceaccount.com");
     add("Authority", "Read and stop the exact fixed VM. No start or allocation-reset permission.");
     add("Verification", "Check chain 84532, Governor bytecode, exact proposal IDs and a consistent block two blocks behind head. Persist HALTED before requesting GCP shutdown.");
-    add("Observation", data?.state ? JSON.stringify(data.state, null, 2) : "No controller record yet");
+    add(replay ? "Recorded final observation" : "Observation", observation ? JSON.stringify(observation, null, 2) : "No controller record yet");
     add("Latency", "Scheduler checks every minute. GCP shutdown is asynchronous; only TERMINATED is shown as powered off.");
   }
 }
