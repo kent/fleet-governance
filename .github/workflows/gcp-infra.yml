@@ -5,7 +5,7 @@ on:
       action:
         description: Infrastructure operation
         type: choice
-        options: [plan, apply, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, inspect-demo, stop-experiment]
+        options: [plan, apply, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute]
         default: plan
       machine_type:
         description: Pilot VM type
@@ -16,11 +16,19 @@ on:
         description: Automatic VM stop after this many hours (1 to 24)
         type: string
         default: '4'
+      compute_request:
+        description: 'arm-compute only: JSON with runId, governor, requiredProposalIds, approvalSeconds'
+        type: string
+        default: '{}'
+      allocation_id:
+        description: 'release-compute only: exact halted allocation UUID; explicit human authorisation to release the latch'
+        type: string
+        default: ''
 permissions:
   contents: read
   id-token: write
 concurrency:
-  group: ${{ inputs.action == 'inspect-demo' && format('gcp-fleet-inspect-{0}', github.run_id) || 'gcp-fleet-governance' }}
+  group: ${{ startsWith(inputs.action, 'inspect-') && format('gcp-fleet-inspect-{0}', github.run_id) || 'gcp-fleet-governance' }}
   cancel-in-progress: false
 env:
   CLOUDSDK_CORE_PROJECT: fleet-governance
@@ -76,6 +84,77 @@ jobs:
           pnpm typecheck
           pnpm exec vitest run --project unit apps/runner/src/cloud/wallets.test.ts
           node apps/runner/dist/cloud/prepare-wallets.js
+      - name: Build and verify compute policy administration
+        if: contains(fromJSON('["arm-compute","inspect-compute","compute-drill","release-compute"]'), inputs.action)
+        run: |
+          npm install -g pnpm@11.9.0
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          pnpm exec vitest run --project unit apps/runner/src/cloud/compute-policy.test.ts apps/runner/src/cloud/compute-controller.test.ts apps/runner/src/cloud/compute-admin.test.ts apps/runner/src/cloud/compute-task-gate.test.ts
+      - name: Inspect external compute policy
+        if: inputs.action == 'inspect-compute'
+        env:
+          FLEET_GCP_CLI_AUTH: '1'
+        run: |
+          node apps/runner/dist/cloud/compute-admin-cli.js inspect
+          gcloud compute instances describe fleet-research --zone=us-central1-a --format='json(id,status,lastStartTimestamp,scheduling,resourceStatus)'
+          gcloud run services describe fleet-compute-controller --region=us-central1 --format='yaml(status.conditions,status.url)'
+          gcloud scheduler jobs describe fleet-compute-policy --location=us-central1 --format='yaml(state,status,lastAttemptTime,schedule)'
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="fleet-compute-controller"' --freshness=30m --limit=15 --format='json(timestamp,textPayload,httpRequest.status)'
+      - name: Arm the operator-selected required proposals
+        if: inputs.action == 'arm-compute'
+        env:
+          FLEET_GCP_CLI_AUTH: '1'
+          COMPUTE_REQUEST: ${{ inputs.compute_request }}
+        run: |
+          node apps/runner/dist/cloud/compute-admin-cli.js arm
+          gcloud scheduler jobs run fleet-compute-policy --location=us-central1
+      - name: Verify runtime IAM and start a shutdown witness
+        if: inputs.action == 'compute-drill'
+        run: |
+          python3 -B infra/gcp/assert-compute-unarmed.py
+          gcloud compute scp infra/gcp/runtime/compute-canary.py fleet-research:~/fleet-compute-canary.py --zone=us-central1-a --tunnel-through-iap --quiet
+          gcloud compute ssh fleet-research --zone=us-central1-a --tunnel-through-iap --quiet --command='sudo python3 "$HOME/fleet-compute-canary.py"'
+      - name: Defeat a real Base Sepolia vote and observe external VM shutdown
+        if: inputs.action == 'compute-drill'
+        env:
+          FLEET_GCP_CLI_AUTH: '1'
+        run: |
+          node apps/runner/dist/cloud/compute-drill.js
+          if python3 -B infra/gcp/assert-compute-unarmed.py; then
+            echo 'Restart gate unexpectedly allowed a halted worker' >&2
+            exit 1
+          fi
+          echo 'A real required vote was defeated. The independent controller verified the VM TERMINATED. Routine CI restart was rejected. Ballots were scripted; no model credits used.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve public shutdown evidence
+        if: always() && inputs.action == 'compute-drill'
+        run: |
+          for file in compute-allocation.json compute-drill-votes.json compute-drill-evidence.json; do
+            if [[ -f "$file" ]]; then gcloud storage cp "$file" "gs://fleet-governance-control-449245570324/evidence/$GITHUB_RUN_ID/$file"; fi
+          done
+          if [[ -f compute-drill-evidence.json ]]; then
+            gcloud storage cp compute-drill-evidence.json gs://fleet-governance-control-449245570324/evidence/latest.json
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always() && inputs.action == 'compute-drill'
+        with:
+          name: compute-shutdown-evidence
+          path: compute-*.json
+          if-no-files-found: ignore
+      - name: Retire the controller before explicit operator recovery
+        if: inputs.action == 'release-compute'
+        env:
+          FLEET_GCP_CLI_AUTH: '1'
+          COMPUTE_ALLOCATION_ID: ${{ inputs.allocation_id }}
+        run: |
+          node apps/runner/dist/cloud/compute-admin-cli.js check-release
+          # Retire the old service so an old invocation cannot act on a later VM start.
+          # Recreating this service and its Scheduler binding is part of the next deploy.
+          gcloud scheduler jobs pause fleet-compute-policy --location=us-central1
+          gcloud run services delete fleet-compute-controller --region=us-central1 --quiet
+          gcloud compute instances stop fleet-research --zone=us-central1-a --quiet
+          node apps/runner/dist/cloud/compute-admin-cli.js release
+          echo 'Human recovery released the allocation. The VM remains stopped and this run remains blocked. Deploy through GitHub to restore the controller and start a fresh run.' >> "$GITHUB_STEP_SUMMARY"
       - name: Stop agent execution and preserve experiment files
         if: inputs.action == 'stop-experiment'
         run: |

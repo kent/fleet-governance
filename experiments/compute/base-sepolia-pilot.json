@@ -1,0 +1,13 @@
+{
+  "chainId": 84532,
+  "deploymentBlock": 46858912,
+  "source": "docs/evidence/base-sepolia-20260915/report.md",
+  "addresses": {
+    "registry": "0x5890f7fdaa0504c317c6bbe361f267223f3b3c60",
+    "token": "0xc70af42f2e4fc5551d7046e955c9aea6c16eeb8f",
+    "timelock": "0xfb7355706bf12d34d013928d281c942848c3be76",
+    "ledger": "0x1a6761e911b3f3c2ce33a4fd5eddaf50cda3d9ed",
+    "hook": "0x2af75b471f04398d6816238277113eb0cf8a22c0",
+    "governor": "0x9594876c90a14888c6734231a731caba4c0d0781"
+  }
+}
