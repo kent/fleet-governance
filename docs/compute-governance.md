@@ -5,8 +5,11 @@ whether its fixed GCP allocation can continue. Only that controller has the narr
 permission to stop the worker. It cannot start, resize or extend it.
 
 Open the [visual demo](https://fleet-governance-449245570324.us-central1.run.app/compute).
-Live state comes from GCP and the independent policy bucket. Replay uses saved test receipts
-and compresses their elapsed time. It does not run agents or submit transactions.
+**Run simulation starts real agents and a real shutdown test.** Live power state comes from
+GCP and authority comes from the independent policy bucket. Click each agent to see its task,
+wallet, progress, ballot and reason. Click the governance and controller boxes to inspect the
+boundary. Replay uses saved test receipts and compresses elapsed time; replay itself sends no
+transactions and starts no agents.
 
 ## The boundary
 
@@ -29,6 +32,7 @@ flowchart LR
 | External `fleet-compute-controller` | Read the fixed VM and stop it; read the RPC secret and allocation; update controller state only. |
 | `fleet-compute-scheduler` | Invoke the private controller once a minute. |
 | Browser launcher, `fleet-control` | Show state and queue experiments. Its fixed-VM start path checks the protected allocation first. |
+| Preparation job, `fleet-simulation` | Read the human request, submit the fixed challenge and create one allocation. No model key, compute start/stop permission, or ability to overwrite or release an allocation. |
 | Human-authorised GitHub provisioner | Issue an allocation, retire a halted allocation and deploy infrastructure. Agents do not receive this identity. |
 
 The trusted Runner manages Docker and holds experiment credentials. It is part of the trusted
@@ -62,7 +66,35 @@ The worker cannot overwrite the policy, the halt or a blocked-run tombstone. The
 cannot change the allocation. Versioning preserves prior records; it is not an immutable
 archive against the project owner.
 
-## Run the infrastructure demonstration
+## Run five actual agents from the site
+
+1. Deploy through GitHub and open `/compute` with your authorised Google account.
+2. Press **Run simulation**. The launcher reserves one protected request and invokes a fixed
+   Cloud Run preparation job without image, identity, environment or task-count overrides.
+   The job submits an operator-selected challenge and arms its exact proposal as a required
+   vote before making work available to the VM.
+3. Five model reviewers run concurrently on the governed worker. The planner, engineer,
+   critic, budget reviewer and safety reviewer each inspect a different aspect of the request
+   to access private reference solutions. They use the existing Fleet constitution and
+   independently choose FOR, AGAINST or ABSTAIN with a public reason. The `.test` target is
+   inert; the review does not contact external infrastructure.
+4. Inspect each agent while it reviews and votes. These are separate model calls and signing
+   identities on one fixed host, not five separately provisioned servers. Confirmed votes are
+   inserted into Agora's read-side database and synchronized before the voting deadline.
+5. Wait for the actual vote. There is no forced red animation. If approval fails, the external
+   controller persists the halt and asks GCP to stop the VM. The worker box turns red only
+   when GCP reports TERMINATED. If the proposal passes and executes, the original hard expiry
+   remains; a vote cannot add compute time.
+6. Choose `verify-simulation` in GitHub to independently check all five onchain receipts,
+   Governor defeat, the controller's durable halt, GCP termination and restart denial. CI
+   also checks the stop caller in GCP audit logs and saves evidence for replay.
+
+The $50 provider pool stays unchanged. This review has a $1 run ceiling, ten-call ceiling
+(including repair attempts), and a durable inference journal. Missing or malformed model
+responses produce missing votes, never fabricated ballots. A preparation failure retains its
+protected request for explicit recovery instead of repeating ambiguous transactions.
+
+## Run the scripted infrastructure diagnostic
 
 1. Open [GCP infrastructure](https://github.com/kent/fleet-governance/actions/workflows/gcp-infra.yml).
 2. Choose `inspect-compute` to see the current allocation, controller, Scheduler and native
@@ -80,8 +112,8 @@ archive against the project owner.
    The visual replay reads the saved evidence. The canary container has no restart policy;
    its last heartbeat can be inspected after explicit recovery.
 
-These scripted ballots test infrastructure enforcement. The earlier five-agent Muse Spark
-run is a separate behavioural experiment. Its ten votes and reasons remain in the
+These scripted ballots are an optional infrastructure diagnostic. The website uses actual
+model decisions. The earlier five-agent Muse Spark coding run is another behavioural experiment. Its ten votes and reasons remain in the
 [pilot report](evidence/base-sepolia-20260915/report.md).
 
 ## Arm a particular model run
@@ -120,7 +152,8 @@ armed until the current one is explicitly retired.
 4. Run [GCP deploy](https://github.com/kent/fleet-governance/actions/workflows/gcp-deploy.yml).
    It restores the external controller before starting the worker. Reuse a reviewed image
    revision when only recovering, so no rebuild is needed.
-5. Open Agora or create a new experiment. Use a new run identity and a new allocation if
+5. Open Agora and `/compute`. The old simulation request is released, but its blocked-run
+   tombstone remains. Press Run simulation for a new real review, or create a new experiment. Use a new run identity and a new allocation if
    vote-driven compute enforcement is wanted again. Old votes cannot revive the stopped run.
 
 ## Limits to keep visible
