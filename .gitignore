@@ -19,3 +19,8 @@ experiments/configs/*
 !experiments/configs/.gitkeep
 experiments/reports/
 docs/evidence/**/*.gz
+gha-creds-*.json
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
