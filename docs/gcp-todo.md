@@ -13,22 +13,24 @@ parameter generation and Base Sepolia are follow-on work. Agora Governor stays p
 1. **Create the GCP project and choose its limits.**
    - [x] Use the billing-enabled `fleet-governance` project in `us-central1`, with a dedicated
      provisioner and GitHub Workload Identity Federation. No service account key is needed.
-   - [ ] Complete the Terraform apply for Compute Engine, Artifact Registry, Secret Manager,
+   - [x] Complete the Terraform apply for Compute Engine, Artifact Registry, Secret Manager,
      Cloud Storage, Logging, Monitoring and IAP. Confirm regional CPU and disk quota for the pilot.
-   - [ ] Set a project budget, alerts and a maximum experiment duration. An alerts-only budget
-     does not stop a VM. Add an explicit automatic stop deadline and review which resources
-     continue billing after compute stops. [Google Cloud budget documentation](https://docs.cloud.google.com/billing/docs/how-to/budgets)
+   - [x] Set a maximum VM runtime. The research VM stops after four hours by default; the
+     infrastructure workflow accepts one to 24 hours. Disks and stored data remain billable.
+   - [ ] Set a project budget and alerts. An alerts-only budget does not stop a VM.
+     [Google Cloud budget documentation](https://docs.cloud.google.com/billing/docs/how-to/budgets)
 
 2. **Provision the pilot machine and private access.**
-   - [ ] Start with one Compute Engine VM: **8 vCPUs, 32 GiB RAM, Ubuntu 24.04 and a 100 GB
-     balanced persistent disk**, with room to expand scratch storage. This is a proposed pilot
-     size, not demonstrated capacity for 2,000 model agents. Hosted models need no GPU here.
-   - [ ] Use the research VPC, an outbound IP on the VM, and IAP access for administration.
+   - [x] Start with one Compute Engine VM: **8 vCPUs, 32 GiB RAM, Ubuntu 24.04, a 100 GB boot
+     disk and a separate 100 GB balanced data disk**. The pilot VM is provisioned; capacity for
+     2,000 model agents still needs measurement. Hosted models need no GPU here.
+   - [x] Use the research VPC, an outbound IP on the VM, and IAP access for administration.
      One VM does not need a separate Cloud NAT gateway.
      Keep Runner, Postgres, DAO Node, CPLS and the Docker socket off the public internet.
      Runner can start work and use signing keys. Public access belongs on a separately
      configured read-only site. [IAP TCP forwarding](https://docs.cloud.google.com/iap/docs/using-tcp-forwarding)
-   - [ ] Run the existing Docker sandbox on Compute Engine. Moving the runner to Cloud Run
+   - [x] Run the existing Docker sandbox on Compute Engine. All three live containment tests
+     pass on the research VM, including removal after timeout. Moving the runner to Cloud Run
      would require a different sandbox execution adapter; the current code expects control
      of a Docker daemon. Cloud Run restricts host operations and privileged containers.
      [Cloud Run runtime contract](https://docs.cloud.google.com/run/docs/container-contract)
@@ -45,9 +47,9 @@ parameter generation and Base Sepolia are follow-on work. Agora Governor stays p
      with BYOK usage included**. The current preflight also requires positive remaining credit
      no greater than the experiment's dollar budget. Increase the budget deliberately for
      later runs; resetting local files must never reset provider spending authority.
-   - [ ] Verify the deployment's Secret Manager loader and systemd service on the VM. They
-     inject pinned secret versions into the trusted Runner process. Never mount those
-     credentials or the Docker socket into agent test containers.
+   - [x] Verify the deployment's Secret Manager loader and systemd service on the VM. The
+     three application secrets load successfully. Wallet and RPC secrets are the next step.
+     Never mount those credentials or the Docker socket into agent test containers.
    - [ ] Adapt CPLS to use the VM service account through Application Default Credentials.
      Its Python client supports ADC, but the current Compose file mounts a JSON credential
      file and preflight uses that file setting to distinguish real GCS from the emulator.
@@ -64,7 +66,8 @@ parameter generation and Base Sepolia are follow-on work. Agora Governor stays p
      agents currently need **2,004**. The code has no automatic gas sponsorship layer.
    - [ ] Fund them with **Base Sepolia test ETH**. Estimate deployment and transaction fees
      before choosing amounts; a nonzero balance passes the current preflight but does not
-     prove it can finish a run. Do not use the published Anvil development keys on Sepolia.
+     prove it can finish a run. The [wallet setup guide](base-sepolia-wallet-setup.md) covers
+     CDP faucet automation and manual funding. Do not use published Anvil keys on Sepolia.
    - [ ] Keep guardian authority under operator control. The current runner expects a guardian
      key too; moving it to a separate signer is implementation work, not a feature already
      provided by Secret Manager.
@@ -91,7 +94,7 @@ parameter generation and Base Sepolia are follow-on work. Agora Governor stays p
 6. **Build the remote release and launcher.**
    - [x] Add Terraform for IAM, network, VM, buckets, secrets and image registry. Keep its state
      in a separate private bucket that experiment reset cannot delete. Apply through GitHub.
-   - [ ] Build and tag images with the Git commit, and launch by image digest. Install the
+   - [x] Build and tag images with the Git commit, and launch by image digest. Install the
      pinned dependencies and Foundry tools in the build. Build in GitHub Actions and deploy
      to GCP so nothing needs to remain running on a laptop.
    - [ ] Start services through systemd and Compose, persist the runner's state and inference
