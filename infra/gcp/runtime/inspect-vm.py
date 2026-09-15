@@ -77,6 +77,19 @@ if reports.exists():
         log = run / 'run.log'
         if log.exists():
             print(redact('\n'.join(log.read_text(errors='replace').splitlines()[-80:])))
+        events = run / 'loop-events.jsonl'
+        if events.exists():
+            failures = {}
+            for line in events.read_text(errors='replace').splitlines():
+                try:
+                    entry = json.loads(line)
+                    event = entry.get('event', {})
+                    if event.get('type') in ['inference_failed', 'propose_failed', 'block_dropped', 'stopped']:
+                        failures[(entry.get('agentId'), event.get('type'))] = entry
+                except (ValueError, TypeError):
+                    pass
+            for entry in list(failures.values())[-12:]:
+                print('Last agent outcome:', redact(json.dumps(entry)))
         record = run / 'record.json'
         if record.exists():
             try:
