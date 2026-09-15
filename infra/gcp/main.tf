@@ -250,9 +250,9 @@ resource "google_compute_firewall" "iap_ssh" {
 }
 
 resource "google_compute_firewall" "control_agora" {
-  name                    = "fleet-control-agora"
-  network                 = google_compute_network.fleet.name
-  direction               = "INGRESS"
+  name      = "fleet-control-agora"
+  network   = google_compute_network.fleet.name
+  direction = "INGRESS"
   # Direct VPC egress does not support source tags on ingress rules.
   source_ranges           = [google_compute_subnetwork.fleet.ip_cidr_range]
   target_service_accounts = [google_service_account.runtime.email]
