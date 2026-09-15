@@ -31,10 +31,12 @@ for file in [Path('/opt/fleet/infra/.env'), Path('/run/fleet/runtime.env')]:
             name, _, value = line.partition('=')
             if any(marker in name for marker in ['KEY', 'SECRET', 'PASSWORD', 'RPC', 'ARCHIVE_NODE_HTTP', 'REALTIME_NODE_WS', 'DATABASE_URL']):
                 secrets.append(value.strip("'\""))
+            if name == 'OPENROUTER_API_KEY':
+                model_key = value.strip("'\"")
 
 
 def redact(value):
-    for secret in sorted(set(secrets), key=len, reverse=True):
+    for secret in sorted({value for value in secrets if len(value) >= 8}, key=len, reverse=True):
         if secret:
             value = value.replace(secret, '[redacted]')
     value = re.sub(r'sk-or-v1-[A-Za-z0-9]+|alch_[A-Za-z0-9_-]+|0x[0-9a-fA-F]{64}', '[redacted]', value)
@@ -42,6 +44,10 @@ def redact(value):
     return value
 
 
+manifest = Path('/srv/fleet/state/deployments/84532/latest.json')
+if manifest.exists():
+    data = json.loads(manifest.read_text())
+    print('Base Sepolia deployment:', json.dumps({key: data.get(key) for key in ['chainId', 'deploymentBlock', 'addresses']}))
 print(redact(command(['docker', 'ps', '-a', '--format', '{{.Names}}\t{{.Status}}'])))
 for port, path in [(3100, '/'), (3000, '/info'), (3000, '/proposals'), (8000, '/v1/progress'), (8001, '/health')]:
     try:

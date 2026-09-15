@@ -20,7 +20,7 @@ permissions:
   contents: read
   id-token: write
 concurrency:
-  group: gcp-fleet-governance
+  group: ${{ inputs.action == 'inspect-demo' && format('gcp-fleet-inspect-{0}', github.run_id) || 'gcp-fleet-governance' }}
   cancel-in-progress: false
 env:
   CLOUDSDK_CORE_PROJECT: fleet-governance
