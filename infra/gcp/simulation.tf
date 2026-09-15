@@ -80,8 +80,8 @@ resource "google_project_iam_member" "launcher_controller_readiness" {
   project = var.project_id
   role    = google_project_iam_custom_role.inspect_compute_controller.name
   member  = "serviceAccount:${google_service_account.control.email}"
-  condition {
-    title      = "fixed-controller-and-schedule-only"
-    expression = "resource.name.endsWith('/services/fleet-compute-controller') || resource.name.endsWith('/jobs/fleet-compute-policy')"
-  }
+  # Cloud Run and Cloud Scheduler do not expose resource.name to IAM Conditions.
+  # This project-level custom role grants only two metadata reads to the trusted
+  # launcher. It grants no invocation, mutation, compute, or policy-write access.
+  # https://docs.cloud.google.com/iam/docs/conditions-resource-attributes
 }
