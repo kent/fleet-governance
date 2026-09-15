@@ -143,19 +143,21 @@ export class FleetClient {
     assertAllowedChain(actual);
   }
 
-  async getTask(taskId: bigint): Promise<TaskView> {
+  async getTask(taskId: bigint, blockNumber?: bigint): Promise<TaskView> {
     const [task, charterText] = await Promise.all([
       this.publicClient.readContract({
         address: this.addresses.ledger,
         abi: taskLedgerAbi,
         functionName: "getTask",
         args: [taskId],
+        blockNumber,
       }),
       this.publicClient.readContract({
         address: this.addresses.ledger,
         abi: taskLedgerAbi,
         functionName: "charterText",
         args: [taskId],
+        blockNumber,
       }),
     ]);
     return {

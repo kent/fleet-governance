@@ -26,7 +26,7 @@ export async function openTask(opts: {
   operatorKey: Hex;
   charter: CharterV1;
   lifetimeSeconds: number;
-}): Promise<{ taskId: bigint; txHash: Hex; charterText: string }> {
+}): Promise<{ taskId: bigint; txHash: Hex; charterText: string; blockNumber: bigint }> {
   const chain = defineChain({
     id: opts.chainId,
     name: `fleet-runner-${opts.chainId}`,
@@ -46,10 +46,10 @@ export async function openTask(opts: {
     functionName: "openTask",
     args: [charterText, BigInt(opts.lifetimeSeconds)],
   });
-  const receipt = await opts.client.publicClient.waitForTransactionReceipt({ hash: txHash });
+  const receipt = await opts.client.publicClient.waitForTransactionReceipt({ hash: txHash, confirmations: opts.chainId === 84532 ? 2 : 1 });
   const taskId = taskIdFromReceiptLogs(receipt.logs, opts.addresses.ledger);
 
-  return { taskId, txHash, charterText };
+  return { taskId, txHash, charterText, blockNumber: receipt.blockNumber };
 }
 
 /** Finds this transaction's own `TaskOpened(uint256 indexed taskId, ...)` log, emitted by the

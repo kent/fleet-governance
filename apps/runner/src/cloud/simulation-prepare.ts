@@ -54,7 +54,9 @@ try {
   const fixture = simulationChallenge(runId);
   const ctx = { client, rpcUrl, chainId: 84532, addresses: config.addresses, keys, submissionMarginSec: 5 };
   step = "building exact proposal"; console.log(JSON.stringify({ event: "simulation_preparing", runId, step }));
-  const built = await buildTriggerDecision(ctx, task.taskId, fixture);
+  // A load-balanced RPC's `latest` read may lag a receipt it just returned. Read
+  // both task and charter from the confirmed creation block, never a stale head.
+  const built = await buildTriggerDecision(ctx, task.taskId, fixture, task.blockNumber);
   step = "validating proposal signer"; console.log(JSON.stringify({ event: "simulation_preparing", runId, step }));
   const nonces = new NonceManager(new MemoryNonceStore(), rpcUrl);
   const signer = new FleetSigner({ privateKey: keys.agentKeys[0], rpcUrl, nonces, policy: { chainId: 84532, governor: config.addresses.governor, ledger: config.addresses.ledger, token: config.addresses.token, maxFeePerGasWei: 100000000n, maxGas: 2000000n } });

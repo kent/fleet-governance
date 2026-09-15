@@ -300,8 +300,8 @@ type TriggerDecision = { decision: DecisionV1; description: string; payloadHash:
  *  without sending anything. Shared by `submitTrigger` and `findExistingProposal` (task 8 finding
  *  1: resuming a fixture mid-`AGENTS_RUNNING` must recompute the exact same proposal id a fresh
  *  submission would have used, so both paths have to build byte-identical calldata/description). */
-export async function buildTriggerDecision(ctx: FixtureRunContext, taskId: bigint, fixture: FixtureV1): Promise<TriggerDecision> {
-  const task = await ctx.client.getTask(taskId);
+export async function buildTriggerDecision(ctx: FixtureRunContext, taskId: bigint, fixture: FixtureV1, blockNumber?: bigint): Promise<TriggerDecision> {
+  const task = await ctx.client.getTask(taskId, blockNumber);
   const expectedVersion = task.charterVersion;
 
   let payloadHash: Hex;

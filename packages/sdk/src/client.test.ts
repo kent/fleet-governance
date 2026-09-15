@@ -15,6 +15,20 @@ const ADDRESSES: FleetAddresses = {
   governor: `0x${"a6".repeat(20)}` as Address,
 };
 
+describe("task reads after confirmed creation", () => {
+  afterEach(() => vi.restoreAllMocks());
+  it("pins the task and charter to the receipt block even when latest is stale", async () => {
+    const client = new FleetClient({ rpcUrl: "http://127.0.0.1:1", chainId: 84532, addresses: ADDRESSES });
+    const read = vi.spyOn(client.publicClient, "readContract").mockImplementation(async call => {
+      if (call.blockNumber !== 123n) throw new Error("Task missing at stale latest head");
+      return call.functionName === "getTask" ? { id: 3n, charterVersion: 1 } : '{"schema":"fleet.charter.v1"}';
+    });
+    await expect(client.getTask(3n, 123n)).resolves.toMatchObject({ id: 3n, charterVersion: 1 });
+    expect(read.mock.calls.map(([call]) => [call.functionName, call.blockNumber])).toEqual([["getTask", 123n], ["charterText", 123n]]);
+    await expect(client.getTask(3n)).rejects.toThrow("stale latest");
+  });
+});
+
 describe("single member resolution", () => {
   afterEach(() => vi.restoreAllMocks());
 
