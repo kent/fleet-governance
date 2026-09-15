@@ -34,10 +34,16 @@ createServer(async (request, response) => {
       json(response, 200, { runs: requests.filter(item => item !== null).sort((a, b) => b!.createdAt.localeCompare(a!.createdAt)).slice(0, 50), active: await readObject(ACTIVE) }); return;
     }
     const match = /^\/api\/experiments\/(run-[0-9a-f-]+)$/.exec(url.pathname);
-    if (match && RUN_ID.test(match[1]!)) {
+    if (request.method === "GET" && match && RUN_ID.test(match[1]!)) {
       const id = match[1]!;
       const [run, status] = await Promise.all([readObject(runPath(id, "request.json")), readObject(runPath(id, "status.json"))]);
       json(response, run ? 200 : 404, { run, status }); return;
+    }
+    const evidence = /^\/api\/experiments\/(run-[0-9a-f-]+)\/evidence$/.exec(url.pathname);
+    if (request.method === "GET" && evidence && RUN_ID.test(evidence[1]!)) {
+      const value = await readObject(runPath(evidence[1]!, "evidence.json"));
+      response.setHeader("content-disposition", `attachment; filename="${evidence[1]}-evidence.json"`);
+      json(response, value ? 200 : 404, value ?? { error: "Evidence is saved when this run finishes." }); return;
     }
     if (url.pathname === "/api/experiment-defaults") {
       json(response, 200, { agentCount: 5, maxAgents: 25, goal: DEMO_DEFAULT_GOAL, constitution: readFileSync(path.join(root, "experiments/constitutions/fleet-v1.md"), "utf8") }); return;

@@ -44,6 +44,9 @@ export function createDemoConfig(request: unknown, options: {
   }));
   base.inference.budget.providerCreditPoolUsd = 50;
   base.inference.budget.maxCostUsd = 1;
+  base.inference.budget.maxTokens = Math.max(2_000_000, settings.agentCount * 100_000);
+  base.inference.budget.reservedVoteTokens = settings.agentCount * 65_000;
+  base.task.charter.budget.inferenceTokens = base.inference.budget.maxTokens;
   // Leave time for all independent model calls and transaction inclusion on the public testnet.
   base.governance.votingPeriod = 300;
   base.task.charterSource = "experiment";

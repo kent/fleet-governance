@@ -130,14 +130,15 @@ export async function readside(opts: {
   let restarted = false;
   if (opts.restart) {
     restarted = true;
-    const composeFiles = ["-f", path.join(opts.infraDir, "docker-compose.yml")];
+    const cloud = readEnvValue(envText, "FLEET_GCP_READSIDE", "") === "1";
+    const composeFiles = ["-f", path.join(opts.infraDir, cloud ? "gcp/docker-compose.yml" : "docker-compose.yml")];
     const gcsCredentialsFile = readEnvValue(envText, "GCS_CREDENTIALS_FILE", "");
-    const offline = gcsCredentialsFile === "";
+    const offline = gcsCredentialsFile === "" && readEnvValue(envText, "GCS_USE_ADC", "") !== "1";
     if (offline) {
       composeFiles.push("-f", path.join(opts.infraDir, "docker-compose.offline.yml"));
     }
     log(`readside: restarting dao-node and cpls (${offline ? "offline overlay" : "real GCS"})`);
-    execFileSync("docker", ["compose", ...composeFiles, "--project-directory", opts.infraDir, "up", "-d", "--force-recreate", "dao-node", "cpls"], {
+    execFileSync("docker", ["compose", ...composeFiles, "--project-directory", opts.infraDir, "up", "-d", "--force-recreate", ...(cloud ? ["postgres", "blockcache-shim", "dao-node", "cpls", "agora-next"] : ["dao-node", "cpls"])], {
       stdio: "pipe",
     });
 
@@ -145,6 +146,7 @@ export async function readside(opts: {
     const cplsPort = readEnvValue(envText, "CPLS_PORT", "8001");
     await waitForHttp(`http://localhost:${daoNodePort}/v1/progress`, log, "DAO Node /v1/progress");
     await waitForHttp(`http://localhost:${cplsPort}/health`, log, "CPLS /health");
+    if (cloud) await waitForHttp("http://localhost:3000/info", log, "Agora /info", 120_000);
 
     if (offline) {
       const fakeGcsPort = readEnvValue(envText, "FAKE_GCS_PORT", "4443");
@@ -160,7 +162,7 @@ async function waitForHttp(url: string, log: (message: string) => void, descript
   const start = Date.now();
   for (;;) {
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
       if (res.ok) {
         log(`readside: ${description} is ready`);
         return;

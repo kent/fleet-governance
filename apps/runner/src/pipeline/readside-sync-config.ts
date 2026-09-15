@@ -22,7 +22,7 @@ export function buildReadSideSyncConfig(infraDir: string): { config: ReadSideSyn
   const cplsPort = readEnvValue(envText, "CPLS_PORT", "8001");
   const fakeGcsPort = readEnvValue(envText, "FAKE_GCS_PORT", "4443");
   const bucketName = readEnvValue(envText, "GCS_BUCKET_NAME", "fleet-archive-dev");
-  const offline = readEnvValue(envText, "GCS_CREDENTIALS_FILE", "") === "";
+  const offline = readEnvValue(envText, "GCS_CREDENTIALS_FILE", "") === "" && readEnvValue(envText, "GCS_USE_ADC", "") !== "1";
 
   const votesPool = new pg.Pool({
     connectionString: `postgres://${postgresUser}:${postgresPassword}@localhost:${postgresPort}/agora_web3`,

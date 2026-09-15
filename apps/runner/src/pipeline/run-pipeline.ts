@@ -69,6 +69,8 @@ export type RunPipelineOptions = {
    *  Gates PREFLIGHT's `docker`/container-health/bucket checks, CPLS per-decision archive sync
    *  during `AGENTS_RUNNING` (task 8 finding 3), and whether `INDEXERS_READY` restarts the stack. */
   readSide?: boolean;
+  /** Remote worker boots its indexers after contracts exist, then verifies them in INDEXERS_READY. */
+  bootstrapReadSide?: boolean;
   log?: (message: string) => void;
 };
 
@@ -489,7 +491,7 @@ export function buildRunStages(env: NodeJS.ProcessEnv): readonly Stage<RunPipeli
         expectedChainId: targetChainId,
         ...(existingManifestChainId !== undefined ? { existingManifestChainId } : {}),
       };
-      if (readSideEnabled) {
+      if (readSideEnabled && !ctx.opts.bootstrapReadSide) {
         const envPath = path.join(ctx.opts.infraDir, ".env");
         const envText = existsSync(envPath) ? readFileSync(envPath, "utf8") : "";
         const daoNodePort = readEnvValue(envText, "DAO_NODE_PORT", "8000");

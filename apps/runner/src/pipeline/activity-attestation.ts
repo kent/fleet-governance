@@ -27,6 +27,8 @@ export class ActivityAttestor {
       this.options.record({ ...payload, message, digest, signature });
       this.previousHash = digest;
     });
+    // Keep the rejection for flush(), while avoiding an unhandled rejection during work.
+    void this.pending.catch(() => {});
   }
   async flush(): Promise<void> { await this.pending; }
 }

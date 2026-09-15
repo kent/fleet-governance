@@ -15,6 +15,8 @@ for _ in $(seq 1 90); do
 done
 [[ -f /var/lib/fleet-bootstrap-ready ]]
 mountpoint -q /srv/fleet
+exec 8>/srv/fleet/state/lifecycle.lock
+flock -n 8 || { echo 'An experiment owns the worker. Deployment stopped.' >&2; exit 1; }
 
 # A deployment must not terminate an active experiment. All child processes of the
 # trusted Runner are visible here, including the headless CLI spawned by the UI.
@@ -28,7 +30,7 @@ if [[ -n "$existing_runner" ]]; then
       echo 'Cannot inspect the Runner processes. Deployment stopped.' >&2
       exit 1
     fi
-    if grep -Eq '(dist/cli\.js|src/cli\.ts).*run|spawn-run' <<< "$runner_processes"; then
+    if grep -Eq '(dist/cli\.js|src/cli\.ts).*run|dist/cloud/run\.js|spawn-run' <<< "$runner_processes"; then
       echo 'An experiment is active. Finish or stop it before deploying.' >&2
       exit 1
     fi
@@ -45,6 +47,16 @@ with urllib.request.urlopen(request, timeout=20) as response:
     print(json.load(response)['access_token'])
 PY
 docker pull "$image"
+# The worker has no persistent registry login. Preload every immutable service image.
+python3 - "$script_dir/worker-config.json" <<'PY' | while IFS= read -r dependency; do docker pull "$dependency"; done
+import json, re, sys
+config = json.load(open(sys.argv[1]))
+for name in ['FLEET_DAO_IMAGE', 'FLEET_CPLS_IMAGE', 'FLEET_AGORA_IMAGE']:
+    image = config[name]
+    if not re.fullmatch(r'us-central1-docker\.pkg\.dev/fleet-governance/fleet/[a-z-]+@sha256:[a-f0-9]{64}', image):
+        raise ValueError('Read-side image must be pinned to a digest')
+    print(image)
+PY
 # Test containers use --pull never, so install the sandbox image ahead of any run.
 docker pull node:22-alpine
 
@@ -67,7 +79,8 @@ fi
 
 install -d -m 700 /etc/fleet /usr/local/lib/fleet
 install -m 700 "$script_dir/read-secrets.py" /usr/local/lib/fleet/read-secrets.py
-printf '{"fleet-openrouter-api-key":"%s","fleet-postgres-password":"1","fleet-jwt-secret":"1"}\n' "$openrouter_version" > /etc/fleet/secret-versions.json
+install -m 600 "$script_dir/worker-config.json" /etc/fleet/worker-config.json
+printf '{"fleet-openrouter-experiment-api-key":"%s","fleet-postgres-password":"1","fleet-jwt-secret":"1"}\n' "$openrouter_version" > /etc/fleet/secret-versions.json
 # Resolve credentials successfully before stopping an existing UI.
 /usr/local/lib/fleet/read-secrets.py
 systemctl stop fleet-runner.service 2>/dev/null || true

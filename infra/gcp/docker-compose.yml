@@ -1,0 +1,105 @@
+name: fleet-readside
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    network_mode: host
+    command: ["postgres", "-p", "55432", "-c", "listen_addresses=127.0.0.1"]
+    environment:
+      POSTGRES_USER: agora
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      POSTGRES_DB: postgres
+    volumes:
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      - /srv/fleet/state/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "agora", "-p", "55432", "-d", "postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  blockcache-shim:
+    image: ${FLEET_CPLS_IMAGE:?required}
+    entrypoint: ["python3", "/fleet-blockcache/server.py"]
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      ANVIL_RPC_URL: ${ANVIL_RPC_URL}
+      GOVERNOR_CLOCK_MODE: timestamp
+      CHAIN_ID: "84532"
+    volumes:
+      - ./blockcache-shim:/fleet-blockcache:ro
+  dao-node:
+    image: ${FLEET_DAO_IMAGE:?required}
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      CONTRACT_DEPLOYMENT: sepolia
+      CHAIN_ID: "84532"
+      TOKEN_ADDRESS: ${TOKEN_ADDRESS}
+      GOVERNOR_ADDRESS: ${GOVERNOR_ADDRESS}
+      DAO_NODE_START_BLOCK: ${DAO_NODE_START_BLOCK}
+      DAO_NODE_ARCHIVE_NODE_HTTP: ${DAO_NODE_ARCHIVE_NODE_HTTP}
+      DAO_NODE_REALTIME_NODE_WS: ${DAO_NODE_REALTIME_NODE_WS}
+      DAO_NODE_ARCHIVE_NODE_HTTP_BLOCK_COUNT_SPAN: "10"
+      NUM_REALTIME_CLIENTS: "1"
+      NUM_POLLING_CLIENTS: "1"
+      NUM_ARCHIVE_CLIENTS: "1"
+      ABI_DIR: /abis
+    volumes:
+      - ./dao-node/abis:/abis:ro
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/progress', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  cpls:
+    image: ${FLEET_CPLS_IMAGE:?required}
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      ENVIRONMENT: dev
+      GCS_BUCKET_NAME: ${GCS_BUCKET_NAME}
+      DAO_NODE_URL_TEMPLATE: http://127.0.0.1:8000
+      SCHEDULER_INTERVAL_MINUTES: "1"
+      INFRA_DAO_SLUGS: fleet
+      TENANT_CONFIG_PATH: /tenants
+      CONTRACT_DEPLOYMENT: sepolia
+      DEPLOYMENT: sepolia
+      CHAIN_ID: "84532"
+      TOKEN_ADDRESS: ${TOKEN_ADDRESS}
+      GOVERNOR_ADDRESS: ${GOVERNOR_ADDRESS}
+      DATABASE_URL: ${DATABASE_URL}
+      BLOCKCACHE_URL: http://127.0.0.1:8002
+    depends_on:
+      postgres: { condition: service_healthy }
+      dao-node: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  agora-next:
+    image: ${FLEET_AGORA_IMAGE:?required}
+    restart: unless-stopped
+    network_mode: host
+    mem_limit: 8g
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      NODE_OPTIONS: --max-old-space-size=4096
+      NEXT_PUBLIC_AGORA_INSTANCE_NAME: fleet
+      NEXT_PUBLIC_AGORA_INSTANCE_TOKEN: FLEET
+      NEXT_PUBLIC_AGORA_ENV: dev
+      NEXT_PUBLIC_AGORA_BASE_URL: ${FLEET_CONTROL_URL}
+      FLEET_RPC_HTTP: ${FLEET_RPC_HTTP}
+      DATABASE_URL: ${DATABASE_URL}
+      DAONODE_URL_TEMPLATE: http://127.0.0.1:8000
+      ARCHIVE_GCS_BUCKET_OVERRIDE: http://127.0.0.1:8082/${GCS_BUCKET_NAME}
+      FLEET_DEPLOYMENT_FILE: /deployments/agora-next-deployment.json
+      JWT_SECRET: ${JWT_SECRET}
+    volumes:
+      - ../deployments:/deployments:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+      dao-node: { condition: service_healthy }
+      cpls: { condition: service_healthy }
