@@ -1,0 +1,21 @@
+[Unit]
+Description=Fleet research Runner
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+RequiresMountsFor=/srv/fleet
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/fleet/release.env
+ExecStartPre=/usr/local/lib/fleet/read-secrets.py
+ExecStartPre=-/usr/bin/docker rm -f fleet-runner
+ExecStart=/usr/bin/docker run --rm --name fleet-runner --pull never --network host --memory 8g --cpus 4 --pids-limit 1024 --env-file /run/fleet/runtime.env -v /var/run/docker.sock:/var/run/docker.sock -v /opt/fleet:/opt/fleet -v /srv/fleet:/srv/fleet --workdir /opt/fleet ${FLEET_IMAGE}
+ExecStop=/usr/bin/docker stop --time 60 fleet-runner
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=90
+TimeoutStopSec=90
+
+[Install]
+WantedBy=multi-user.target

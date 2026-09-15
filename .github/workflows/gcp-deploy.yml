@@ -1,0 +1,69 @@
+name: GCP deploy Runner
+on:
+  workflow_dispatch:
+    inputs:
+      openrouter_secret_version:
+        description: Enabled numeric OpenRouter secret version
+        type: string
+        default: '1'
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: gcp-fleet-governance
+  cancel-in-progress: false
+env:
+  CLOUDSDK_CORE_PROJECT: fleet-governance
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: fleet-governance
+          workload_identity_provider: projects/449245570324/locations/global/workloadIdentityPools/github/providers/github
+          service_account: fleet-provisioner@fleet-governance.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      - name: Check secret versions and VM
+        env:
+          OPENROUTER_VERSION: ${{ inputs.openrouter_secret_version }}
+        run: |
+          [[ "$OPENROUTER_VERSION" =~ ^[1-9][0-9]*$ ]]
+          for secret in fleet-openrouter-api-key fleet-postgres-password fleet-jwt-secret; do
+            version=1
+            [[ "$secret" != fleet-openrouter-api-key ]] || version="$OPENROUTER_VERSION"
+            state=$(gcloud secrets versions describe "$version" --secret="$secret" --format='value(state)')
+            [[ "$state" == ENABLED ]]
+          done
+          state=$(gcloud compute instances describe fleet-research --zone=us-central1-a --format='value(status)')
+          if [[ "$state" == TERMINATED ]]; then
+            gcloud compute instances start fleet-research --zone=us-central1-a --quiet
+          elif [[ "$state" != RUNNING ]]; then
+            echo "VM is in $state; wait for its current operation." >&2
+            exit 1
+          fi
+      - name: Build and push the Runner image
+        id: image
+        run: |
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+          image="us-central1-docker.pkg.dev/fleet-governance/fleet/runner:$GITHUB_SHA"
+          docker build --platform linux/amd64 -f infra/gcp/Runner.Dockerfile -t "$image" .
+          docker push "$image"
+          immutable=$(docker inspect --format='{{index .RepoDigests 0}}' "$image")
+          [[ "$immutable" == *@sha256:* ]]
+          echo "uri=$immutable" >> "$GITHUB_OUTPUT"
+      - name: Deploy through IAP
+        env:
+          IMAGE: ${{ steps.image.outputs.uri }}
+          OPENROUTER_VERSION: ${{ inputs.openrouter_secret_version }}
+        run: |
+          remote="fleet-runtime-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          gcloud compute scp --recurse infra/gcp/runtime "fleet-research:~/$remote" --zone=us-central1-a --tunnel-through-iap --quiet
+          gcloud compute ssh fleet-research --zone=us-central1-a --tunnel-through-iap --quiet \
+            --command="sudo bash \$HOME/$remote/deploy-vm.sh '$IMAGE' '$GITHUB_SHA' '$OPENROUTER_VERSION'"
+          printf 'Deployed %s to the private Runner VM.\n' "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
