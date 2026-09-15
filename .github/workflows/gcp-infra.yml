@@ -126,10 +126,23 @@ jobs:
             exit 1
           fi
           echo 'A real required vote was defeated. The independent controller verified the VM TERMINATED. Routine CI restart was rejected. Ballots were scripted; no model credits used.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify the stop caller in GCP audit logs
+        if: inputs.action == 'compute-drill'
+        run: |
+          for attempt in $(seq 1 12); do
+            gcloud logging read 'resource.type="gce_instance" AND protoPayload.methodName:"compute.instances.stop" AND protoPayload.authenticationInfo.principalEmail="fleet-compute-controller@fleet-governance.iam.gserviceaccount.com"' --freshness=15m --limit=10 --format='json(timestamp,protoPayload.authenticationInfo.principalEmail,protoPayload.methodName,protoPayload.resourceName)' > compute-audit.json
+            if python3 -c 'import json; assert json.load(open("compute-audit.json"))'; then
+              cat compute-audit.json
+              exit 0
+            fi
+            sleep 10
+          done
+          echo 'The controller stop call was not found in the audit-log window.' >&2
+          exit 1
       - name: Preserve public shutdown evidence
         if: always() && inputs.action == 'compute-drill'
         run: |
-          for file in compute-allocation.json compute-drill-votes.json compute-drill-evidence.json; do
+          for file in compute-allocation.json compute-drill-votes.json compute-drill-evidence.json compute-audit.json; do
             if [[ -f "$file" ]]; then gcloud storage cp "$file" "gs://fleet-governance-control-449245570324/evidence/$GITHUB_RUN_ID/$file"; fi
           done
           if [[ -f compute-drill-evidence.json ]]; then

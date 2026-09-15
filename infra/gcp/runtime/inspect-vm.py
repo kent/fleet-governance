@@ -46,6 +46,11 @@ def redact(value):
 
 
 manifest = Path('/srv/fleet/state/deployments/84532/latest.json')
+canary = Path('/srv/fleet/state/compute-canary/heartbeat.json')
+if canary.exists():
+    witness = json.loads(canary.read_text())
+    print('Compute shutdown witness:', json.dumps({'lastHeartbeat': witness.get('at')}))
+    print(command(['docker', 'inspect', '--format', 'Canary running={{.State.Running}} exit={{.State.ExitCode}} restart={{.HostConfig.RestartPolicy.Name}} finished={{.State.FinishedAt}}', 'fleet-compute-canary']))
 if manifest.exists():
     data = json.loads(manifest.read_text())
     print('Base Sepolia deployment:', json.dumps({key: data.get(key) for key in ['chainId', 'deploymentBlock', 'addresses']}))
