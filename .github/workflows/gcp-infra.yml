@@ -83,6 +83,13 @@ jobs:
       - name: Inspect the deployed demo without exposing credentials
         if: inputs.action == 'inspect-demo'
         run: |
+          gcloud run services describe fleet-governance --region=us-central1 \
+            --format='yaml(status.conditions,status.latestCreatedRevisionName,status.latestReadyRevisionName,status.traffic)'
+          revision=$(gcloud run services describe fleet-governance --region=us-central1 --format='value(status.latestCreatedRevisionName)')
+          if [[ -n "$revision" ]]; then
+            gcloud run revisions describe "$revision" --region=us-central1 \
+              --format='yaml(metadata.name,status.conditions,status.logUrl)'
+          fi
           gcloud compute instances describe fleet-research --zone=us-central1-a --format='yaml(status,networkInterfaces.networkIP)'
           remote="fleet-inspect-$GITHUB_RUN_ID.py"
           gcloud compute scp infra/gcp/runtime/inspect-vm.py "fleet-research:~/$remote" --zone=us-central1-a --tunnel-through-iap --quiet
