@@ -85,7 +85,7 @@ function renderActivity(status) {
     const label = event.type === "objection" ? (event.objects ? "Objection" : "Review")
       : event.type === "loop_event" ? (event.event?.type || "Activity").replaceAll("_", " ") : event.type;
     rows.push({ at: event.at || item.at, title: `Agent ${item.agentId} · ${label}`,
-      detail: event.why || event.event?.why || item.message || event.event?.type,
+      detail: event.why || event.event?.why || event.event?.detail || event.event?.rationale || event.event?.error || event.event?.reason || item.message || event.event?.type,
       txHash: event.txHash, signed: item.signatureVerified === true });
   }
   for (const item of status.view?.gatewayRecords || []) rows.push({ at: item.ts, title: `${item.verdict === "BLOCK" ? "Blocked" : "Allowed"} · Agent ${item.agentId}`, detail: `${item.descriptor?.class}: ${item.reason || item.basis || item.descriptor?.target}` });
