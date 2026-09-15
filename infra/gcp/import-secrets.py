@@ -27,7 +27,9 @@ class ImportFailure(Exception):
 
 
 def credentials_from_json(raw, kind='cdp'):
-    fields = RPC_FIELDS if kind == 'rpc' else FIELDS
+    if kind not in ('cdp', 'rpc', 'openrouter'):
+        raise ImportFailure('Unknown credential kind.')
+    fields = {'api_key': 'fleet-openrouter-experiment-api-key'} if kind == 'openrouter' else RPC_FIELDS if kind == 'rpc' else FIELDS
     try:
         data = json.loads(raw)
     except (ValueError, TypeError):
@@ -35,7 +37,11 @@ def credentials_from_json(raw, kind='cdp'):
     if not isinstance(data, dict) or set(data) != set(fields):
         raise ImportFailure('Unexpected bootstrap credential fields.')
     if any(not isinstance(value, str) for value in data.values()):
-        raise ImportFailure('Both credential fields must be strings.')
+        raise ImportFailure('Credential fields must be strings.')
+    if kind == 'openrouter':
+        if not re.fullmatch(r'sk-or-v1-[0-9a-f]{64}', data['api_key']):
+            raise ImportFailure('Expected an OpenRouter API key.')
+        return {secret: data[field] for field, secret in fields.items()}
     if kind == 'rpc':
         http = re.fullmatch(r'https://base-sepolia\.g\.alchemy\.com/v2/([A-Za-z0-9_-]{10,200})', data['rpc_http_url'])
         ws = re.fullmatch(r'wss://base-sepolia\.g\.alchemy\.com/v2/([A-Za-z0-9_-]{10,200})', data['rpc_ws_url'])
@@ -94,7 +100,7 @@ def import_credentials(values):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--kind', choices=('cdp', 'rpc'), required=True)
+    parser.add_argument('--kind', choices=('cdp', 'rpc', 'openrouter'), required=True)
     kind = parser.parse_args().kind
     # Remove the transport secret before spawning any child process.
     values = credentials_from_json(os.environ.pop(f'{kind.upper()}_BOOTSTRAP_CREDENTIALS', ''), kind)

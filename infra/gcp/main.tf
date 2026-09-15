@@ -94,6 +94,16 @@ resource "google_secret_manager_secret" "cdp" {
   depends_on = [google_project_service.enabled["secretmanager.googleapis.com"]]
 }
 
+resource "google_secret_manager_secret" "experiment_model" {
+  secret_id = "fleet-openrouter-experiment-api-key"
+  labels    = local.labels
+  replication {
+    auto {}
+  }
+  lifecycle { prevent_destroy = true }
+  depends_on = [google_project_service.enabled["secretmanager.googleapis.com"]]
+}
+
 resource "google_secret_manager_secret" "rpc" {
   for_each  = toset(["fleet-base-sepolia-rpc-url", "fleet-base-sepolia-ws-url"])
   secret_id = each.value

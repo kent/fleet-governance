@@ -13,6 +13,13 @@ spec.loader.exec_module(module)
 
 
 class ImportTests(unittest.TestCase):
+    def test_experiment_key_has_its_own_container(self):
+        key = 'sk-or-v1-' + 'a' * 64
+        self.assertEqual(module.credentials_from_json(json.dumps({'api_key': key}), 'openrouter'),
+                         {'fleet-openrouter-experiment-api-key': key})
+        with self.assertRaises(module.ImportFailure):
+            module.credentials_from_json(json.dumps({'api_key': 'bad'}), 'openrouter')
+
     def setUp(self):
         self.values = module.credentials_from_json(json.dumps({
             'api_key_id': '00000000-0000-4000-8000-000000000001',
