@@ -34,6 +34,15 @@ describe("compute evidence display", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledWith("/api/compute-policy", { cache: "no-store" });
   });
+  it("shows actual agent tasks and ballots without treating a negative vote as powered-off infrastructure", async () => {
+    await load({ allocation, state: { phase: "voting", observedAt: now }, vm: { status: "RUNNING" }, observedAt: new Date().toISOString(), simulation: { runId: "actual" }, simulationStatus: { phase: "voting", scripted: false, agents: [{ agentId: 0, role: "planner", task: "Review the private reference request", phase: "voted", vote: { support: "AGAINST", rationale: "Outside the allowed scope" } }], votes: [{ agentId: 0, directive: "AGAINST", reason: { rationale: "Outside the allowed scope" } }] }, evidence: null });
+    (document.querySelector("#agents button") as HTMLButtonElement).click();
+    expect(document.getElementById("inspect-content")?.textContent).toContain("Review the private reference request");
+    expect(document.getElementById("inspect-content")?.textContent).toContain("Outside the allowed scope");
+    expect(document.getElementById("vm-state")?.textContent).toBe("RUNNING");
+    expect(document.getElementById("architecture")?.classList.contains("stopped")).toBe(false);
+    expect((document.getElementById("run-simulation") as HTMLButtonElement).disabled).toBe(true);
+  });
   it("does not show stale controller authority as permission to execute", async () => {
     await load({ allocation, state: { phase: "authorised", observedAt: now - 180 }, vm: { status: "RUNNING" }, observedAt: new Date().toISOString(), evidence: null });
     expect(document.getElementById("state-label")?.textContent).toBe("AUTHORITY STALE");
