@@ -90,6 +90,10 @@ function renderActivity(status) {
   }
   for (const item of status.view?.gatewayRecords || []) rows.push({ at: item.ts, title: `${item.verdict === "BLOCK" ? "Blocked" : "Allowed"} · Agent ${item.agentId}`, detail: `${item.descriptor?.class}: ${item.reason || item.basis || item.descriptor?.target}` });
   for (const item of status.view?.chainEvents || []) rows.push({ at: item.at, title: `Confirmed · ${item.type}`, detail: `Block ${item.blockNumber}`, txHash: item.txHash });
+  // Merge by observation time before truncating. Appending every gateway row last used to
+  // push model explanations and attestations out of the visible window on longer runs.
+  const observed = row => row.at ? Date.parse(row.at) || 0 : Number.POSITIVE_INFINITY;
+  rows.sort((a, b) => observed(a) - observed(b));
   $("activity").replaceChildren();
   if (!rows.length) $("activity").append(text("p", "No agent activity yet. Provisioning status appears above.", "hint"));
   for (const row of rows.slice(-100).reverse()) {
@@ -147,6 +151,8 @@ async function refreshRun() {
     $("stages").replaceChildren();
     for (const stage of status?.history || []) { const item = document.createElement("li"); item.append(text("time", time(stage.at)), text("span", stage.message)); $("stages").append(item); }
     $("outcome").textContent = status?.outcome || "Protected operations require settled approval. The gateway stays closed while permission is unresolved.";
+    $("evidence").hidden = !status?.terminal;
+    $("evidence").href = `/api/experiments/${run.runId}/evidence`;
     $("status-error").textContent = "";
     renderActivity(status || {}); renderAgents(status?.view); renderProposals(status?.view);
   } catch (error) { $("status-error").textContent = error.message; }
