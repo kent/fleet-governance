@@ -237,4 +237,4 @@ chain. [Current progress and remaining work](docs/goal-progress.md)
 Agora Governor is pinned as a Git submodule. The fleet rules live in `FleetHook`; the executor
 and artifact store are separate contracts. Upstream dependencies retain their own licences.
 
-The demo uses one [Agora indexing path](docs/indexing.md): DAO Node, Postgres vote ingestion and CPLS. No Goldsky subgraph is required.
+The demo uses [pipeline ingestion with DAO Node and CPLS](docs/indexing.md). We choose pipelines over subgraphs: Goldsky integration should stream direct chain events into this read path, without a second subgraph projection. The current research deployment uses a bounded `VoteCast` ingestion adapter; no Goldsky subgraph is deployed by this repo.
