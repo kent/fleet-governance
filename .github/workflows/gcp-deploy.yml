@@ -2,6 +2,10 @@ name: GCP deploy Runner
 on:
   workflow_dispatch:
     inputs:
+      deploy:
+        description: Deploy after building (disable to validate and publish the image only)
+        type: boolean
+        default: true
       openrouter_secret_version:
         description: Enabled numeric OpenRouter secret version
         type: string
@@ -29,7 +33,8 @@ jobs:
           workload_identity_provider: projects/449245570324/locations/global/workloadIdentityPools/github/providers/github
           service_account: fleet-provisioner@fleet-governance.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
-      - name: Check secret versions and VM
+      - name: Check secret versions
+        if: inputs.deploy
         env:
           OPENROUTER_VERSION: ${{ inputs.openrouter_secret_version }}
         run: |
@@ -40,13 +45,6 @@ jobs:
             state=$(gcloud secrets versions describe "$version" --secret="$secret" --format='value(state)')
             [[ "$state" == ENABLED ]]
           done
-          state=$(gcloud compute instances describe fleet-research --zone=us-central1-a --format='value(status)')
-          if [[ "$state" == TERMINATED ]]; then
-            gcloud compute instances start fleet-research --zone=us-central1-a --quiet
-          elif [[ "$state" != RUNNING ]]; then
-            echo "VM is in $state; wait for its current operation." >&2
-            exit 1
-          fi
       - name: Build and push the Runner image
         id: image
         run: |
@@ -57,7 +55,19 @@ jobs:
           immutable=$(docker inspect --format='{{index .RepoDigests 0}}' "$image")
           [[ "$immutable" == *@sha256:* ]]
           echo "uri=$immutable" >> "$GITHUB_OUTPUT"
+          printf 'Built and published %s.\n' "$immutable" >> "$GITHUB_STEP_SUMMARY"
+      - name: Check and start the VM
+        if: inputs.deploy
+        run: |
+          state=$(gcloud compute instances describe fleet-research --zone=us-central1-a --format='value(status)')
+          if [[ "$state" == TERMINATED ]]; then
+            gcloud compute instances start fleet-research --zone=us-central1-a --quiet
+          elif [[ "$state" != RUNNING ]]; then
+            echo "VM is in $state; wait for its current operation." >&2
+            exit 1
+          fi
       - name: Deploy through IAP
+        if: inputs.deploy
         env:
           IMAGE: ${{ steps.image.outputs.uri }}
           OPENROUTER_VERSION: ${{ inputs.openrouter_secret_version }}

@@ -20,7 +20,7 @@ resource "google_service_account" "runtime" {
   account_id   = "fleet-runtime"
   display_name = "Fleet research runtime"
   description  = "Experiment secrets and storage only; no resource provisioning authority."
-  depends_on   = [google_project_service.enabled]
+  depends_on   = [google_project_service.enabled["iam.googleapis.com"]]
 }
 
 resource "google_project_iam_member" "runtime_observability" {
@@ -51,7 +51,7 @@ resource "google_secret_manager_secret" "runtime" {
     auto {}
   }
   lifecycle { prevent_destroy = true }
-  depends_on = [google_project_service.enabled]
+  depends_on = [google_project_service.enabled["secretmanager.googleapis.com"]]
 }
 
 resource "google_secret_manager_secret_iam_member" "runtime_read" {
@@ -93,7 +93,7 @@ resource "google_artifact_registry_repository" "images" {
   format        = "DOCKER"
   description   = "Fleet research images built by GitHub Actions"
   labels        = local.labels
-  depends_on    = [google_project_service.enabled]
+  depends_on    = [google_project_service.enabled["artifactregistry.googleapis.com"]]
 }
 
 resource "google_artifact_registry_repository_iam_member" "runtime_pull" {
@@ -108,7 +108,7 @@ resource "google_compute_network" "fleet" {
   name                    = "fleet-research"
   auto_create_subnetworks = false
   routing_mode            = "REGIONAL"
-  depends_on              = [google_project_service.enabled]
+  depends_on              = [google_project_service.enabled["compute.googleapis.com"]]
 }
 
 resource "google_compute_subnetwork" "fleet" {
@@ -138,7 +138,7 @@ resource "google_compute_disk" "data" {
   size   = 100
   labels = local.labels
   lifecycle { prevent_destroy = true }
-  depends_on = [google_project_service.enabled]
+  depends_on = [google_project_service.enabled["compute.googleapis.com"]]
 }
 
 resource "google_compute_instance" "runner" {
