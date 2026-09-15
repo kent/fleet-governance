@@ -1,4 +1,4 @@
-FROM node:20-bookworm-slim
+FROM node:22.23.2-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS base
 # git: some npm deps and npm's own git-based resolution can need it. patch:
 # applies infra/agora-next/patches/*.patch below. openssl: required by
 # Prisma's query engine on Debian (binaryTargets in prisma/schema.prisma
@@ -47,4 +47,14 @@ RUN for p in /runtime-patches/*.patch; do patch -p1 < "$p"; done
 COPY infra/agora-next/tests /app/fleet-tests
 
 EXPOSE 3000
+
+FROM base AS production
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 NODE_OPTIONS=--max-old-space-size=4096
+ENV NEXT_PUBLIC_AGORA_INSTANCE_NAME=fleet NEXT_PUBLIC_AGORA_INSTANCE_TOKEN=FLEET NEXT_PUBLIC_AGORA_ENV=dev
+ENV NEXT_PUBLIC_FLEET_CHAIN_ID=84532 NEXT_PUBLIC_FORK_NODE_URL=https://sepolia.base.org NEXT_PUBLIC_AGORA_API_KEY=research
+ENV NEXT_PUBLIC_AGORA_BASE_URL=https://fleet-governance-449245570324.us-central1.run.app
+RUN npm run build
+CMD ["npm", "run", "start"]
+
+FROM base AS development
 CMD ["npm", "run", "dev"]

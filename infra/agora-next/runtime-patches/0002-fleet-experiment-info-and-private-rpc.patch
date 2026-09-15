@@ -1,0 +1,42 @@
+--- a/src/app/info/page.tsx
++++ b/src/app/info/page.tsx
+@@ -1,6 +1,7 @@
+ // export const dynamic = 'force-dynamic'; // this line is uncommented for e2e tests
+ 
+ import React from "react";
++import FleetExperimentInfo from "@/app/info/components/FleetExperimentInfo";
+ import InfoAbout from "@/app/info/components/InfoAbout";
+ import { InfoHero } from "@/app/info/components/InfoHero";
+ 
+@@ -60,6 +61,7 @@
+ 
+ export default async function Page() {
+   const { ui, namespace } = Tenant.current();
++  if (namespace === TENANT_NAMESPACES.FLEET) return <FleetExperimentInfo />;
+ 
+   if (!ui.toggle("info")?.enabled) {
+     return (
+--- a/src/lib/rpcConfig.ts
++++ b/src/lib/rpcConfig.ts
+@@ -62,6 +62,11 @@
+   chainId: number | string,
+   secret?: string
+ ): string => {
++  if (Number(chainId) === 84532 && process.env.NEXT_PUBLIC_AGORA_INSTANCE_NAME === "fleet") {
++    return typeof window === "undefined" && process.env.FLEET_RPC_HTTP
++      ? process.env.FLEET_RPC_HTTP
++      : "https://sepolia.base.org";
++  }
+   if (process.env.NEXT_PUBLIC_FORK_NODE_URL) {
+     return process.env.NEXT_PUBLIC_FORK_NODE_URL;
+   }
+--- a/next.config.js
++++ b/next.config.js
+@@ -88,6 +88,7 @@
+   // Necessary to prevent github.com/open-telemetry/opentelemetry-js/issues/4297
+   serverExternalPackages: ["@opentelemetry/sdk-node"],
+   experimental: {
++    cpus: 1,
+     serverActions: {
+       bodySizeLimit: "10mb",
+     },

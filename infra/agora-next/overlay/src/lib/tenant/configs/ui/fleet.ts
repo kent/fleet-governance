@@ -39,7 +39,7 @@ export const fleetTenantUIConfig = new TenantUI({
     brandSecondary: "243 244 246",
   },
 
-  links: [],
+  links: [{ name: "experiments", title: "Experiments", url: "/experiments" }],
 
   governanceIssues: [],
 
@@ -83,6 +83,7 @@ export const fleetTenantUIConfig = new TenantUI({
   ],
 
   toggles: [
+    { name: "info", enabled: true },
     {
       name: "proposals",
       enabled: true,
