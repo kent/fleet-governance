@@ -66,6 +66,12 @@ $("settings").addEventListener("submit", async event => {
 });
 $("rerun").addEventListener("click", () => { if (savedRun) { fill(savedRun.settings); startingId = null; $("goal").focus(); $("form-error").textContent = "Settings copied. Run creates a new experiment and keeps this result."; } });
 $("refresh").addEventListener("click", () => void refreshHistory());
+$("wake").addEventListener("click", async () => {
+  $("wake").disabled = true;
+  try { $("wake-status").textContent = (await api("/api/worker/start", { method: "POST" })).message; }
+  catch (error) { $("wake-status").textContent = error.message; }
+  finally { $("wake").disabled = false; }
+});
 
 function renderActivity(status) {
   const rows = [];

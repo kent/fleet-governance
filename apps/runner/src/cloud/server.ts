@@ -2,7 +2,7 @@ import { createServer, request as httpRequest, type IncomingMessage, type Server
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { DEMO_DEFAULT_GOAL } from "../lib/demo-config.js";
-import { ACTIVE, RUN_ID, queueDemo, runPath, type DemoRun } from "./control.js";
+import { ACTIVE, RUN_ID, controlDeps, queueDemo, runPath, type DemoRun } from "./control.js";
 import { BUCKET, googleRequest, readObject } from "./google.js";
 
 const root = process.cwd();
@@ -24,6 +24,10 @@ createServer(async (request, response) => {
     if (url.pathname === "/healthz") { json(response, 200, { ok: true }); return; }
     if (!users.has(String(request.headers["x-goog-authenticated-user-email"]))) { json(response, 403, { error: "Sign in through Google IAP with an authorised account." }); return; }
     if (request.method === "POST" && request.headers.origin !== `https://${request.headers.host}`) { json(response, 403, { error: "Request origin did not match this application." }); return; }
+    if (url.pathname === "/api/worker/start" && request.method === "POST") {
+      await controlDeps().start();
+      json(response, 202, { message: "Worker is starting or already running. Open Agora in a moment." }); return;
+    }
     if (url.pathname === "/api/experiments" && request.method === "POST") {
       const id = String(request.headers["idempotency-key"] ?? "");
       json(response, 202, await queueDemo(await body(request), id)); return;
