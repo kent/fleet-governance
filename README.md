@@ -236,3 +236,5 @@ chain. [Current progress and remaining work](docs/goal-progress.md)
 
 Agora Governor is pinned as a Git submodule. The fleet rules live in `FleetHook`; the executor
 and artifact store are separate contracts. Upstream dependencies retain their own licences.
+
+The demo uses one [Agora indexing path](docs/indexing.md): DAO Node, Postgres vote ingestion and CPLS. No Goldsky subgraph is required.
