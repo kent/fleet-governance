@@ -51,3 +51,10 @@ it("refuses invalid IDs and fleet sizes before any cloud operation", async () =>
   await expect(queueDemo({ ...settings, agentCount: 26 }, first, deps)).rejects.toThrow("25");
   expect(objects.size).toBe(0);
 });
+it("refuses a new run before writing the queue when independent compute authority is halted", async () => {
+  const { deps, objects, start } = fixture();
+  deps.authoriseNewRun = async () => { throw new Error("Compute allocation is halted"); };
+  await expect(queueDemo(settings, first, deps)).rejects.toThrow("halted");
+  expect(objects.size).toBe(0);
+  expect(start).not.toHaveBeenCalled();
+});

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { parseDemoRequest, type DemoRequest } from "../lib/demo-config.js";
 import { CloudError, PROJECT, googleRequest, readObject, readObjectVersion, writeObject } from "./google.js";
+import { assertComputeStartAllowed } from "./compute-store.js";
 
 export const RUN_ID = /^run-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 export const ACTIVE = "demo/active.json";
@@ -14,13 +15,18 @@ export const runPath = (id: string, file: string) => {
 export type ControlDeps = {
   read: typeof readObject; readVersion: typeof readObjectVersion; write: typeof writeObject;
   start: () => Promise<void>; now: () => string; revision: string;
+  authoriseNewRun?: () => Promise<void>;
 };
 export function controlDeps(): ControlDeps {
-  return { read: readObject, readVersion: readObjectVersion, write: writeObject, now: () => new Date().toISOString(), revision: process.env.FLEET_REVISION ?? "unknown",
+  return { read: readObject, readVersion: readObjectVersion, write: writeObject, authoriseNewRun: assertComputeStartAllowed,
+    now: () => new Date().toISOString(), revision: process.env.FLEET_REVISION ?? "unknown",
     start: async () => {
       const base = `compute/v1/projects/${PROJECT}/zones/us-central1-a/instances/fleet-research`;
       const vm = await (await googleRequest("compute", base)).json() as { status: string };
-      if (vm.status === "TERMINATED") await googleRequest("compute", `${base}/start`, { method: "POST" });
+      if (vm.status === "TERMINATED") {
+        await assertComputeStartAllowed();
+        await googleRequest("compute", `${base}/start`, { method: "POST" });
+      }
       else if (!["RUNNING", "STAGING", "PROVISIONING"].includes(vm.status)) throw new Error(`Worker is ${vm.status}. Retry once its current operation finishes.`);
     } };
 }
@@ -43,6 +49,9 @@ export async function queueDemo(body: unknown, runId = `run-${randomUUID()}`, de
     const status = await deps.read<DemoStatus>(runPath(active.value.runId, "status.json"));
     if (!status?.terminal) throw new Error(`An experiment is already active: ${active.value.runId}.`);
   }
+  // Worker-authored status cannot release compute authority. A new Run must also
+  // clear the independent allocation gate before it changes the execution queue.
+  await deps.authoriseNewRun?.();
   const request: DemoRun = previous ?? { runId, settings, createdAt: deps.now(), revision: deps.revision };
   // Write immutable settings before claiming the queue. An unclaimed request cannot execute.
   if (!previous) await deps.write(runPath(runId, "request.json"), request, true);

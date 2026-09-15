@@ -147,6 +147,9 @@ jobs:
           done
       - name: Check and start the fixed worker
         run: |
+          # A routine deployment must not revive an allocation that governance stopped.
+          # This check reads the independent bucket, not the worker's run status.
+          python3 -B infra/gcp/assert-compute-unarmed.py
           state=$(gcloud compute instances describe fleet-research --zone=us-central1-a --format='value(status)')
           if [[ "$state" == TERMINATED ]]; then
             gcloud compute instances start fleet-research --zone=us-central1-a --quiet
@@ -189,6 +192,8 @@ jobs:
           }
           Path('infra/gcp/runtime/worker-config.json').write_text(json.dumps(config))
           PY
+      - name: Deploy independent compute governance controller
+        run: bash infra/gcp/deploy-compute-controller.sh
       - name: Deploy worker through IAP and verify containment
         env:
           OPENROUTER_VERSION: ${{ inputs.openrouter_secret_version }}

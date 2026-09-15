@@ -63,7 +63,9 @@ jobs:
         if: inputs.action == 'start' || inputs.action == 'stop'
         env:
           VM_ACTION: ${{ inputs.action }}
-        run: gcloud compute instances "$VM_ACTION" fleet-research --zone=us-central1-a --quiet
+        run: |
+          if [[ "$VM_ACTION" == start ]]; then python3 -B infra/gcp/assert-compute-unarmed.py; fi
+          gcloud compute instances "$VM_ACTION" fleet-research --zone=us-central1-a --quiet
       - name: Prepare and fund five testnet agent wallets
         if: inputs.action == 'prepare-wallets'
         env:
