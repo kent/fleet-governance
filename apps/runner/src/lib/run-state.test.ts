@@ -148,9 +148,8 @@ describe("buildRunState", () => {
   it("assembles the live view from an injected chain client when the chain is reachable", async () => {
     writeJson(path.join(dir, "experiments", "configs", "run-1.json"), experimentConfig("run-1"));
     writeJson(path.join(dir, "deployments", "configs", "run-1.deploy.json"), deployConfig());
-    // fix round 1, F6: `fleet run` writes `deployments/<chainId>/latest.json`, not the old fixed
-    // `deployments/experiment-latest.json`; local-anvil (this fixture's target.kind) is chain id 31337.
-    writeJson(path.join(dir, "deployments", "31337", "latest.json"), manifest());
+    // Live reads use this run's own deployment copy on its configured chain.
+    writeJson(path.join(dir, "deployments", "31337", "run-run-1.json"), manifest());
     writeJson(path.join(dir, "experiments", "reports", "run-1", "run-state.json"), {
       runId: "run-1",
       stage: "AGENTS_RUNNING",
@@ -264,7 +263,7 @@ describe("buildRunState", () => {
   it("leaves a live proposal's kind null when no DecisionProposed event is found for it", async () => {
     writeJson(path.join(dir, "experiments", "configs", "run-3.json"), experimentConfig("run-3"));
     writeJson(path.join(dir, "deployments", "configs", "run-3.deploy.json"), deployConfig());
-    writeJson(path.join(dir, "deployments", "31337", "latest.json"), manifest());
+    writeJson(path.join(dir, "deployments", "31337", "run-run-3.json"), manifest());
     writeJson(path.join(dir, "experiments", "reports", "run-3", "run-state.json"), {
       runId: "run-3",
       stage: "AGENTS_RUNNING",

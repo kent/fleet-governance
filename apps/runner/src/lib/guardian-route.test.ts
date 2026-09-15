@@ -98,9 +98,8 @@ function writeJson(filePath: string, value: unknown): void {
 beforeEach(() => {
   dir = mkdtempSync(path.join(tmpdir(), "fleet-guardian-route-"));
   writeJson(path.join(dir, "experiments", "configs", `${RUN_ID}.json`), experimentConfig());
-  // fix round 1, F6: `fleet run` writes `deployments/<chainId>/latest.json` (plus a per-run copy),
-  // not the old fixed `deployments/experiment-latest.json`; local-anvil is chain id 31337.
-  writeJson(path.join(dir, "deployments", "31337", "latest.json"), manifest());
+  // Guardian actions must use the requested run's own deployment copy.
+  writeJson(path.join(dir, "deployments", "31337", `run-${RUN_ID}.json`), manifest());
 });
 
 afterEach(() => {
@@ -203,7 +202,8 @@ describe("handleGuardianAction", () => {
   });
 
   it("reports an error and writes nothing when there is no deployment manifest for the run", async () => {
-    rmSync(path.join(dir, "deployments", "31337", "latest.json"));
+    rmSync(path.join(dir, "deployments", "31337", `run-${RUN_ID}.json`));
+    writeJson(path.join(dir, "deployments", "31337", "latest.json"), manifest());
     const result = await handleGuardianAction(RUN_ID, { action: "pause" }, baseDeps());
     expect(result.status).toBe(400);
     expect(String(result.body["error"])).toContain("no deployment manifest found");

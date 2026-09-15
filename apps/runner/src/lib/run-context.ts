@@ -25,8 +25,7 @@ export type RunContext = {
   deployConfig: DeployConfigV1Type | null;
   record: RunRecordDocument | null;
   /** `record.manifest` when `record.json` exists (post-`CAPTURED`); otherwise the manifest at
-   *  `deployments/<chainId>/run-<runId>.json` or `deployments/<chainId>/latest.json` (fix round 1,
-   *  F6; `chainId` from the experiment's own `target.kind`). `null` when none of those exist yet,
+   *  `deployments/<chainId>/run-<runId>.json`. `null` when neither exists yet,
    *  or there is no experiment config to read a `target.kind` from. */
   manifest: ManifestV1Type | null;
 };
@@ -86,15 +85,15 @@ function manifestPathsForRun(deploymentsDir: string, chainId: number, runId: str
  * Resolves the manifest a still-running (pre-`CAPTURED`) run deployed against, from the
  * experiment's own chain id (fix round 1, F6): `fleet run` no longer writes a single fixed
  * `deployments/experiment-latest.json` (that path is dead); it writes the two paths
- * `manifestPathsForRun` above computes. Prefers the per-run copy, which stays this run's own
- * manifest even after a later run moves `latest.json` on. `null` when there is no experiment
- * config to read a `target.kind` from, or neither file exists yet.
+ * `manifestPathsForRun` above computes. Only the per-run copy belongs to this experiment.
+ * `latest.json` can belong to a different run, including before this run has deployed anything.
+ * `null` when there is no experiment config or this run's manifest does not exist yet.
  */
 function tryResolveManifestForRun(repoRootDir: string, runId: string, experiment: ExperimentConfigV1Type | null): ManifestV1Type | null {
   if (!experiment) return null;
   const chainId = chainIdForKind(experiment.target.kind);
-  const { latest, perRun } = manifestPathsForRun(path.join(repoRootDir, "deployments"), chainId, runId);
-  return tryLoadManifestFile(perRun) ?? tryLoadManifestFile(latest);
+  const { perRun } = manifestPathsForRun(path.join(repoRootDir, "deployments"), chainId, runId);
+  return tryLoadManifestFile(perRun);
 }
 
 export async function resolveRunContext(runId: string, repoRootDir: string, pgUrl: string | undefined): Promise<RunContext> {

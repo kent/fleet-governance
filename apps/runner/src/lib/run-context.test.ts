@@ -163,14 +163,13 @@ describe("resolveRunContext", () => {
   // Fix round 1, F6: `fleet run` writes `deployments/<chainId>/run-<runId>.json` and
   // `deployments/<chainId>/latest.json`, derived from the experiment's own `target.kind`, not the
   // old fixed `deployments/experiment-latest.json` (which `fleet run` no longer writes at all).
-  it("resolves the manifest from deployments/<chainId>/latest.json before any record.json exists", async () => {
+  it("does not assign another run's latest deployment to an experiment that has not deployed", async () => {
     writeJson(path.join(dir, "experiments", "configs", "run-live.json"), validExperiment("run-live"));
     writeJson(path.join(dir, "deployments", "31337", "latest.json"), fakeManifest("0x1000000000000000000000000000000000000009"));
 
     const ctx = await resolveRunContext("run-live", dir, undefined);
     expect(ctx.record).toBeNull();
-    expect(ctx.manifest?.chainId).toBe(31337);
-    expect(ctx.manifest?.deployer).toBe("0x1000000000000000000000000000000000000009");
+    expect(ctx.manifest).toBeNull();
   });
 
   it("prefers the per-run manifest copy over latest.json when both exist", async () => {
