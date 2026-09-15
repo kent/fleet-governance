@@ -2,11 +2,16 @@ import { checkPreparationRecovery, releasePreparation } from "./simulation-recov
 import { armComputeAllocation, releaseComputeAllocation } from "./compute-admin.js";
 import { readSimulationRequest, simulationPath } from "./simulation.js";
 import { readObject } from "./google.js";
-import { readComputeAllocation, readComputeState } from "./compute-store.js";
+import { readComputeAllocation, readComputeState, readComputeObject } from "./compute-store.js";
 
 try {
   const action = process.argv[2];
   if (action === "arm") console.log(JSON.stringify(await armComputeAllocation(JSON.parse(process.env.COMPUTE_REQUEST ?? "{}"))));
+  else if (action === "check-preparation-retry") {
+    const request = await readSimulationRequest();
+    if (!request || await readComputeAllocation() || await readComputeObject(`simulations/${request.runId}/claimed.json`)) throw new Error("Preparation is already claimed or armed. Refusing a startup retry.");
+    console.log("The protected human request has not been claimed. A fixed-job startup retry may compete for the same create-only claim.");
+  }
   else if (action === "check-preparation" || action === "release-preparation") {
     const input = JSON.parse(process.env.COMPUTE_REQUEST ?? "{}");
     if (action === "check-preparation") await checkPreparationRecovery(input.runId);
