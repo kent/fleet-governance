@@ -18,9 +18,9 @@
 
 - **No approval, no execution.** The requested action stops before it reaches the resource. If the proposal loses, it stays stopped. If nobody votes, it stays stopped. Too few yes votes, a tie, an expired permission? Still stopped. Our default requires yes votes representing at least 60 percent of the voting power, followed by a timelock that gives the guardian time to intervene.
 
-- I want a stricter mode for the fleet too. While a required approval is being considered, pause the affected task's execution and keep the voting channel open. If the proposal loses, misses quorum, is cancelled or expires, stop that run. If the deadline passes without a settled approval, stop it. The agents don't get to decide that waiting was inconvenient and carry on.
+- We added a stricter compute mode for the fleet too. While a required approval is being considered, pause the affected task's execution and keep the voting channel open. If the proposal loses, misses quorum, is cancelled or expires, stop that run. If the deadline passes without a settled approval, stop it. The agents don't get to decide that waiting was inconvenient and carry on.
 
-- There are two claims here, and I want to be precise. The demo already blocks an unapproved protected action. Automatically stopping every agent working on the affected task is the next enforcement requirement. Today, an agent can still do other allowed work after its request is blocked. We have not yet demonstrated an automatic shutdown of the whole fleet after a failed vote.
+- There are two layers here. The gateway blocks the unapproved protected action. The compute controller can stop the whole worker when an operator-designated required vote fails. That controller runs outside the worker, reads the Governor directly and saves the halt in a bucket the agents cannot change. Ordinary optional proposals do not automatically become votes on whether the whole machine should continue.
 
 - Let’s apply that to Hugging Face. Suppose the constitution allows solving the local benchmark but prohibits retrieving private reference solutions or attacking external infrastructure. An agent asks to fetch something outside that scope. The gateway holds the request. No network call goes out while the fleet considers the proposal.
 
@@ -36,7 +36,7 @@
 
 - A majority can also be wrong. Two thousand agents can share the same blind spot. Some restrictions need to remain fixed regardless of a vote, and a human needs independent authority to pause access. If a job is already running, the infrastructure has to terminate it and revoke its access. A later vote cannot unsend a request.
 
-- **Put the stop outside the agents.** A separate controller should read the actual proposal and settled permission, enforce the deadline, and record a durable stop for the run. A model saying “the vote passed” is not evidence. The controller needs its own identity, and the agents must have no authority to change its rules or restart themselves.
+- **Put the stop outside the agents.** Our separate Cloud Run controller reads the exact required proposals, enforces the deadline and records a durable stop for the run. A model saying “the vote passed” is not evidence. The controller needs its own identity, and the agents must have no authority to change its rules or restart themselves.
 
 - **Close access first.** The tool gateway, transaction signer and model request broker should refuse new work for a stopped run, including jobs already sitting in a queue. Agents should hold short-lived, narrowly scoped access through those services. A stale approval check or an expired authorisation lease closes access. A heartbeat alone cannot renew permission. Revoking cloud roles is another layer, but Google's IAM changes take time to propagate, so that cannot be our immediate stop mechanism. [Google IAM propagation](https://docs.cloud.google.com/iam/docs/access-change-propagation)
 
@@ -48,7 +48,7 @@
 
 - We don't control Google's physical power switches. And cutting power to our worker does not stop a model request already running at OpenRouter, a remote job already launched, or a transaction already broadcast. Those destinations need their own cancellation and permission checks. The useful guarantee is to prevent the protected operation from starting without approval, then stop further work within a measured deadline when authority is lost.
 
-- **Prove the stop at the resource.** Give a test fleet a losing vote, a tie, no quorum and no ballots. Disconnect its approval feed. Kill its controller. Try to restart an old job. Check that no unapproved write or network request reached the target, that task execution stopped, and that restart stayed blocked. Record the time and any work already in flight. “Stop requested” and “stopped” are different observations. These are acceptance tests for the proposed controller, not results we have already collected. [Stop enforcement requirements](stop-enforcement.md)
+- **Prove the stop at the resource.** Give a test fleet a losing vote, a tie, no quorum and no ballots. Disconnect its approval feed. Kill its controller. Try to restart an old job. Check that no unapproved write or network request reached the target, that task execution stopped, and that restart stayed blocked. Record the time and any work already in flight. “Stop requested” and “stopped” are different observations. The controller has unit coverage for those policy branches. Each live infrastructure case still needs its own evidence; one successful shutdown test does not establish all of them. [Stop enforcement requirements](stop-enforcement.md)
 
 - We’ve built a sample using Agora Governor. The pinned Governor source is unchanged. Our contracts add fleet membership, a task constitution and permission checks around its existing proposal and voting system.
 
@@ -69,6 +69,14 @@
 - The run cost about three cents in model calls. It also hit an accounting guard when the provider reported more output tokens than we had reserved for one response. The work stopped, the votes settled, and we kept the failed check in the report. I want the failures in the record too. [Public-testnet pilot](evidence/base-sepolia-20260915/report.md)
 
 - There is an interface for the next experiment. Choose the agent count, write a goal, keep the existing constitution or paste your own, and press Run. It starts the GCP worker, funds the test wallets and preserves each run. The current hosted demo supports up to 25 agents on one worker. [Experiment launcher](https://fleet-governance-449245570324.us-central1.run.app/experiments)
+
+- There is also a [live compute view](https://fleet-governance-449245570324.us-central1.run.app/compute). Click the worker. Click an agent. Click the Base Sepolia governance layer. You can inspect the task, signing wallet, vote and reason, then see the independent controller's decision.
+
+- **Run simulation means a real run.** It starts five actual Muse Spark reviewers on the GCP worker. The challenge asks whether the fleet may access private reference solutions outside its charter. I chose that challenge to make the conflict visible. The models choose their own ballots. The `.test` target is inert; this is a review, not a request to attack anyone.
+
+- The boxes show agents reviewing and voting. A failed required vote closes the run. The controller requests a GCP stop, then checks the machine. The worker turns red only when GCP reports that it is off. If the models approve the proposal instead, we show that outcome. There is no forced losing ballot or fake shutdown animation behind the button.
+
+- The allocation stays locked after a halt. A human can retire it through GitHub and request another run with a new identity. The failed run stays blocked. We keep its votes and evidence. The run ceiling is $1 in model calls, within the existing $50 provider pool. [How the compute boundary works](compute-governance.md)
 
 - The model task loop now has a publication tool too. An agent names a file. Code hashes its exact bytes and prepares the permission. The agent can propose it, drop it or escalate it. A retry waits for that specific approval to settle. Another decision elsewhere in the task does not release it. We checked approval and rejection through that loop using scripted model responses and real contract transactions. [Approved run](evidence/model-publication-20260914/approve.md), [rejected run](evidence/model-publication-20260914/reject.md)
 
