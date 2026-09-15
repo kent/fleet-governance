@@ -5,7 +5,7 @@ on:
       action:
         description: Infrastructure operation
         type: choice
-        options: [plan, apply, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, prepare-simulation]
+        options: [plan, apply, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, prepare-simulation, release-preparation]
         default: plan
       machine_type:
         description: Pilot VM type
@@ -85,7 +85,7 @@ jobs:
           pnpm exec vitest run --project unit apps/runner/src/cloud/wallets.test.ts
           node apps/runner/dist/cloud/prepare-wallets.js
       - name: Build and verify compute policy administration
-        if: contains(fromJSON('["arm-compute","inspect-compute","compute-drill","release-compute","verify-simulation"]'), inputs.action)
+        if: contains(fromJSON('["arm-compute","inspect-compute","compute-drill","release-compute","verify-simulation","release-preparation"]'), inputs.action)
         run: |
           npm install -g pnpm@11.9.0
           pnpm install --frozen-lockfile
@@ -187,6 +187,21 @@ jobs:
           fi
           node apps/runner/dist/cloud/compute-admin-cli.js release
           echo 'Human recovery released the allocation. The VM remains stopped and this run remains blocked. Deploy through GitHub to restore the controller and start a fresh run.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Recover a finished preparation job that never armed compute
+        if: inputs.action == 'release-preparation'
+        env:
+          FLEET_GCP_CLI_AUTH: '1'
+          COMPUTE_REQUEST: ${{ inputs.compute_request }}
+        run: |
+          node apps/runner/dist/cloud/compute-admin-cli.js check-preparation
+          state=$(gcloud compute instances describe fleet-research --zone=us-central1-a --format='value(status)')
+          if [[ "$state" == RUNNING ]]; then
+            gcloud compute instances stop fleet-research --zone=us-central1-a --quiet
+          elif [[ "$state" != TERMINATED ]]; then
+            echo 'Wait for the current VM operation before recovery.' >&2
+            exit 1
+          fi
+          node apps/runner/dist/cloud/compute-admin-cli.js release-preparation
       - name: Stop agent execution and preserve experiment files
         if: inputs.action == 'stop-experiment'
         run: |

@@ -156,6 +156,12 @@ armed until the current one is explicitly retired.
    tombstone remains. Press Run simulation for a new real review, or create a new experiment. Use a new run identity and a new allocation if
    vote-driven compute enforcement is wanted again. Old votes cannot revive the stopped run.
 
+If preparation failed before an allocation was armed, use `release-preparation` with
+`compute_request` set to `{"runId":"the-exact-run-UUID"}`. It requires the preparation job to
+have finished, no allocation or published work, and the same protected request. It stops and
+verifies the VM, blocks that run permanently, and releases only its queue reservation. It
+cannot release an armed allocation; that still requires `release-compute`.
+
 ## Limits to keep visible
 
 Scheduler polls every minute. Chain confirmation, RPC, service startup and Compute Engine

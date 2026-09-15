@@ -1,3 +1,4 @@
+import { checkPreparationRecovery, releasePreparation } from "./simulation-recovery.js";
 import { armComputeAllocation, releaseComputeAllocation } from "./compute-admin.js";
 import { readSimulationRequest, simulationPath } from "./simulation.js";
 import { readObject } from "./google.js";
@@ -6,6 +7,12 @@ import { readComputeAllocation, readComputeState } from "./compute-store.js";
 try {
   const action = process.argv[2];
   if (action === "arm") console.log(JSON.stringify(await armComputeAllocation(JSON.parse(process.env.COMPUTE_REQUEST ?? "{}"))));
+  else if (action === "check-preparation" || action === "release-preparation") {
+    const input = JSON.parse(process.env.COMPUTE_REQUEST ?? "{}");
+    if (action === "check-preparation") await checkPreparationRecovery(input.runId);
+    else await releasePreparation(input.runId);
+    console.log("The exact preparation request passed the explicit recovery checks.");
+  }
   else if (action === "check-release") {
     const allocation = await readComputeAllocation();
     if (!allocation || allocation.allocationId !== process.env.COMPUTE_ALLOCATION_ID
