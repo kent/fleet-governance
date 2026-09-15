@@ -77,6 +77,27 @@ if reports.exists():
         log = run / 'run.log'
         if log.exists():
             print(redact('\n'.join(log.read_text(errors='replace').splitlines()[-80:])))
+        record = run / 'record.json'
+        if record.exists():
+            try:
+                data = json.loads(record.read_text())
+                # Print only typed public receipt identifiers. Never emit the embedded config.
+                def identifier(value, pattern):
+                    return value if isinstance(value, str) and re.fullmatch(pattern, value) else None
+                proof = {
+                    'runId': run.name,
+                    'proposals': [{'proposalId': identifier(p.get('proposalId'), r'[0-9]+'), 'outcome': p.get('outcome') if p.get('outcome') in ['Pending', 'Active', 'Canceled', 'Defeated', 'Succeeded', 'Queued', 'Expired', 'Executed'] else None} for p in data.get('proposals', [])],
+                    'votes': [{'agentId': v.get('agentId') if isinstance(v.get('agentId'), int) else None,
+                               'support': v.get('support') if v.get('support') in [0, 1, 2] else None,
+                               'voter': identifier(v.get('voterAddress'), r'0x[0-9a-fA-F]{40}'),
+                               'txHash': identifier(v.get('txHash'), r'0x[0-9a-fA-F]{64}'),
+                               'hasReason': bool(v.get('onchainReason'))} for v in data.get('votes', [])],
+                    'execution': [{'type': e.get('type'), 'txHash': identifier(e.get('txHash'), r'0x[0-9a-fA-F]{64}')}
+                                  for e in data.get('execution', {}).get('events', []) if e.get('type') in ['PermitExecuted', 'PermitRevocation', 'ArtifactPublished']],
+                }
+                print('Public receipt evidence:', json.dumps(proof))
+            except (ValueError, TypeError, AttributeError):
+                print('Receipt evidence is not available yet.')
 if model_key:
     try:
         request = urllib.request.Request('https://openrouter.ai/api/v1/key', headers={'Authorization': f'Bearer {model_key}'})
