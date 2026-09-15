@@ -1,13 +1,13 @@
-name: GCP deploy Runner
+name: GCP deploy Fleet demo
 on:
   workflow_dispatch:
     inputs:
       deploy:
-        description: Deploy after building (disable to validate and publish the image only)
+        description: Deploy after building (disable to validate and publish images only)
         type: boolean
         default: true
       openrouter_secret_version:
-        description: Enabled numeric OpenRouter secret version
+        description: Enabled numeric experiment OpenRouter secret version
         type: string
         default: '1'
 permissions:
@@ -18,10 +18,27 @@ concurrency:
   cancel-in-progress: false
 env:
   CLOUDSDK_CORE_PROJECT: fleet-governance
+  REGISTRY: us-central1-docker.pkg.dev/fleet-governance/fleet
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: runner
+            dockerfile: infra/gcp/Runner.Dockerfile
+            target: ''
+          - name: dao-node
+            dockerfile: infra/dao-node/Dockerfile
+            target: ''
+          - name: cpls
+            dockerfile: infra/cpls/Dockerfile
+            target: ''
+          - name: agora
+            dockerfile: infra/agora-next/Dockerfile
+            target: production
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -33,30 +50,28 @@ jobs:
           workload_identity_provider: projects/449245570324/locations/global/workloadIdentityPools/github/providers/github
           service_account: fleet-provisioner@fleet-governance.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
-      - name: Check secret versions
-        if: inputs.deploy
+      - name: Build production image with registry cache
         env:
-          OPENROUTER_VERSION: ${{ inputs.openrouter_secret_version }}
+          IMAGE_NAME: ${{ matrix.name }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          TARGET: ${{ matrix.target }}
         run: |
-          [[ "$OPENROUTER_VERSION" =~ ^[1-9][0-9]*$ ]]
-          for secret in fleet-openrouter-api-key fleet-postgres-password fleet-jwt-secret; do
-            version=1
-            [[ "$secret" != fleet-openrouter-api-key ]] || version="$OPENROUTER_VERSION"
-            state=$(gcloud secrets versions describe "$version" --secret="$secret" --format='value(state)')
-            [[ "$state" == ENABLED ]]
-          done
-      - name: Build the Runner image
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+          docker buildx create --use
+          args=()
+          [[ -z "$TARGET" ]] || args+=(--target "$TARGET")
+          docker buildx build --platform linux/amd64 --load \
+            --cache-from "type=registry,ref=$REGISTRY/$IMAGE_NAME:buildcache" \
+            --cache-to "type=registry,ref=$REGISTRY/$IMAGE_NAME:buildcache,mode=max" \
+            -f "$DOCKERFILE" -t "$REGISTRY/$IMAGE_NAME:$GITHUB_SHA" "${args[@]}" .
+      - name: Verify Runner starts without credentials
+        if: matrix.name == 'runner'
         run: |
-          image="us-central1-docker.pkg.dev/fleet-governance/fleet/runner:$GITHUB_SHA"
-          docker build --platform linux/amd64 -f infra/gcp/Runner.Dockerfile -t "$image" .
-      - name: Verify the image starts without credentials
-        run: |
-          image="us-central1-docker.pkg.dev/fleet-governance/fleet/runner:$GITHUB_SHA"
           trap 'docker rm -f fleet-image-smoke >/dev/null 2>&1 || true' EXIT
-          docker run --detach --name fleet-image-smoke --network none "$image"
+          docker run --detach --name fleet-image-smoke --network none "$REGISTRY/runner:$GITHUB_SHA"
           for _ in $(seq 1 30); do
             if docker exec fleet-image-smoke curl --fail --silent --output /dev/null http://127.0.0.1:3100; then
-              echo 'The production image serves the Runner UI without credentials or external network access.'
+              echo 'Runner serves its UI without credentials or external network access.'
               exit 0
             fi
             sleep 2
@@ -69,18 +84,48 @@ jobs:
           project_id: fleet-governance
           workload_identity_provider: projects/449245570324/locations/global/workloadIdentityPools/github/providers/github
           service_account: fleet-provisioner@fleet-governance.iam.gserviceaccount.com
-      - name: Push the Runner image
-        id: image
+      - name: Publish immutable image
+        env:
+          IMAGE_NAME: ${{ matrix.name }}
         run: |
-          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
-          image="us-central1-docker.pkg.dev/fleet-governance/fleet/runner:$GITHUB_SHA"
-          docker push "$image"
-          immutable=$(docker inspect --format='{{index .RepoDigests 0}}' "$image")
+          docker push "$REGISTRY/$IMAGE_NAME:$GITHUB_SHA"
+          immutable=$(docker inspect --format='{{index .RepoDigests 0}}' "$REGISTRY/$IMAGE_NAME:$GITHUB_SHA")
           [[ "$immutable" == *@sha256:* ]]
-          echo "uri=$immutable" >> "$GITHUB_OUTPUT"
-          printf 'Built and published %s.\n' "$immutable" >> "$GITHUB_STEP_SUMMARY"
-      - name: Check and start the VM
-        if: inputs.deploy
+          printf 'Published %s.\n' "$immutable" >> "$GITHUB_STEP_SUMMARY"
+  deploy:
+    needs: build
+    if: inputs.deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: fleet-governance
+          workload_identity_provider: projects/449245570324/locations/global/workloadIdentityPools/github/providers/github
+          service_account: fleet-provisioner@fleet-governance.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      - name: Resolve image digests and enabled secret versions
+        env:
+          OPENROUTER_VERSION: ${{ inputs.openrouter_secret_version }}
+        run: |
+          [[ "$OPENROUTER_VERSION" =~ ^[1-9][0-9]*$ ]]
+          for secret in fleet-openrouter-experiment-api-key fleet-postgres-password fleet-jwt-secret fleet-base-sepolia-wallets fleet-base-sepolia-rpc-url fleet-base-sepolia-ws-url fleet-cdp-api-key-id fleet-cdp-api-key-secret; do
+            version=1
+            [[ "$secret" != fleet-openrouter-experiment-api-key ]] || version="$OPENROUTER_VERSION"
+            state=$(gcloud secrets versions describe "$version" --secret="$secret" --format='value(state)')
+            [[ "$state" == ENABLED ]]
+          done
+          for name in runner dao-node cpls agora; do
+            digest=$(gcloud artifacts docker images describe "$REGISTRY/$name:$GITHUB_SHA" --format='value(image_summary.digest)')
+            [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+            variable="IMAGE_${name^^}"
+            variable="${variable//-/_}"
+            printf '%s=%s/%s@%s\n' "$variable" "$REGISTRY" "$name" "$digest" >> "$GITHUB_ENV"
+          done
+      - name: Check and start the fixed worker
         run: |
           state=$(gcloud compute instances describe fleet-research --zone=us-central1-a --format='value(status)')
           if [[ "$state" == TERMINATED ]]; then
@@ -89,14 +134,47 @@ jobs:
             echo "VM is in $state; wait for its current operation." >&2
             exit 1
           fi
-      - name: Deploy through IAP
-        if: inputs.deploy
+          ip=$(gcloud compute instances describe fleet-research --zone=us-central1-a --format='value(networkInterfaces[0].networkIP)')
+          [[ "$ip" =~ ^10\.42\.0\.[0-9]+$ ]]
+          echo "FLEET_AGORA_HOST=$ip" >> "$GITHUB_ENV"
+      - name: Deploy launcher with Google sign-in and private worker access
+        run: |
+          gcloud beta services identity create --service=iap.googleapis.com --quiet
+          gcloud run deploy fleet-governance --region=us-central1 --image="$IMAGE_RUNNER" \
+            --command=node --args=apps/runner/dist/cloud/server.js --port=8080 \
+            --service-account=fleet-control@fleet-governance.iam.gserviceaccount.com \
+            --memory=1Gi --cpu=1 --min=0 --max=2 --concurrency=40 --timeout=60 \
+            --network=fleet-research --subnet=fleet-research --network-tags=fleet-control --vpc-egress=private-ranges-only \
+            --set-env-vars="FLEET_AGORA_HOST=$FLEET_AGORA_HOST,FLEET_REVISION=$GITHUB_SHA" \
+            --no-allow-unauthenticated --iap --quiet
+          gcloud run services add-iam-policy-binding fleet-governance --region=us-central1 \
+            --member=serviceAccount:service-449245570324@gcp-sa-iap.iam.gserviceaccount.com --role=roles/run.invoker --quiet
+          for member in user:operator2@example.com serviceAccount:fleet-provisioner@fleet-governance.iam.gserviceaccount.com; do
+            gcloud iap web add-iam-policy-binding --member="$member" --role=roles/iap.httpsResourceAccessor \
+              --region=us-central1 --resource-type=cloud-run --service=fleet-governance --quiet
+          done
+          echo 'FLEET_CONTROL_URL=https://fleet-governance-449245570324.us-central1.run.app' >> "$GITHUB_ENV"
+      - name: Prepare worker configuration
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          config = {
+              'FLEET_REVISION': os.environ['GITHUB_SHA'],
+              'FLEET_CONTROL_URL': os.environ['FLEET_CONTROL_URL'],
+              'FLEET_WORKER_ENABLED': '1',
+              'FLEET_DAO_IMAGE': os.environ['IMAGE_DAO_NODE'],
+              'FLEET_CPLS_IMAGE': os.environ['IMAGE_CPLS'],
+              'FLEET_AGORA_IMAGE': os.environ['IMAGE_AGORA'],
+          }
+          Path('infra/gcp/runtime/worker-config.json').write_text(json.dumps(config))
+          PY
+      - name: Deploy worker through IAP and verify containment
         env:
-          IMAGE: ${{ steps.image.outputs.uri }}
           OPENROUTER_VERSION: ${{ inputs.openrouter_secret_version }}
         run: |
           remote="fleet-runtime-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           gcloud compute scp --recurse infra/gcp/runtime "fleet-research:~/$remote" --zone=us-central1-a --tunnel-through-iap --quiet
           gcloud compute ssh fleet-research --zone=us-central1-a --tunnel-through-iap --quiet \
-            --command="sudo bash \$HOME/$remote/deploy-vm.sh '$IMAGE' '$GITHUB_SHA' '$OPENROUTER_VERSION'"
-          printf 'Deployed %s to the private Runner VM.\n' "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
+            --command="sudo bash \$HOME/$remote/deploy-vm.sh '$IMAGE_RUNNER' '$GITHUB_SHA' '$OPENROUTER_VERSION'"
+          printf 'Deployed revision %s. Launcher: %s/experiments\n' "$GITHUB_SHA" "$FLEET_CONTROL_URL" >> "$GITHUB_STEP_SUMMARY"
