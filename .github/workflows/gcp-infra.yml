@@ -5,7 +5,7 @@ on:
       action:
         description: Infrastructure operation
         type: choice
-        options: [plan, apply, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, inspect-demo]
+        options: [plan, apply, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, inspect-demo, stop-experiment]
         default: plan
       machine_type:
         description: Pilot VM type
@@ -74,6 +74,12 @@ jobs:
           pnpm typecheck
           pnpm exec vitest run --project unit apps/runner/src/cloud/wallets.test.ts
           node apps/runner/dist/cloud/prepare-wallets.js
+      - name: Stop agent execution and preserve experiment files
+        if: inputs.action == 'stop-experiment'
+        run: |
+          gcloud compute ssh fleet-research --zone=us-central1-a --tunnel-through-iap --quiet \
+            --command='sudo systemctl stop fleet-runner.service && ! sudo systemctl is-active --quiet fleet-runner.service'
+          echo 'Runner stopped. Existing chain records and experiment files are preserved. Redeploy to restart the worker.' >> "$GITHUB_STEP_SUMMARY"
       - name: Inspect the deployed demo without exposing credentials
         if: inputs.action == 'inspect-demo'
         run: |
