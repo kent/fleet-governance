@@ -39,7 +39,8 @@ The initial task environment is a small coding workspace with governed artifact 
 ## Deployed launcher
 
 The [experiment launcher](https://fleet-governance-449245570324.us-central1.run.app/experiments)
-is live behind Google sign-in for `operator2@example.com`. Its default settings, run history endpoint,
+is public. Starting a run opens the separate operator interface, where sign-in is restricted to
+`operator2@example.com`. Its default settings, run history endpoint,
 layout and custom constitution control were checked in the browser on September 15, 2026.
 The [first pilot](evidence/base-sepolia-pilot-20260915.md) failed before a proposal and cost
 $0.0410297. The [next run](evidence/base-sepolia-20260915/report.md) produced two proposals,

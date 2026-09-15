@@ -7,7 +7,7 @@ your personal wallet, export a key or bridge mainnet ETH to use the demo.
 ## Start another run
 
 1. Open the [experiment launcher](https://fleet-governance-449245570324.us-central1.run.app/experiments)
-   and sign in with `operator2@example.com`.
+   to browse without signing in. Choose **Sign in to run** to open the operator interface as `operator2@example.com`.
 2. Choose 2 to 25 agents, enter a coding goal, and choose the Fleet constitution or paste your own.
 3. Press **Run experiment**. The worker reuses its test wallets, checks balances, requests
    bounded faucet top-ups and deploys a fresh FleetGov token and governance contracts.
