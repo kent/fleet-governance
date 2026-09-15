@@ -8,7 +8,10 @@ from `infra/README.md`, `docs/compatibility-notes.md`, and `docs/spec.md`.
 ## 1. Purpose and scope
 
 For GCP provisioning, repeatable resets and parameter changes, start with the
-[GCP checklist](gcp-todo.md). This runbook supplies the existing CLI and environment details.
+[GCP checklist](gcp-todo.md). For the wallet handoff, use the
+[Base Sepolia wallet steps](base-sepolia-wallet-setup.md). This runbook supplies the existing
+CLI and environment details. On GCP, invoke deployment commands through GitHub and store
+credentials in Secret Manager; the local `.env` examples below are reference configurations.
 
 This runbook takes the owner from a funded Base Sepolia setup to a published pilot deployment
 (spec 14, milestone M4). It covers Base Sepolia only. Base mainnet is out of scope: see section 10.

@@ -21,7 +21,8 @@ reference implementation, with the enforcement boundaries described below.
 
 GCP infrastructure and deployment run through GitHub Actions, configured for a dedicated project
 and one research VM. See the [GCP runbook and current setup status](infra/gcp/README.md) and the
-[reset and parameter checklist](docs/gcp-todo.md).
+[reset and parameter checklist](docs/gcp-todo.md). For the testnet handoff, follow the
+[Base Sepolia wallet steps](docs/base-sepolia-wallet-setup.md).
 
 ## Why build this?
 
