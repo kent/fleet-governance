@@ -96,3 +96,20 @@ The trusted Runner and cloud controller remain part of the enforcement boundary.
 Agora shares this research worker and went offline during shutdown. The independent diagram
 and protected evidence remained available. Explicit human recovery retires the old run and
 restores the read side; it does not turn the rejected vote into permission.
+
+## Recovery and the process witness
+
+The [human recovery workflow](https://github.com/kent/fleet-governance/actions/runs/35007443929)
+retired the controller, waited out its request lifetime, preserved the permanent block on the
+old run and released the allocation at 18:29:19. The next deployment restored the controller
+before starting the unarmed worker. Agora then showed the same proposal as DEFEATED.
+
+The separate witness container's last heartbeat was 18:22:44.517. Docker recorded its exit
+at 18:22:44.829 with code 137. After the VM restarted, that container was still stopped and
+its restart policy was still `no`. This adds a process observation to the VM and audit
+evidence. It does not establish cancellation of remote provider work.
+[Post-recovery observations](recovery.json)
+
+The saved replay completed through all five stages. A replay inspector fix keeps its old
+controller and VM observations separate from the restored live worker. No additional model
+run was needed to restore Agora or inspect the evidence.

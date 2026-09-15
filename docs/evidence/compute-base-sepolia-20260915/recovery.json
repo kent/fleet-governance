@@ -1,0 +1,24 @@
+{
+  "runId": "run-434be3eb-4d8c-43fe-9e1f-922b6ef771f6",
+  "allocationId": "83d3ba47-99c4-4b0e-ac50-51ece0ad4b6a",
+  "releaseWorkflow": "https://github.com/kent/fleet-governance/actions/runs/35007443929",
+  "releasedAt": "2026-09-15T18:29:19.960Z",
+  "restoreWorkflow": "https://github.com/kent/fleet-governance/actions/runs/35007684006",
+  "inspectionWorkflow": "https://github.com/kent/fleet-governance/actions/runs/35008174604",
+  "inspectionAt": "2026-09-15T18:33:34.182Z",
+  "vmStatus": "RUNNING",
+  "canary": {
+    "container": "fleet-compute-canary",
+    "running": false,
+    "exitCode": 137,
+    "restartPolicy": "no",
+    "lastHeartbeat": "2026-09-15T18:22:44.517Z",
+    "finishedAt": "2026-09-15T18:22:44.828843709Z"
+  },
+  "providerCreditPool": {
+    "limit": 50,
+    "remaining": 49.922993582,
+    "usage": 0.077006418,
+    "includesEarlierWork": true
+  }
+}
