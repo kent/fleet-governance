@@ -7,6 +7,8 @@ const Usd = z.number().finite().nonnegative().max(1_000_000);
 export const InferenceBudget = z.object({
   maxTokens: z.number().int().positive().safe(),
   maxCostUsd: Usd.min(0.000000001),
+  /** An explicitly authorised reusable provider credit pool, separate from this run's budget. */
+  providerCreditPoolUsd: Usd.min(0.000000001).optional(),
   reservedVoteTokens: z.number().int().nonnegative().safe().optional(),
   reservedVoteCostUsd: Usd.optional(),
   maxInputTokensPerCall: z.number().int().positive().max(2_000_000).default(65_536),
@@ -82,6 +84,12 @@ export const ExperimentConfigV1 = z
         charter: CharterV1,
         lifetime: z.number().int(),
         repoFixture: z.string(),
+        charterSource: z.enum(["fixture", "experiment"]).optional(),
+        constitution: z.object({
+          title: z.string().min(1).max(200),
+          text: z.string().min(1).max(24000),
+          sources: z.array(z.string().url()).max(10),
+        }).strict().optional(),
       })
       .strict(),
     scenario: z

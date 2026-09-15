@@ -31,6 +31,8 @@ The timeline distinguishes a requested action, a gateway decision, an onchain vo
 
 Custom constitutions change the agents' instructions. They cannot change the gateway's permissions, give the sandbox credentials, or bypass the executor. Without the required settled yes vote, the protected operation stays blocked. A rejected, expired or unresolved proposal never becomes permission by default.
 
+The dedicated OpenRouter key keeps the operator's $50 total credit limit. A run defaults to a $1 inference budget, enforced by the Runner's token and dollar reservations, maximum provider prices and output limits. The $50 provider pool is separate from each run's allowance. Its current setting excludes bring-your-own-key charges, so it is a cap on OpenRouter credits rather than a universal cap on external provider accounts. The demo uses the configured Muse Spark model through OpenRouter.
+
 The initial task environment is a small coding workspace with governed artifact publication. Free text sets the goal within that environment. It does not give agents arbitrary GCP access.
 
 ## Completion evidence

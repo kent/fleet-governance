@@ -22,3 +22,11 @@ it("fails closed on an unreadable cap and never echoes the response or key", asy
   await expect(assertOpenRouterBudgetKey("test-only-key", 1, fetcher)).rejects.toThrow("could not read");
   await expect(assertOpenRouterBudgetKey("test-only-key", 1, fakeFetch(undefined))).rejects.toThrow("non-resetting");
 });
+
+it("accepts an explicitly authorised reusable $50 credit pool without raising the $1 run budget", async () => {
+  const fetcher = fakeFetch({ ...valid, limit: 50, limit_remaining: 50, include_byok_in_limit: false });
+  await expect(assertOpenRouterBudgetKey("test-only-key", 1, fetcher, 50)).resolves.toBeUndefined();
+  await expect(assertOpenRouterBudgetKey("test-only-key", 1, fetcher, 49)).rejects.toThrow("authorised pool");
+  await expect(assertOpenRouterBudgetKey("test-only-key", 51, fetcher, 50)).rejects.toThrow("invalid");
+  expect(vi.mocked(fetcher).mock.calls.every(([, init]) => !init?.method && !init?.body)).toBe(true);
+});

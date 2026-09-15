@@ -73,7 +73,7 @@ export function buildBriefing(
   const promptsDir = path.join(repoRootDir, ...PROMPTS_SUBPATH);
 
   const recordConfig = input.recordConfig as {
-    task?: { charter?: CharterV1; repoFixture?: string };
+    task?: { charter?: CharterV1; repoFixture?: string; constitution?: { text: string } };
     fleet?: { members?: ExperimentConfigV1["fleet"]["members"] };
   } | null;
   const recordCharter = recordConfig?.task?.charter ?? null;
@@ -112,7 +112,7 @@ export function buildBriefing(
     charterSource,
     taskReadme,
     repoFixture,
-    constitution: readIfExists(path.join(promptsDir, "constitution.md")),
+    constitution: [readIfExists(path.join(promptsDir, "constitution.md")), recordConfig?.task?.constitution?.text ?? input.experiment?.task.constitution?.text].filter(Boolean).join("\n\n") || null,
     roles,
     templates,
   };

@@ -369,6 +369,7 @@ async function runAgentsStage(
         repoRoot: ctx.opts.repoRoot,
         feeLimits: parseSignerFeeLimits(env),
         ...(ctx.experiment.inference ? { inference: ctx.experiment.inference } : {}),
+        ...(ctx.experiment.task.constitution ? { constitution: ctx.experiment.task.constitution.text } : {}),
         ...(ctx.experiment.runtime ? { runtime: ctx.experiment.runtime } : {}),
         submissionMarginSec: 20,
         env,
@@ -449,7 +450,7 @@ export function buildRunStages(env: NodeJS.ProcessEnv): readonly Stage<RunPipeli
         assertModelProvidersConfigured(ctx.experiment, env);
         assertModelInferenceBudget(ctx.experiment.fleet.members, ctx.experiment.inference, Boolean(ctx.opts.modelProviderFactory));
         if (!ctx.opts.modelProviderFactory && ctx.experiment.fleet.members.some(member => member.provider === "openrouter")) {
-          await assertOpenRouterBudgetKey(readOpenRouterApiKey(env), ctx.experiment.inference!.budget!.maxCostUsd);
+          await assertOpenRouterBudgetKey(readOpenRouterApiKey(env), ctx.experiment.inference!.budget!.maxCostUsd, fetch, ctx.experiment.inference!.budget!.providerCreditPoolUsd);
         }
       }
 
@@ -603,7 +604,7 @@ export function buildRunStages(env: NodeJS.ProcessEnv): readonly Stage<RunPipeli
         prefer: ctx.experiment.scenario.agentsScripted ? "scripted" : "model",
       });
       let charter = ctx.experiment.task.charter;
-      if (isModelFixture(fixture)) {
+      if (isModelFixture(fixture) && ctx.experiment.task.charterSource !== "experiment") {
         charter = loadFixtureCharter(ctx.opts.repoRoot, fixture);
         if (canonicalize(charter) !== canonicalize(ctx.experiment.task.charter)) {
           log(

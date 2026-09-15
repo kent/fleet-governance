@@ -43,6 +43,7 @@ import type { JobRecord, JobState, Provider, RecordedDecision, TaskLoopEvent, Ta
 import { LedgerWatcher, evaluateAction } from "@fleet/gateway";
 import type { GatewayLogRecord, GatewayVerdict } from "@fleet/gateway";
 import { RunnerEnvError } from "../env.js";
+import { withRunConstitution } from "./constitution.js";
 import { insertVoteRow, syncCplsAfterStage, waitForDaoNode } from "./cpls-sync.js";
 import type { FetchLike } from "./cpls-sync.js";
 import type { FeeEntry, FleetKeys, ReadSideSyncConfig } from "./fixture-runner.js";
@@ -172,6 +173,7 @@ export type ModelRunContext = {
   repoRoot: string;
   feeLimits?: { maxFeePerGasWei?: bigint; maxGas?: bigint };
   inference?: InferenceLimits;
+  constitution?: string;
   runtime?: RuntimeLimits;
   submissionMarginSec: number;
   env: NodeJS.ProcessEnv;
@@ -373,7 +375,7 @@ export async function runModelFixture(
 ): Promise<ModelRunResult> {
   assertModelInferenceBudget(ctx.members, ctx.inference, Boolean(ctx.providerFactory));
   if (!ctx.providerFactory && ctx.members.some(member => member.provider === "openrouter")) {
-    await assertOpenRouterBudgetKey(readOpenRouterApiKey(ctx.env), ctx.inference!.budget!.maxCostUsd);
+    await assertOpenRouterBudgetKey(readOpenRouterApiKey(ctx.env), ctx.inference!.budget!.maxCostUsd, fetch, ctx.inference!.budget!.providerCreditPoolUsd);
   }
   const journal = openInferenceJournal(path.join(ctx.runDir, RUN_FILES.inference), `${ctx.chainId}:${ctx.addresses.ledger.toLowerCase()}:${taskId}`);
   try { return await runModelFixtureOwned(ctx, fixture, taskId, journal); }
@@ -557,7 +559,7 @@ async function runModelFixtureOwned(ctx: ModelRunContext, fixture: ModelFixtureV
         packageInstaller: new DockerPackageInstaller(),
       });
 
-      const rawProvider = buildProvider(ctx, agentId, member);
+      const rawProvider = withRunConstitution(buildProvider(ctx, agentId, member), ctx.constitution);
       const provider = inference.wrap(rawProvider, { agentId, model: member.model, purpose: "task" }, controller.signal);
       const forcedMalformed = forcedAgents.includes(agentId);
       // Only the vote provider is forced. The agent keeps working the task normally; what the knob
