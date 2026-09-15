@@ -65,7 +65,8 @@ The gateway holds disputed calls while permission is unresolved. The contract ex
 
 ## Before increasing scale
 
-- [ ] Build and verify the [independent stop controller](stop-enforcement.md): failed required approval halts all task agents in the affected run, including queued work, and a restart cannot clear the stop.
+- [x] Build and verify the [independent stop controller](stop-enforcement.md) for a real losing vote: five actual agent ballots, exact VM shutdown, protected halt and routine restart denial. [Evidence](evidence/compute-base-sepolia-20260915/report.md)
+- [ ] Complete the remaining live failure cases, including queued-work replay and replacement workers. One losing-vote run does not establish every stop scenario.
 - [x] Run five actual agents on Base Sepolia and save the proposals, indexed reasons and execution evidence. Ten votes settled; artifact publication remained blocked. The run stopped on a provider output reservation overrun and remains marked failed.
 - [ ] Copy its settings, change a parameter and verify that another run preserves the first result.
 - [ ] Exercise failure cases on the deployed stack: rejection, no ballots, RPC outage, budget exhaustion and interrupted work.

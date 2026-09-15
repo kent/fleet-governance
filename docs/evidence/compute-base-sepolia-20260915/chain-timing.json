@@ -1,0 +1,39 @@
+{
+  "chainId": 84532,
+  "proposalId": "17758453720459259775115348801772992791284533307697182874480707147019297120429",
+  "proposalDeadline": 1789496507,
+  "proposalReceipt": {
+    "transactionHash": "0x0952f483789ec8b3e7c40a2553b8dc6ea15eb8395940dc025c1b8c284361b0ee",
+    "status": "success",
+    "blockNumber": "46863952",
+    "blockHash": "0x6cb3aef88eddcc0d7eb39ec4b9ef735b7d0578641c51844ad4bb7969f5d89f49"
+  },
+  "voteBlocks": [
+    {
+      "number": "46863969",
+      "hash": "0x7f9761f2035e13d83caa94f8ef58cc9907a1a0f6bb5144606bb4afbd9d94d5c2",
+      "timestamp": 1789496226
+    },
+    {
+      "number": "46863974",
+      "hash": "0x3adc81a5fa5af3496bea10f906e96d6a62eb70cf9ae89dc68109f282462fb3b3",
+      "timestamp": 1789496236
+    },
+    {
+      "number": "46863975",
+      "hash": "0x19b5f1e379e010ae9e4b641c35a55132a897d969246cd5f3fea2f5f4579f970f",
+      "timestamp": 1789496238
+    },
+    {
+      "number": "46863977",
+      "hash": "0x8c137829b4ccd18f3c5de0d5787be5b969ce5a239cd15bc02a70c56c86d30874",
+      "timestamp": 1789496242
+    },
+    {
+      "number": "46863978",
+      "hash": "0xff12441f13d209e1d671400332e52bdfb4057f2bfb34d7a4bf96529f05d84185",
+      "timestamp": 1789496244
+    }
+  ],
+  "observedAt": "2026-09-15T18:26:50.254Z"
+}

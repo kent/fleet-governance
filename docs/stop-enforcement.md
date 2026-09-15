@@ -29,6 +29,10 @@ boundary. Broader remote-resource and physical-hardware requirements remain sepa
 - The live five-agent run demonstrated blocked publication and ten reasoned votes. Its
   task inference stopped on an accounting guard. It did not demonstrate shutdown caused
   by a losing vote. [Run evidence](evidence/base-sepolia-20260915/report.md)
+- A separate live review then produced five actual model ballots AGAINST a required
+  proposal. The external controller persisted `vote_failed`, GCP stopped the exact VM,
+  and CI verified TERMINATED and restart denial. All five reasons appeared in Agora.
+  [Live shutdown evidence](evidence/compute-base-sepolia-20260915/report.md)
 
 ## Required behaviour
 
@@ -91,6 +95,9 @@ verify their settlement. Keep the offchain resource gate closed during that dela
 
 ## Acceptance evidence
 
+- [x] One live required vote defeated by five actual model ballots stopped the fixed VM;
+  its durable halt and routine restart denial were independently verified. This covers
+  the losing-vote case only. [Recorded result](evidence/compute-base-sepolia-20260915/report.md)
 - [ ] Losing vote, tie, insufficient quorum and no ballots each stop the affected run.
 - [ ] Required approval never reaches a proposal, never settles, or expires: the deadline stops the run.
 - [ ] While approval is pending, task execution is closed and voting can still finish.

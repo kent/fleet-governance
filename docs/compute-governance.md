@@ -11,6 +11,10 @@ wallet, progress, ballot and reason. Click the governance and controller boxes t
 boundary. Replay uses saved test receipts and compresses elapsed time; replay itself sends no
 transactions and starts no agents.
 
+The [September 15 live test](evidence/compute-base-sepolia-20260915/report.md) produced five
+actual model ballots AGAINST. The controller stopped the exact GCP VM and CI verified its
+TERMINATED state, audit caller and restart denial. The replay contains that run's receipts.
+
 ## The boundary
 
 ```mermaid
