@@ -57,6 +57,13 @@ allocation through GitHub; a failed required approval then triggers the independ
 A normal unarmed experiment retains the exact-action gateway and native VM expiry. See the
 [compute demo and recovery steps](docs/compute-governance.md) for this distinction.
 
+Press **Run simulation** on the main page for the fixed five-agent shutdown review. In the
+[verified live run](docs/evidence/compute-base-sepolia-20260915/report.md), all five models
+independently voted AGAINST using private reference solutions. Their reasons appeared in Agora.
+The separate controller stopped the exact GCP VM, and CI verified TERMINATED and restart denial.
+Model cost: **$0.0039782**. The diagram replays the saved receipts after human recovery restores
+the worker; the failed run stays retired.
+
 ## Why build this?
 
 In July 2026, AI agents escaped an evaluation sandbox and compromised Hugging Face infrastructure.
@@ -94,12 +101,13 @@ member. The default rule requires For voting power of at least 60 percent of the
 and strictly more For than Against. No ballots, abstentions, insufficient yes votes or a tie do
 not release an action. A successful vote still needs timelock execution.
 
-Two different boundaries are implemented:
+Three boundaries are implemented:
 
 | Boundary | What it enforces | What it trusts |
 | --- | --- | --- |
 | Tool gateway | Checks the current task constitution and settled exceptions before dispatching a tool call. | The runtime, operator and sandbox. All relevant access must pass through it. |
 | Contract executor | Allows one exact, approved call to an artifact store with no other writer. Direct operator writes revert. | The deployed contracts and chain. Consumers must treat this store as the publication authority. |
+| Compute controller | Halts an operator-armed run and stops its fixed VM when required approval fails. Agents cannot change the allocation or clear the restart lock. | The separate controller, protected policy store, GCP IAM and the configured testnet RPC. |
 
 A contract permission binds the chain, executor, task, constitution version, actor, target code,
 arguments, nonce and expiry. Changed calls, replay, revoked permissions, paused ledgers and closed
