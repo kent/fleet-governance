@@ -5,16 +5,16 @@ experiments, then Base Sepolia for public demonstrations. A new Anvil instance c
 an empty chain. Base Sepolia keeps its history: a fresh experiment opens a new task or deploys
 a new fleet.
 
-This is the setup checklist and implementation plan, checked against the repository on
-September 14, 2026. GCP provisioning, reset automation and the Base Sepolia deployment have
-not been completed. The existing contracts, model task loops and local experiments provide
-the starting point. Agora Governor stays pinned and unchanged.
+This is the experiment checklist, updated September 14, 2026. The current GCP setup and its
+verification status live in the [infrastructure runbook](../infra/gcp/README.md). Infrastructure
+and deployments run through GitHub Actions. Start with one research VM. Reset automation,
+parameter generation and Base Sepolia are follow-on work. Agora Governor stays pinned and unchanged.
 
 1. **Create the GCP project and choose its limits.**
-   - [ ] Create a dedicated project with billing enabled, choose a region, and provide the
-     project ID and the identity that will deploy it.
-   - [ ] Enable Compute Engine, Artifact Registry, Secret Manager, Cloud Storage, Cloud Build,
-     Logging, Monitoring and IAP. Allow enough regional CPU and disk quota for the pilot.
+   - [x] Use the billing-enabled `fleet-governance` project in `us-central1`, with a dedicated
+     provisioner and GitHub Workload Identity Federation. No service account key is needed.
+   - [ ] Complete the Terraform apply for Compute Engine, Artifact Registry, Secret Manager,
+     Cloud Storage, Logging, Monitoring and IAP. Confirm regional CPU and disk quota for the pilot.
    - [ ] Set a project budget, alerts and a maximum experiment duration. An alerts-only budget
      does not stop a VM. Add an explicit automatic stop deadline and review which resources
      continue billing after compute stops. [Google Cloud budget documentation](https://docs.cloud.google.com/billing/docs/how-to/budgets)
@@ -23,7 +23,8 @@ the starting point. Agora Governor stays pinned and unchanged.
    - [ ] Start with one Compute Engine VM: **8 vCPUs, 32 GiB RAM, Ubuntu 24.04 and a 100 GB
      balanced persistent disk**, with room to expand scratch storage. This is a proposed pilot
      size, not demonstrated capacity for 2,000 model agents. Hosted models need no GPU here.
-   - [ ] Use a private VPC, outbound access through Cloud NAT, and IAP access for administration.
+   - [ ] Use the research VPC, an outbound IP on the VM, and IAP access for administration.
+     One VM does not need a separate Cloud NAT gateway.
      Keep Runner, Postgres, DAO Node, CPLS and the Docker socket off the public internet.
      Runner can start work and use signing keys. Public access belongs on a separately
      configured read-only site. [IAP TCP forwarding](https://docs.cloud.google.com/iap/docs/using-tcp-forwarding)
@@ -44,9 +45,9 @@ the starting point. Agora Governor stays pinned and unchanged.
      with BYOK usage included**. The current preflight also requires positive remaining credit
      no greater than the experiment's dollar budget. Increase the budget deliberately for
      later runs; resetting local files must never reset provider spending authority.
-   - [ ] Add a launcher that retrieves secrets for the trusted process. The current runner
-     reads environment variables; it does not yet fetch Secret Manager values itself. Never
-     mount those credentials or the Docker socket into agent test containers.
+   - [ ] Verify the deployment's Secret Manager loader and systemd service on the VM. They
+     inject pinned secret versions into the trusted Runner process. Never mount those
+     credentials or the Docker socket into agent test containers.
    - [ ] Adapt CPLS to use the VM service account through Application Default Credentials.
      Its Python client supports ADC, but the current Compose file mounts a JSON credential
      file and preflight uses that file setting to distinguish real GCS from the emulator.
@@ -88,11 +89,11 @@ the starting point. Agora Governor stays pinned and unchanged.
      Pinning these inputs makes a run inspectable; it does not make model output deterministic.
 
 6. **Build the remote release and launcher.**
-   - [ ] Add Terraform for the project resources, IAM, network, VM, buckets and image registry.
-     Keep Terraform state in a separate private bucket that experiment reset cannot delete.
+   - [x] Add Terraform for IAM, network, VM, buckets, secrets and image registry. Keep its state
+     in a separate private bucket that experiment reset cannot delete. Apply through GitHub.
    - [ ] Build and tag images with the Git commit, and launch by image digest. Install the
-     pinned dependencies and Foundry tools in the build. Build on GCP so nothing needs to
-     remain running on a laptop.
+     pinned dependencies and Foundry tools in the build. Build in GitHub Actions and deploy
+     to GCP so nothing needs to remain running on a laptop.
    - [ ] Start services through systemd and Compose, persist the runner's state and inference
      journal, and take a single-experiment lock before dispatch. Retry startup without creating
      a second coordinator or granting a fresh inference budget to a resumed run.
@@ -169,9 +170,10 @@ record the effective values before presenting either as a reproducibility contro
       durable job ownership and a fleet-wide budget authority. The current coordinator owns
       these limits in one process. Kubernetes or autoscaling alone cannot supply that logic.
 
-The first handoff needs a GCP project ID and region, permission to provision its resources,
-a capped OpenRouter secret, Base Sepolia HTTP/WSS endpoints and funded public wallet addresses.
-A domain is optional until the read-only site is ready. Keep credential values in Secret Manager.
+The GCP project, region and provisioning identity are configured. The model pilot still needs
+a capped OpenRouter key. The next web3 stage needs Base Sepolia HTTP/WSS endpoints and funded
+public wallet addresses. A domain is optional until the read-only site is ready. Keep credential
+values in Secret Manager.
 
 The current [Base Sepolia runbook](deployment-runbook.md) contains the CLI and environment names.
 The [cost guide](scale-costs.md) explains the 2,000-agent model estimate. Infrastructure sizing,

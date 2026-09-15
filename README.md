@@ -19,8 +19,9 @@ reference implementation, with the enforcement boundaries described below.
 [Understand the execution permissions](docs/execution-permits.md) ·
 [Rebuild the public record](docs/record-reconstruction.md)
 
-Moving the experiment off your laptop? Start with the
-[GCP setup, reset and parameter checklist](docs/gcp-todo.md).
+GCP infrastructure and deployment run through GitHub Actions, configured for a dedicated project
+and one research VM. See the [GCP runbook and current setup status](infra/gcp/README.md) and the
+[reset and parameter checklist](docs/gcp-todo.md).
 
 ## Why build this?
 
