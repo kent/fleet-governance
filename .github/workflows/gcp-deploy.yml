@@ -6,6 +6,10 @@ on:
         description: Deploy after building (disable to validate and publish images only)
         type: boolean
         default: true
+      site_only:
+        description: Deploy only the public site and operator controls, without starting or changing the worker
+        type: boolean
+        default: false
       image_revision:
         description: Reuse images from a full main-branch commit SHA (blank builds this revision)
         type: string
@@ -37,19 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: runner
-            dockerfile: infra/gcp/Runner.Dockerfile
-            target: ''
-          - name: dao-node
-            dockerfile: infra/dao-node/Dockerfile
-            target: ''
-          - name: cpls
-            dockerfile: infra/cpls/Dockerfile
-            target: ''
-          - name: agora
-            dockerfile: infra/agora-next/Dockerfile
-            target: production
+        include: ${{ inputs.site_only && fromJSON('[{"name":"runner","dockerfile":"infra/gcp/Runner.Dockerfile","target":""}]') || fromJSON('[{"name":"runner","dockerfile":"infra/gcp/Runner.Dockerfile","target":""},{"name":"dao-node","dockerfile":"infra/dao-node/Dockerfile","target":""},{"name":"cpls","dockerfile":"infra/cpls/Dockerfile","target":""},{"name":"agora","dockerfile":"infra/agora-next/Dockerfile","target":"production"}]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -132,15 +124,20 @@ jobs:
       - name: Resolve image digests and enabled secret versions
         env:
           OPENROUTER_VERSION: ${{ inputs.openrouter_secret_version }}
+          SITE_ONLY: ${{ inputs.site_only }}
         run: |
           [[ "$OPENROUTER_VERSION" =~ ^[1-9][0-9]*$ ]]
+          if [[ "$SITE_ONLY" != true ]]; then
           for secret in fleet-openrouter-experiment-api-key fleet-postgres-password fleet-jwt-secret fleet-base-sepolia-wallets fleet-base-sepolia-rpc-url fleet-base-sepolia-ws-url fleet-cdp-api-key-id fleet-cdp-api-key-secret; do
             version=1
             [[ "$secret" != fleet-openrouter-experiment-api-key ]] || version="$OPENROUTER_VERSION"
             state=$(gcloud secrets versions describe "$version" --secret="$secret" --format='value(state)')
             [[ "$state" == ENABLED ]]
           done
-          for name in runner dao-node cpls agora; do
+          fi
+          images=(runner)
+          [[ "$SITE_ONLY" == true ]] || images+=(dao-node cpls agora)
+          for name in "${images[@]}"; do
             digest=$(gcloud artifacts docker images describe "$REGISTRY/$name:$IMAGE_REVISION" --format='value(image_summary.digest)')
             [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
             variable="IMAGE_${name^^}"
@@ -148,10 +145,13 @@ jobs:
             printf '%s=%s/%s@%s\n' "$variable" "$REGISTRY" "$name" "$digest" >> "$GITHUB_ENV"
           done
       - name: Deploy independent compute governance controller
+        if: ${{ !inputs.site_only }}
         run: bash infra/gcp/deploy-compute-controller.sh
       - name: Deploy fixed simulation preparation job
+        if: ${{ !inputs.site_only }}
         run: bash infra/gcp/deploy-simulation.sh
       - name: Check and start the fixed worker
+        if: ${{ !inputs.site_only }}
         run: |
           # A routine deployment must not revive an allocation that governance stopped.
           # This check reads the independent bucket, not the worker's run status.
@@ -166,24 +166,18 @@ jobs:
           ip=$(gcloud compute instances describe fleet-research --zone=us-central1-a --format='value(networkInterfaces[0].networkIP)')
           [[ "$ip" =~ ^10\.42\.0\.[0-9]+$ ]]
           echo "FLEET_AGORA_HOST=$ip" >> "$GITHUB_ENV"
-      - name: Deploy launcher with Google sign-in and private worker access
+      - name: Read worker address without starting it
+        if: inputs.site_only
         run: |
-          gcloud beta services identity create --service=iap.googleapis.com --quiet
-          gcloud run deploy fleet-governance --region=us-central1 --image="$IMAGE_RUNNER" \
-            --command=node --args=apps/runner/dist/cloud/server.js --port=8080 \
-            --service-account=fleet-control@fleet-governance.iam.gserviceaccount.com \
-            --memory=1Gi --cpu=1 --min=0 --max=2 --concurrency=40 --timeout=60 \
-            --network=fleet-research --subnet=fleet-research --network-tags=fleet-control --vpc-egress=private-ranges-only \
-            --set-env-vars="FLEET_AGORA_HOST=$FLEET_AGORA_HOST,FLEET_REVISION=$IMAGE_REVISION" \
-            --no-allow-unauthenticated --iap --quiet
-          gcloud run services add-iam-policy-binding fleet-governance --region=us-central1 \
-            --member=serviceAccount:service-449245570324@gcp-sa-iap.iam.gserviceaccount.com --role=roles/run.invoker --quiet
-          for member in user:operator2@example.com serviceAccount:fleet-provisioner@fleet-governance.iam.gserviceaccount.com; do
-            gcloud iap web add-iam-policy-binding --member="$member" --role=roles/iap.httpsResourceAccessor \
-              --region=us-central1 --resource-type=cloud-run --service=fleet-governance --quiet
-          done
-          echo 'FLEET_CONTROL_URL=https://fleet-governance-449245570324.us-central1.run.app' >> "$GITHUB_ENV"
+          ip=$(gcloud compute instances describe fleet-research --zone=us-central1-a --format='value(networkInterfaces[0].networkIP)')
+          [[ "$ip" =~ ^10\.42\.0\.[0-9]+$ ]]
+          echo "FLEET_AGORA_HOST=$ip" >> "$GITHUB_ENV"
+      - name: Deploy public viewing and protected operator controls
+        run: bash infra/gcp/deploy-site.sh
+      - name: Verify anonymous viewing and blocked mutations
+        run: python3 -B infra/gcp/verify-public-site.py
       - name: Prepare worker configuration
+        if: ${{ !inputs.site_only }}
         run: |
           python3 - <<'PY'
           import json, os
@@ -199,6 +193,7 @@ jobs:
           Path('infra/gcp/runtime/worker-config.json').write_text(json.dumps(config))
           PY
       - name: Deploy worker through IAP and verify containment
+        if: ${{ !inputs.site_only }}
         env:
           OPENROUTER_VERSION: ${{ inputs.openrouter_secret_version }}
           VERIFY_INFERENCE: ${{ inputs.verify_inference }}
