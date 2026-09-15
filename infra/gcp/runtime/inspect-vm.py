@@ -6,6 +6,7 @@ import re
 import subprocess
 import urllib.request
 import urllib.error
+from decimal import Decimal, ROUND_CEILING
 
 
 def command(args):
@@ -91,6 +92,21 @@ if reports.exists():
             for entry in list(failures.values())[-12:]:
                 print('Last agent outcome:', redact(json.dumps(entry)))
         record = run / 'record.json'
+        journal = run / 'inference.jsonl'
+        if journal.exists():
+            starts = {}
+            for line in journal.read_text().splitlines():
+                try:
+                    event = json.loads(line)
+                    if event.get('type') == 'started':
+                        starts[event['id']] = event.get('reservation', {})
+                    elif event.get('type') == 'completed' and event['id'] in starts:
+                        reserved = starts[event['id']]
+                        cost = int((Decimal(str(event.get('costUsd', 0))) * 10**9).to_integral_value(rounding=ROUND_CEILING))
+                        if event.get('inputTokens', 0) > reserved.get('inputTokens', 0) or event.get('outputTokens', 0) > reserved.get('outputTokens', 0) or cost > int(reserved.get('costNanodollars', '0')):
+                            print('Inference reservation overrun:', redact(json.dumps({'at': event.get('at'), 'agentId': event.get('agentId'), 'reservation': reserved, 'reported': {key: event.get(key) for key in ['inputTokens', 'outputTokens', 'costUsd', 'outcome']}})))
+                except (ValueError, TypeError, KeyError):
+                    pass
         if record.exists():
             try:
                 data = json.loads(record.read_text())
