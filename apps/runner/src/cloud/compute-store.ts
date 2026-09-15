@@ -49,6 +49,9 @@ export async function isComputeRunBlocked(runId: string): Promise<boolean> {
   if (!/^run-[0-9a-f-]{36}$/.test(runId)) throw new Error("Invalid compute run identity.");
   return await object(`blocked-runs/${runId}.json`) !== null;
 }
+export async function readComputeEvidence(): Promise<unknown> {
+  return (await object("evidence/latest.json"))?.value ?? null;
+}
 export async function saveComputeState(value: ComputeRecord, generation: string): Promise<boolean> {
   const validated = recordSchema.parse(value);
   if (!/^[0-9]+$/.test(generation)) throw new Error("Invalid compute state generation.");

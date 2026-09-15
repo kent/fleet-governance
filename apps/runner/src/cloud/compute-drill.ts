@@ -73,7 +73,7 @@ try {
       let restartDenied = false;
       try { await assertComputeStartAllowed(); } catch { restartDenied = true; }
       if (!restartDenied) throw new Error("Restart was unexpectedly allowed.");
-      const evidence = { ...voteResult, controller: saved.value, vm: { id: observedVm.id, status: observedVm.status },
+      const evidence = { ...voteResult, allocation: await readComputeAllocation(), controller: saved.value, vm: { id: observedVm.id, status: observedVm.status },
         restartDenied, workflowRun: process.env.GITHUB_RUN_ID, observedAt: new Date().toISOString() };
       writeFileSync("compute-drill-evidence.json", JSON.stringify(evidence, null, 2));
       console.log(JSON.stringify(evidence));

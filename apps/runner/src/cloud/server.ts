@@ -4,7 +4,7 @@ import path from "node:path";
 import { DEMO_DEFAULT_GOAL } from "../lib/demo-config.js";
 import { ACTIVE, RUN_ID, controlDeps, queueDemo, runPath, type DemoRun } from "./control.js";
 import { BUCKET, googleRequest, readObject } from "./google.js";
-import { readComputeAllocation, readComputeState } from "./compute-store.js";
+import { readComputeAllocation, readComputeState, readComputeEvidence } from "./compute-store.js";
 
 const root = process.cwd();
 const users = new Set(["accounts.google.com:operator2@example.com", "accounts.google.com:fleet-provisioner@fleet-governance.iam.gserviceaccount.com"]);
@@ -28,7 +28,11 @@ createServer(async (request, response) => {
     if (url.pathname === "/api/compute-policy" && request.method === "GET") {
       const allocation = await readComputeAllocation();
       const state = allocation ? await readComputeState(allocation.allocationId) : null;
-      json(response, 200, { allocation, state: state?.value ?? null }); return;
+      const [vm, evidence] = await Promise.all([
+        googleRequest("compute", "compute/v1/projects/fleet-governance/zones/us-central1-a/instances/fleet-research").then(async r => await r.json() as { id: string; status: string; machineType: string }),
+        readComputeEvidence(),
+      ]);
+      json(response, 200, { allocation, state: state?.value ?? null, vm: { id: vm.id, status: vm.status, machineType: vm.machineType.split("/").pop() }, evidence, observedAt: new Date().toISOString() }); return;
     }
     if (url.pathname === "/api/worker/start" && request.method === "POST") {
       await controlDeps().start();
@@ -66,7 +70,11 @@ createServer(async (request, response) => {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'" });
       response.end(readFileSync(path.join(root, "apps/runner/public/experiment.html"))); return;
     }
-    if (["/experiment.js", "/experiment.css"].includes(url.pathname)) {
+    if (url.pathname === "/compute") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'" });
+      response.end(readFileSync(path.join(root, "apps/runner/public/compute.html"))); return;
+    }
+    if (["/experiment.js", "/experiment.css", "/compute.js", "/compute.css"].includes(url.pathname)) {
       response.writeHead(200, { "content-type": url.pathname.endsWith(".js") ? "text/javascript" : "text/css", "x-content-type-options": "nosniff" });
       response.end(readFileSync(path.join(root, "apps/runner/public", url.pathname.slice(1)))); return;
     }
