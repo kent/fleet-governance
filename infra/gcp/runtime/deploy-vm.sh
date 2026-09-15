@@ -110,6 +110,29 @@ for _ in $(seq 1 60); do
       if (!response.ok) throw new Error("OpenRouter credential check failed");
       console.log("OpenRouter credential authenticated. No inference requested.");
     '
+    # Roll the existing Agora deployment too. Updating images must not require another
+    # experiment (or another model call), and the lifecycle lock keeps the run state idle.
+    docker exec fleet-runner node --input-type=module -e '
+      import { existsSync, readFileSync } from "node:fs";
+      import { readSecret } from "./apps/runner/dist/cloud/google.js";
+      import { configureCloudReadside } from "./apps/runner/dist/cloud/readside-config.js";
+      import { readside } from "./apps/runner/dist/readside.js";
+      const root = process.cwd();
+      const manifestPath = `${root}/deployments/84532/latest.json`;
+      if (existsSync(manifestPath)) {
+        try {
+          if (JSON.parse(readFileSync(manifestPath, "utf8")).chainId !== 84532) throw new Error("Wrong chain");
+          const [http, ws] = await Promise.all([readSecret("fleet-base-sepolia-rpc-url"), readSecret("fleet-base-sepolia-ws-url")]);
+          configureCloudReadside(root, http, ws);
+          await readside({ manifestPath, infraDir: `${root}/infra`, abiSourceDir: `${root}/packages/abi/abis`,
+            deploymentsDir: `${root}/deployments`, restart: true, log: console.log });
+          console.log("Agora and its indexers now use the deployed images and existing Base Sepolia contracts.");
+        } catch {
+          console.error("Read-side refresh failed. Run the redacted inspect-demo diagnostics.");
+          process.exit(1);
+        }
+      }
+    '
     echo "Runner is healthy at revision $revision. Access is through IAP."
     exit 0
   fi
