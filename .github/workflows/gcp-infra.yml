@@ -5,7 +5,7 @@ on:
       action:
         description: Infrastructure operation
         type: choice
-        options: [plan, apply, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation]
+        options: [plan, apply, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, prepare-simulation]
         default: plan
       machine_type:
         description: Pilot VM type
@@ -101,6 +101,8 @@ jobs:
           gcloud run services describe fleet-compute-controller --region=us-central1 --format='yaml(status.conditions,status.url)'
           gcloud scheduler jobs describe fleet-compute-policy --location=us-central1 --format='yaml(state,status,lastAttemptTime,schedule)'
           gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="fleet-compute-controller"' --freshness=30m --limit=15 --format='json(timestamp,textPayload,httpRequest.status)'
+          gcloud run jobs describe fleet-simulation --region=us-central1 --format='yaml(status.latestCreatedExecution)'
+          gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="fleet-simulation"' --freshness=30m --limit=20 --format='json(timestamp,textPayload)'
       - name: Arm the operator-selected required proposals
         if: inputs.action == 'arm-compute'
         env:
@@ -110,7 +112,7 @@ jobs:
           node apps/runner/dist/cloud/compute-admin-cli.js arm
           gcloud scheduler jobs run fleet-compute-policy --location=us-central1
       - name: Verify runtime IAM and start a shutdown witness
-        if: inputs.action == 'compute-drill'
+        if: contains(fromJSON('["compute-drill","prepare-simulation"]'), inputs.action)
         run: |
           python3 -B infra/gcp/assert-compute-unarmed.py
           gcloud compute scp infra/gcp/runtime/compute-canary.py fleet-research:~/fleet-compute-canary.py --zone=us-central1-a --tunnel-through-iap --quiet

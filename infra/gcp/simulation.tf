@@ -69,3 +69,19 @@ resource "google_storage_bucket_iam_member" "simulation_demo_read" {
   role   = "roles/storage.objectViewer"
   member = "serviceAccount:${google_service_account.simulation.email}"
 }
+
+resource "google_project_iam_custom_role" "inspect_compute_controller" {
+  role_id     = "fleetControllerInspector"
+  title       = "Verify Fleet shutdown controller readiness"
+  permissions = ["run.services.get", "cloudscheduler.jobs.get"]
+}
+
+resource "google_project_iam_member" "launcher_controller_readiness" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.inspect_compute_controller.name
+  member  = "serviceAccount:${google_service_account.control.email}"
+  condition {
+    title      = "fixed-controller-and-schedule-only"
+    expression = "resource.name.endsWith('/services/fleet-compute-controller') || resource.name.endsWith('/jobs/fleet-compute-policy')"
+  }
+}

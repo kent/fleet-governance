@@ -1,4 +1,6 @@
 import { armComputeAllocation, releaseComputeAllocation } from "./compute-admin.js";
+import { readSimulationRequest, simulationPath } from "./simulation.js";
+import { readObject } from "./google.js";
 import { readComputeAllocation, readComputeState } from "./compute-store.js";
 
 try {
@@ -14,7 +16,8 @@ try {
     console.log("Allocation released by the operator. The VM remains stopped. Previous policy and halt evidence are preserved.");
   } else if (action === "inspect") {
     const allocation = await readComputeAllocation();
-    console.log(JSON.stringify({ allocation, state: allocation ? await readComputeState(allocation.allocationId) : null }));
+    const simulation = await readSimulationRequest();
+    console.log(JSON.stringify({ allocation, state: allocation ? await readComputeState(allocation.allocationId) : null, simulation, simulationStatus: simulation ? await readObject(simulationPath(simulation.runId)) : null }));
   } else throw new Error("Unknown compute administration action.");
 } catch {
   console.error("Compute administration failed. The existing allocation remains authoritative; no automatic recovery or restart.");
