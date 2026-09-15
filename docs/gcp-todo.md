@@ -14,12 +14,12 @@ This checklist is updated September 15, 2026. The [GCP runbook](../infra/gcp/REA
 - [x] Store and verify Alchemy HTTP and WebSocket endpoints for Base Sepolia, chain ID **84532**.
 - [x] Store the CDP faucet credentials, generate reusable testnet signing keys in Secret Manager and fund the nine identities needed for five agents.
 - [x] Set the worker to stop automatically after four hours. Disks and stored objects remain billable while it is stopped.
-- [ ] Finish the production deployment and verify Google sign-in, Agora `/info`, an actual proposal, indexed votes and public reasons.
+- [x] Deploy the application and verify Google sign-in, Agora `/info`, two actual proposals, ten indexed votes and public reasons. The [five-agent report](evidence/base-sepolia-20260915/report.md) records the results and the budget guard that stopped the run.
 - [ ] Set a separate GCP billing budget and alerts if desired. The OpenRouter $50 limit applies to inference credits, not GCP charges. A [GCP budget alert](https://docs.cloud.google.com/billing/docs/how-to/budgets) does not stop compute.
 
 ## Start a run
 
-1. Open `/experiments` at the deployed service URL and sign in as `operator2@example.com`.
+1. Open the [experiment launcher](https://fleet-governance-449245570324.us-central1.run.app/experiments) and sign in as `operator2@example.com`.
 2. Choose the agent count. The demo supports **2 to 25**, with **5** selected by default.
 3. Enter the goal. The current task environment is a small coding repository with a governed artifact publication tool.
 4. Use the existing constitution or paste a custom one. The chosen text and its hash are saved with the run and supplied to work and voting prompts.
@@ -56,6 +56,7 @@ Do not expose RPC URLs, signing keys, filesystem paths or infrastructure permiss
 
 - Use the infrastructure workflow's `stop` action to stop the worker without deleting its data. The launcher remains available. Stopping a VM does not revoke an already settled onchain permission or undo a transaction.
 - Use `inspect-demo` for read-only service checks, redacted logs and OpenRouter credit metadata. Diagnostics run in GitHub through IAP.
+- Use Wake Agora in the launcher to start the fixed worker and view existing proposals without starting another experiment.
 - A deployment refuses to replace the worker while an experiment holds its execution lock. Finish the run, then retry deployment.
 - A failed or stale run is shown as failed or stale. Review its evidence before rerunning. A fresh run is a new experiment, not an assertion that the earlier one never happened.
 - Preserve Secret Manager, Terraform state, `/srv/fleet/state` and the data buckets during repair. Do not make Docker volume pruning or bucket deletion part of reset.
@@ -64,7 +65,7 @@ The gateway holds disputed calls while permission is unresolved. The contract ex
 
 ## Before increasing scale
 
-- [ ] Complete the five-agent Base Sepolia pilot and save the proposal, indexed reasons and execution evidence.
+- [x] Run five actual agents on Base Sepolia and save the proposals, indexed reasons and execution evidence. Ten votes settled; artifact publication remained blocked. The run stopped on a provider output reservation overrun and remains marked failed.
 - [ ] Copy its settings, change a parameter and verify that another run preserves the first result.
 - [ ] Exercise failure cases on the deployed stack: rejection, no ballots, RPC outage, budget exhaustion and interrupted work.
 - [ ] Measure model spend, RPC load, voting latency, missing ballots, indexer lag, memory and disk use.

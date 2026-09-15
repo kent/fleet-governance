@@ -6,7 +6,9 @@ GitHub Actions provisions the infrastructure and deploys the application. The br
 
 On September 15, 2026, the [foundation apply](https://github.com/kent/fleet-governance/actions/runs/34980731766) completed successfully. Compute Engine is enabled. The worker, private buckets, Artifact Registry, service accounts and experiment secrets are configured. The dedicated OpenRouter key retains the operator's **$50 non-resetting credit limit**. Each run defaults to a **$1 inference budget** from that pool.
 
-The [wallet preparation run](https://github.com/kent/fleet-governance/actions/runs/34979195987) generated reusable testnet keys in Secret Manager and funded the deployer, operator, guardian, keeper and five agents with Base Sepolia ETH. The HTTP and WebSocket RPCs were verified against chain ID 84532. Production application deployment and the first live model experiment are still being verified. See the [demo checklist](../../docs/turnkey-demo.md) for completion evidence.
+The [wallet preparation run](https://github.com/kent/fleet-governance/actions/runs/34979195987) generated reusable testnet keys in Secret Manager and funded the deployer, operator, guardian, keeper and five agents with Base Sepolia ETH. The HTTP and WebSocket RPCs were verified against chain ID 84532. Five actual agents then cast ten votes across two proposals, with reasons visible in Agora. Artifact publication remained blocked. The run stopped on a provider output reservation overrun; its [report](../../docs/evidence/base-sepolia-20260915/report.md) preserves that failure alongside the confirmed votes.
+
+Open the [launcher](https://fleet-governance-449245570324.us-central1.run.app/experiments) to run another experiment, or [Agora's info page](https://fleet-governance-449245570324.us-central1.run.app/info) to read how it works.
 
 ## Services and access
 
@@ -24,7 +26,8 @@ Agents share the worker, with separate identities, workspaces and inference call
 2. For infrastructure, open the [GCP infrastructure workflow](https://github.com/kent/fleet-governance/actions/workflows/gcp-infra.yml). Run `plan`, then `apply` after reviewing the plan. Use `start` or `stop` to control the existing worker without removing its data.
 3. For application changes, run [GCP deploy Fleet demo](https://github.com/kent/fleet-governance/actions/workflows/gcp-deploy.yml). Leave `deploy` enabled. Disabling it builds and publishes images only.
 4. Review the workflow summary and checks. The workflow builds four images, tests the Runner and contracts, checks Agora's vote archive reader, deploys immutable image digests, configures Cloud Run with IAP, and releases the worker through IAP SSH.
-5. The worker deployment checks the UI, Docker compatibility, sandbox isolation, timeout cleanup and the real tool-to-Docker path. It authenticates the inference key without making a model call.
+5. The worker deployment checks the UI, Docker compatibility, sandbox isolation, timeout cleanup and the real tool-to-Docker path. It authenticates the inference key. The optional `verify_inference` input makes one live model request with a two-cent ceiling; it defaults to false.
+6. If a fleet is already deployed, the workflow refreshes Agora and its indexers against that fleet. Deploying code does not create new contracts or start an experiment.
 
 Deployment and experiments share a filesystem lock. A deployment stops if an experiment owns the worker. Finish that run before retrying deployment.
 
@@ -36,7 +39,7 @@ Deployment and experiments share a filesystem lock. A deployment stops if an exp
 4. Follow funding, deployment, agent activity, proposals, ballots and execution evidence. Open a proposal in Agora to read the indexed vote reasons.
 5. Use the completed run's copy-settings action, adjust the inputs and press Run again. That creates a new run ID and preserves the previous result.
 
-One experiment runs at a time. Each run deploys a fleet for its submitted configuration, and Agora follows the active fleet. Previous run records remain available in the launcher. A stopped VM pauses availability of Agora; the launcher remains available and the next Run can start the worker.
+One experiment runs at a time. Each run deploys a fleet for its submitted configuration, and Agora follows the active fleet. Previous run records remain available in the launcher. A stopped VM pauses availability of Agora; the launcher remains available. Use Wake Agora to view the current fleet, or Run to start a new experiment. Either can start the fixed worker.
 
 The first task environment is a small coding repository with governed artifact publication. The goal field changes what agents attempt within that environment. Custom constitutions change instructions; they cannot bypass the gateway or contract executor.
 
