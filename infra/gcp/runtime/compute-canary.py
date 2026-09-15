@@ -21,6 +21,7 @@ def request(url, body):
 
 permissions = ['compute.instances.start', 'compute.instances.stop', 'compute.instances.setMachineType', 'compute.instances.setScheduling', 'compute.instances.setServiceAccount', 'compute.instances.setMetadata', 'compute.instances.delete']
 status, data = request('https://compute.googleapis.com/compute/v1/projects/fleet-governance/zones/us-central1-a/instances/fleet-research/testIamPermissions', {'permissions': permissions})
+print(json.dumps({'permissionProbeStatus': status, 'grantedPermissions': data.get('permissions', [])}))
 assert status == 200 and not data.get('permissions'), 'Runtime has unexpected compute permissions or the check was inconclusive'
 for prefix in ['allocations', 'states', 'blocked-runs']:
     status, _ = request('https://storage.googleapis.com/upload/storage/v1/b/fleet-governance-control-449245570324/o?uploadType=media&ifGenerationMatch=0&name=' + prefix + '/permission-probe-' + str(uuid4()) + '.json', {'probe': True})
