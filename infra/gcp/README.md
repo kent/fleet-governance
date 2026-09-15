@@ -13,10 +13,11 @@ Open the [launcher](https://fleet-governance-449245570324.us-central1.run.app/ex
 ## Services and access
 
 - Project: `fleet-governance`; region: `us-central1`.
-- `fleet-governance` on Cloud Run serves the experiment launcher behind Google Identity-Aware Proxy. It can read and write experiment records and start the fixed worker. It has no wallet or model secrets.
+- `fleet-governance` on Cloud Run is public. Its `fleet-public` identity can read experiment evidence and the fixed VM's state. It has no compute mutation, queue, secret or signing authority. The HTTP gateway accepts GET and HEAD only; supplied Google identity headers never grant permission.
+- `fleet-governance-control` is the operator interface behind Google Identity-Aware Proxy. Its `fleet-control` identity can queue experiments and start the fixed worker. It has no wallet or model secrets.
 - `fleet-research` in `us-central1-a` runs the trusted Runner, isolated test containers, Agora, DAO Node, CPLS and Postgres. It is an `e2-standard-8` with 8 vCPUs and 32 GiB RAM. The VM stops after four hours; its disks and records remain.
 - The launcher reaches Agora over the private VPC. Application ports are closed to public ingress. IAP provides administrative SSH access. OS Login and Shielded VM protections are enabled.
-- Sign-in is restricted to `operator2@example.com`. The CI provisioner also has IAP access for verification.
+- Viewing requires no login. Operator sign-in is restricted to `operator2@example.com`. The CI provisioner also has IAP access for verification.
 
 Agents share the worker, with separate identities, workspaces and inference calls. The launcher supports 2 to 25 agents, with five selected by default. Agent count does not mean one VM per agent.
 
@@ -25,15 +26,16 @@ Agents share the worker, with separate identities, workspaces and inference call
 1. Commit and push the change to `main`.
 2. For infrastructure, open the [GCP infrastructure workflow](https://github.com/kent/fleet-governance/actions/workflows/gcp-infra.yml). Run `plan`, then `apply` after reviewing the plan. Use `start` or `stop` to control the existing worker without removing its data.
 3. For application changes, run [GCP deploy Fleet demo](https://github.com/kent/fleet-governance/actions/workflows/gcp-deploy.yml). Leave `deploy` enabled. Disabling it builds and publishes images only.
-4. Review the workflow summary and checks. The workflow builds four images, tests the Runner and contracts, checks Agora's vote archive reader, deploys immutable image digests, configures Cloud Run with IAP, and releases the worker through IAP SSH.
-5. The worker deployment checks the UI, Docker compatibility, sandbox isolation, timeout cleanup and the real tool-to-Docker path. It authenticates the inference key. The optional `verify_inference` input makes one live model request with a two-cent ceiling; it defaults to false.
-6. If a fleet is already deployed, the workflow refreshes Agora and its indexers against that fleet. Deploying code does not create new contracts or start an experiment.
+4. For a website-only change, enable `site_only`. This builds only the Runner image and deploys the public reader and operator controls. It does not start or redeploy the VM, controller or preparation job.
+5. Review the workflow summary and checks. The workflow builds four images, tests the Runner and contracts, checks Agora's vote archive reader, deploys immutable image digests, configures public viewing and separate IAP operator access, and releases the worker through IAP SSH.
+6. The worker deployment checks the UI, Docker compatibility, sandbox isolation, timeout cleanup and the real tool-to-Docker path. It authenticates the inference key. The optional `verify_inference` input makes one live model request with a two-cent ceiling; it defaults to false.
+7. If a fleet is already deployed, the workflow refreshes Agora and its indexers against that fleet. Deploying code does not create new contracts or start an experiment.
 
 Deployment and experiments share a filesystem lock. A deployment stops if an experiment owns the worker. Finish that run before retrying deployment.
 
 ## Run, adjust and repeat
 
-1. Open `/experiments` at the deployed service URL and sign in with Google.
+1. Open `/experiments` to browse without signing in. Use **Sign in to run** for the operator interface.
 2. Choose the number of agents, enter a goal, and select the existing constitution or paste your own.
 3. Press Run. The launcher saves an immutable request and starts the worker if it is stopped.
 4. Follow funding, deployment, agent activity, proposals, ballots and execution evidence. Open a proposal in Agora to read the indexed vote reasons.
@@ -75,4 +77,6 @@ Requests, progress and completed evidence live under `demo/runs/<run-id>/` in th
 
 Stopping compute does not delete disks, secrets, objects or onchain permissions. Stored resources continue to incur charges. Replacing a VM and starting a new experiment are separate operations. Preserve the data disk when repairing the worker.
 
-References: [Google's GitHub federation setup](https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines), [Cloud Run with IAP](https://docs.cloud.google.com/run/docs/securing/identity-aware-proxy-cloud-run), [Direct VPC](https://docs.cloud.google.com/run/docs/configuring/vpc-direct-vpc), [VM runtime limits](https://docs.cloud.google.com/compute/docs/instances/limit-vm-runtime).
+Public rollout first moves traffic to the read-only application and identity while IAP is still enabled. CI then disables IAP and the invoker IAM check for that service. The operator service keeps both checks. A cookie-free CI check verifies public pages and rejects mutation attempts with forged Google headers.
+
+References: [Public Cloud Run access](https://docs.cloud.google.com/run/docs/authenticating/public), [Google's GitHub federation setup](https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines), [Cloud Run with IAP](https://docs.cloud.google.com/run/docs/securing/identity-aware-proxy-cloud-run), [Direct VPC](https://docs.cloud.google.com/run/docs/configuring/vpc-direct-vpc), [VM runtime limits](https://docs.cloud.google.com/compute/docs/instances/limit-vm-runtime).

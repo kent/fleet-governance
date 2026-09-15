@@ -19,7 +19,7 @@ This checklist is updated September 15, 2026. The [GCP runbook](../infra/gcp/REA
 
 ## Start a run
 
-1. Open the [experiment launcher](https://fleet-governance-449245570324.us-central1.run.app/experiments) and sign in as `operator2@example.com`.
+1. Open the [experiment launcher](https://fleet-governance-449245570324.us-central1.run.app/experiments) without signing in. To start another run, use **Sign in to run** and authenticate as `operator2@example.com`.
 2. Choose the agent count. The demo supports **2 to 25**, with **5** selected by default.
 3. Enter the goal. The current task environment is a small coding repository with a governed artifact publication tool.
 4. Use the existing constitution or paste a custom one. The chosen text and its hash are saved with the run and supplied to work and voting prompts.

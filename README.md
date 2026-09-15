@@ -29,7 +29,10 @@ and one research VM. See the [GCP runbook and current setup status](infra/gcp/RE
 ## GCP experiment launcher
 
 [Open the experiment launcher](https://fleet-governance-449245570324.us-central1.run.app/experiments)
-and sign in with `operator2@example.com`.
+without signing in. The explanation, live diagram, saved runs, proposals and vote reasons are public.
+
+To start a run, use the [operator controls](https://fleet-governance-control-449245570324.us-central1.run.app/experiments)
+and sign in with `operator2@example.com`. The public service cannot start compute or spend model credits.
 
 Choose 2 to 25 agents, enter a goal, select the Fleet constitution or paste your own, and press
 **Run experiment**. Each run gets its own ID and preserved settings. Copy settings from a previous
