@@ -14,6 +14,10 @@ on:
         description: Enabled numeric experiment OpenRouter secret version
         type: string
         default: '1'
+      verify_inference:
+        description: Make one live Muse Spark connectivity check, capped at two cents
+        type: boolean
+        default: false
 permissions:
   contents: read
   id-token: write
@@ -188,9 +192,10 @@ jobs:
       - name: Deploy worker through IAP and verify containment
         env:
           OPENROUTER_VERSION: ${{ inputs.openrouter_secret_version }}
+          VERIFY_INFERENCE: ${{ inputs.verify_inference }}
         run: |
           remote="fleet-runtime-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           gcloud compute scp --recurse infra/gcp/runtime "fleet-research:~/$remote" --zone=us-central1-a --tunnel-through-iap --quiet
           gcloud compute ssh fleet-research --zone=us-central1-a --tunnel-through-iap --quiet \
-            --command="sudo bash \$HOME/$remote/deploy-vm.sh '$IMAGE_RUNNER' '$IMAGE_REVISION' '$OPENROUTER_VERSION'"
+            --command="sudo bash \$HOME/$remote/deploy-vm.sh '$IMAGE_RUNNER' '$IMAGE_REVISION' '$OPENROUTER_VERSION' '$VERIFY_INFERENCE'"
           printf 'Deployed revision %s. Launcher: %s/experiments\n' "$IMAGE_REVISION" "$FLEET_CONTROL_URL" >> "$GITHUB_STEP_SUMMARY"

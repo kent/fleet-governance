@@ -3,9 +3,11 @@ set -euo pipefail
 image=${1:?immutable image URI required}
 revision=${2:?Git revision required}
 openrouter_version=${3:-1}
+verify_inference=${4:-false}
 [[ "$image" =~ ^us-central1-docker\.pkg\.dev/fleet-governance/fleet/runner@sha256:[a-f0-9]{64}$ ]]
 [[ "$revision" =~ ^[a-f0-9]{40}$ ]]
 [[ "$openrouter_version" =~ ^[1-9][0-9]*$ ]]
+[[ "$verify_inference" == true || "$verify_inference" == false ]]
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 exec 9>/run/fleet-deployment.lock
 flock -n 9 || { echo 'Another deployment is active.' >&2; exit 1; }
@@ -133,6 +135,9 @@ for _ in $(seq 1 60); do
         }
       }
     '
+    if [[ "$verify_inference" == true ]]; then
+      docker exec fleet-runner node apps/runner/dist/cloud/verify-inference.js
+    fi
     echo "Runner is healthy at revision $revision. Access is through IAP."
     exit 0
   fi
