@@ -29,12 +29,28 @@ const redact = (value: unknown) => {
   return JSON.parse(json);
 };
 let snapshotPending = false;
+let publicContext: Record<string, unknown> | undefined;
 async function snapshot() {
   if (snapshotPending) return;
   snapshotPending = true;
   try {
     if (existsSync(path.join(runDir, "run-state.json"))) {
-      try { status.view = await buildRunState(runId); status.viewUpdatedAt = new Date().toISOString(); } catch { /* Keep the last successful view, explicitly timestamped. */ }
+      try {
+        const view = await buildRunState(runId);
+        status.view = view; status.viewUpdatedAt = new Date().toISOString();
+        if (publicContext) {
+          const deploymentFile = path.join(root, "deployments/agora-next-deployment.json");
+          if (existsSync(deploymentFile)) {
+            const governor = String(JSON.parse(readFileSync(deploymentFile, "utf8")).governor).toLowerCase();
+            if (/^0x[0-9a-f]{40}$/.test(governor)) for (const proposal of view.proposals) {
+              if (!/^[0-9]+$/.test(proposal.proposalId)) continue;
+              const contextDir = path.join(root, "deployments/experiment-proposals", governor);
+              mkdirSync(contextDir, { recursive: true });
+              writeFileSync(path.join(contextDir, `${proposal.proposalId}.json`), JSON.stringify({ ...publicContext, governor, proposalId: proposal.proposalId }));
+            }
+          }
+        }
+      } catch { /* Keep the last successful view, explicitly timestamped. */ }
     }
     const activity: unknown[] = [];
     for (const file of ["steps.jsonl", "objections.jsonl", "loop-events.jsonl"]) {
@@ -88,6 +104,8 @@ try {
   status.constitution = generated.config.task.constitution;
   status.constitutionHash = generated.constitutionHash;
   status.revision = process.env.FLEET_REVISION ?? request.revision;
+  publicContext = { runId, goal: request.settings.goal, constitution: generated.config.task.constitution, constitutionHash: generated.constitutionHash,
+    agents: generated.config.fleet.members.map((member, id) => ({ agentId: id, role: member.role, model: member.model, address: identities.get(id) })) };
   const configDir = path.join(root, "experiments/configs"); mkdirSync(configDir, { recursive: true });
   const experimentPath = path.join(configDir, `${runId}.json`);
   if (!existsSync(experimentPath)) writeFileSync(experimentPath, JSON.stringify(generated.config, null, 2), { mode: 0o600 });
