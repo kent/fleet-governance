@@ -55,6 +55,22 @@ for name in command(['docker', 'ps', '-a', '--format', '{{.Names}}']).splitlines
     if re.fullmatch(r'fleet-(runner|readside-[a-z-]+-\d+)', name):
         print(f'Logs: {name}')
         print(redact(command(['docker', 'logs', '--tail', '60', name])))
+# Include bounded experiment diagnostics without dumping configs, manifests or keys.
+reports = Path('/srv/fleet/state/reports')
+if reports.exists():
+    runs = sorted((p for p in reports.iterdir() if p.is_dir() and re.fullmatch(r'run-[0-9a-f-]{36}', p.name)), key=lambda p: p.stat().st_mtime, reverse=True)[:3]
+    for run in runs:
+        print(f'Experiment: {run.name}')
+        checkpoint = run / 'run-state.json'
+        if checkpoint.exists():
+            try:
+                data = json.loads(checkpoint.read_text())
+                print(redact(json.dumps({key: data.get(key) for key in ['stage', 'updatedAt']})))
+            except ValueError:
+                print('Checkpoint is being written.')
+        log = run / 'run.log'
+        if log.exists():
+            print(redact('\n'.join(log.read_text(errors='replace').splitlines()[-80:])))
 if model_key:
     try:
         request = urllib.request.Request('https://openrouter.ai/api/v1/key', headers={'Authorization': f'Bearer {model_key}'})
