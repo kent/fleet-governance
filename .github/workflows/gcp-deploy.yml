@@ -6,6 +6,10 @@ on:
         description: Deploy after building (disable to validate and publish images only)
         type: boolean
         default: true
+      image_revision:
+        description: Reuse images from a full main-branch commit SHA (blank builds this revision)
+        type: string
+        default: ''
       openrouter_secret_version:
         description: Enabled numeric experiment OpenRouter secret version
         type: string
@@ -21,6 +25,7 @@ env:
   REGISTRY: us-central1-docker.pkg.dev/fleet-governance/fleet
 jobs:
   build:
+    if: inputs.image_revision == ''
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -94,19 +99,30 @@ jobs:
           printf 'Published %s.\n' "$immutable" >> "$GITHUB_STEP_SUMMARY"
   deploy:
     needs: build
-    if: inputs.deploy
+    if: ${{ always() && !cancelled() && inputs.deploy && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: fleet-governance
           workload_identity_provider: projects/449245570324/locations/global/workloadIdentityPools/github/providers/github
           service_account: fleet-provisioner@fleet-governance.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+        with:
+          install_components: beta
+      - name: Validate the release revision
+        env:
+          REQUESTED_REVISION: ${{ inputs.image_revision }}
+        run: |
+          revision=${REQUESTED_REVISION:-$GITHUB_SHA}
+          [[ "$revision" =~ ^[a-f0-9]{40}$ ]]
+          git merge-base --is-ancestor "$revision" "$GITHUB_SHA"
+          echo "IMAGE_REVISION=$revision" >> "$GITHUB_ENV"
       - name: Resolve image digests and enabled secret versions
         env:
           OPENROUTER_VERSION: ${{ inputs.openrouter_secret_version }}
@@ -119,7 +135,7 @@ jobs:
             [[ "$state" == ENABLED ]]
           done
           for name in runner dao-node cpls agora; do
-            digest=$(gcloud artifacts docker images describe "$REGISTRY/$name:$GITHUB_SHA" --format='value(image_summary.digest)')
+            digest=$(gcloud artifacts docker images describe "$REGISTRY/$name:$IMAGE_REVISION" --format='value(image_summary.digest)')
             [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
             variable="IMAGE_${name^^}"
             variable="${variable//-/_}"
@@ -145,7 +161,7 @@ jobs:
             --service-account=fleet-control@fleet-governance.iam.gserviceaccount.com \
             --memory=1Gi --cpu=1 --min=0 --max=2 --concurrency=40 --timeout=60 \
             --network=fleet-research --subnet=fleet-research --network-tags=fleet-control --vpc-egress=private-ranges-only \
-            --set-env-vars="FLEET_AGORA_HOST=$FLEET_AGORA_HOST,FLEET_REVISION=$GITHUB_SHA" \
+            --set-env-vars="FLEET_AGORA_HOST=$FLEET_AGORA_HOST,FLEET_REVISION=$IMAGE_REVISION" \
             --no-allow-unauthenticated --iap --quiet
           gcloud run services add-iam-policy-binding fleet-governance --region=us-central1 \
             --member=serviceAccount:service-449245570324@gcp-sa-iap.iam.gserviceaccount.com --role=roles/run.invoker --quiet
@@ -160,7 +176,7 @@ jobs:
           import json, os
           from pathlib import Path
           config = {
-              'FLEET_REVISION': os.environ['GITHUB_SHA'],
+              'FLEET_REVISION': os.environ['IMAGE_REVISION'],
               'FLEET_CONTROL_URL': os.environ['FLEET_CONTROL_URL'],
               'FLEET_WORKER_ENABLED': '1',
               'FLEET_DAO_IMAGE': os.environ['IMAGE_DAO_NODE'],
@@ -176,5 +192,5 @@ jobs:
           remote="fleet-runtime-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           gcloud compute scp --recurse infra/gcp/runtime "fleet-research:~/$remote" --zone=us-central1-a --tunnel-through-iap --quiet
           gcloud compute ssh fleet-research --zone=us-central1-a --tunnel-through-iap --quiet \
-            --command="sudo bash \$HOME/$remote/deploy-vm.sh '$IMAGE_RUNNER' '$GITHUB_SHA' '$OPENROUTER_VERSION'"
-          printf 'Deployed revision %s. Launcher: %s/experiments\n' "$GITHUB_SHA" "$FLEET_CONTROL_URL" >> "$GITHUB_STEP_SUMMARY"
+            --command="sudo bash \$HOME/$remote/deploy-vm.sh '$IMAGE_RUNNER' '$IMAGE_REVISION' '$OPENROUTER_VERSION'"
+          printf 'Deployed revision %s. Launcher: %s/experiments\n' "$IMAGE_REVISION" "$FLEET_CONTROL_URL" >> "$GITHUB_STEP_SUMMARY"
