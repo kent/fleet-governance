@@ -174,8 +174,6 @@ jobs:
           echo "FLEET_AGORA_HOST=$ip" >> "$GITHUB_ENV"
       - name: Deploy public viewing and protected operator controls
         run: bash infra/gcp/deploy-site.sh
-      - name: Verify anonymous viewing and blocked mutations
-        run: python3 -B infra/gcp/verify-public-site.py
       - name: Prepare worker configuration
         if: ${{ !inputs.site_only }}
         run: |
@@ -215,3 +213,5 @@ jobs:
           gcloud compute ssh fleet-research --zone=us-central1-a --tunnel-through-iap --quiet \
             --command="sudo bash \$HOME/$remote/deploy-vm.sh '$IMAGE_RUNNER' '$IMAGE_REVISION' '$OPENROUTER_VERSION' '$VERIFY_INFERENCE'"
           printf 'Deployed revision %s. Launcher: %s/experiments\n' "$IMAGE_REVISION" "$FLEET_CONTROL_URL" >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify anonymous viewing and blocked mutations
+        run: python3 -B infra/gcp/verify-public-site.py
