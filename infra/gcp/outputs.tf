@@ -5,4 +5,5 @@ output "artifact_registry" { value = "${var.region}-docker.pkg.dev/${var.project
 output "buckets" { value = { for name, bucket in google_storage_bucket.data : name => bucket.name } }
 output "secrets" { value = keys(google_secret_manager_secret.runtime) }
 output "cdp_secrets" { value = keys(google_secret_manager_secret.cdp) }
+output "rpc_secrets" { value = keys(google_secret_manager_secret.rpc) }
 output "max_run_hours" { value = var.max_run_hours }

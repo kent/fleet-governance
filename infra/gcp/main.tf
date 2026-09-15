@@ -94,6 +94,17 @@ resource "google_secret_manager_secret" "cdp" {
   depends_on = [google_project_service.enabled["secretmanager.googleapis.com"]]
 }
 
+resource "google_secret_manager_secret" "rpc" {
+  for_each  = toset(["fleet-base-sepolia-rpc-url", "fleet-base-sepolia-ws-url"])
+  secret_id = each.value
+  labels    = local.labels
+  replication {
+    auto {}
+  }
+  lifecycle { prevent_destroy = true }
+  depends_on = [google_project_service.enabled["secretmanager.googleapis.com"]]
+}
+
 resource "google_storage_bucket" "data" {
   for_each                    = toset(["artifacts", "archive"])
   name                        = "${var.project_id}-${each.value}-449245570324"
