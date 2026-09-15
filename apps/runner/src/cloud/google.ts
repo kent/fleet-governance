@@ -47,6 +47,16 @@ export async function readObject<T>(name: string): Promise<T | null> {
   } catch (error) { if (error instanceof CloudError && error.status === 404) return null; throw error; }
 }
 
-export async function writeObject(name: string, value: unknown, createOnly = false): Promise<void> {
-  await googleRequest("storage", `upload/storage/v1/b/${BUCKET}/o?uploadType=media&name=${encodeURIComponent(name)}${createOnly ? "&ifGenerationMatch=0" : ""}`, { method: "POST", body: JSON.stringify(value) });
+export async function writeObject(name: string, value: unknown, createOnly: boolean | string = false): Promise<void> {
+  const generation = typeof createOnly === "string" ? createOnly : createOnly ? "0" : undefined;
+  if (generation !== undefined && !/^[0-9]+$/.test(generation)) throw new Error("Invalid object generation.");
+  await googleRequest("storage", `upload/storage/v1/b/${BUCKET}/o?uploadType=media&name=${encodeURIComponent(name)}${generation !== undefined ? `&ifGenerationMatch=${generation}` : ""}`, { method: "POST", body: JSON.stringify(value) });
+}
+
+export async function readObjectVersion<T>(name: string): Promise<{ value: T; generation: string } | null> {
+  try {
+    const metadata = await (await googleRequest("storage", `storage/v1/b/${BUCKET}/o/${encodeURIComponent(name)}`)).json() as { generation: string };
+    const value = await (await googleRequest("storage", `storage/v1/b/${BUCKET}/o/${encodeURIComponent(name)}?alt=media&generation=${metadata.generation}`)).json() as T;
+    return { value, generation: metadata.generation };
+  } catch (error) { if (error instanceof CloudError && error.status === 404) return null; throw error; }
 }

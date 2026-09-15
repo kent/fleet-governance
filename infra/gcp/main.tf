@@ -6,6 +6,7 @@ locals {
     "cloudresourcemanager.googleapis.com", "serviceusage.googleapis.com",
     "secretmanager.googleapis.com", "artifactregistry.googleapis.com", "storage.googleapis.com",
     "iap.googleapis.com", "oslogin.googleapis.com", "logging.googleapis.com", "monitoring.googleapis.com",
+    "run.googleapis.com",
   ])
   secret_names = toset(["fleet-openrouter-api-key", "fleet-postgres-password", "fleet-jwt-secret"])
 }
@@ -32,6 +33,45 @@ resource "google_service_account" "runtime" {
   display_name = "Fleet research runtime"
   description  = "Experiment secrets and storage only; no resource provisioning authority."
   depends_on   = [google_project_service.enabled["iam.googleapis.com"]]
+}
+
+resource "google_service_account" "control" {
+  account_id   = "fleet-control"
+  display_name = "Fleet experiment launcher"
+  description  = "Queue experiments, read their evidence and start the fixed worker. No signing keys or provisioning access."
+  depends_on   = [google_project_service.enabled["iam.googleapis.com"]]
+}
+
+resource "google_project_iam_custom_role" "start_worker" {
+  role_id     = "fleetWorkerStarter"
+  title       = "Start Fleet worker"
+  permissions = ["compute.instances.get", "compute.instances.start"]
+}
+
+resource "google_project_iam_member" "control_start_worker" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.start_worker.name
+  member  = "serviceAccount:${google_service_account.control.email}"
+  condition {
+    title      = "fixed-research-worker"
+    expression = "resource.name.endsWith('/instances/fleet-research')"
+  }
+}
+
+resource "google_storage_bucket_iam_member" "control_demo" {
+  bucket = google_storage_bucket.data["artifacts"].name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.control.email}"
+  condition {
+    title      = "experiment-requests-and-evidence"
+    expression = "resource.name.startsWith('projects/_/buckets/${google_storage_bucket.data["artifacts"].name}/objects/demo/')"
+  }
+}
+
+resource "google_storage_bucket_iam_member" "control_list" {
+  bucket = google_storage_bucket.data["artifacts"].name
+  role   = "roles/storage.legacyBucketReader"
+  member = "serviceAccount:${google_service_account.control.email}"
 }
 
 # The project auto-granted Editor to its unused default Compute account during activation.
@@ -206,6 +246,18 @@ resource "google_compute_firewall" "iap_ssh" {
   allow {
     protocol = "tcp"
     ports    = ["22"]
+  }
+}
+
+resource "google_compute_firewall" "control_agora" {
+  name                    = "fleet-control-agora"
+  network                 = google_compute_network.fleet.name
+  direction               = "INGRESS"
+  source_tags             = ["fleet-control"]
+  target_service_accounts = [google_service_account.runtime.email]
+  allow {
+    protocol = "tcp"
+    ports    = ["3000"]
   }
 }
 
