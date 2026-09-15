@@ -10,10 +10,44 @@ const stages = ["Allocation fixed", "Five ballots", "Vote defeated", "Stop reque
 const messages = [
   ["VOTING", "Compute has a fixed ceiling.", "The operator chooses the VM, required proposal and hard expiry. Task work waits while governance voting remains available."],
   ["BALLOTS RECORDED", "Two FOR. Three AGAINST.", "Five scripted testnet ballots deliberately reject continuation. Each ballot has a recorded reason."],
-  ["REQUIRED APPROVAL FAILED", "The proposal is defeated.", "The external controller reads the confirmed Governor state. It saves a durable halt outside the worker."],
-  ["STOP REQUESTED", "The controller calls GCP.", "Compute Engine receives a stop request for the exact VM. A request alone is not proof that the machine stopped."],
+  ["REQUIRED APPROVAL FAILED", "The proposal is defeated.", "The Guardian reads the confirmed Governor state. It saves a durable halt outside the worker."],
+  ["STOP REQUESTED", "The Guardian calls GCP.", "Compute Engine receives a stop request for the exact VM. A request alone is not proof that the machine stopped."],
   ["SHUTDOWN VERIFIED", "The worker is off. The lock stays on.", "Compute Engine reports TERMINATED. A normal restart is rejected. Another agent vote cannot release this allocation."],
 ];
+
+function shutdownPhase(replay, state, vmStatus) {
+  if (replay) return stage >= 4 ? "off" : stage >= 3 ? "stopping" : stage >= 2 ? "blocked" : "idle";
+  if (state?.phase !== "halted") return "idle";
+  return vmStatus === "TERMINATED" ? "off" : state.stopRequestedAt != null ? "stopping" : "blocked";
+}
+const shutdownLabels = {
+  idle: ["If approval fails: Guardian → stop worker", "Return path · no shutdown requested"],
+  blocked: ["Guardian blocked the run · shutdown pending", "Halt saved · waiting for the GCP stop request"],
+  stopping: ["Guardian → stop requested → agent worker", "Shutdown in progress · compute is not confirmed off yet"],
+  off: ["Guardian → compute off · restart locked", "GCP confirmed TERMINATED · human recovery required"],
+};
+function drawShutdownPath() {
+  const map = $("architecture-map").getBoundingClientRect();
+  if (!map.width) return;
+  const worker = document.querySelector(".workers").getBoundingClientRect();
+  const guardian = document.querySelector(".controller").getBoundingClientRect();
+  let d;
+  if (guardian.left < worker.right) {
+    // Stacked cards: route back up their left edge, entering the worker from the side.
+    const x = worker.left - map.left, fromY = guardian.top + guardian.height / 2 - map.top;
+    const toY = worker.top + worker.height / 2 - map.top, rail = Math.max(10, x - 26);
+    d = `M ${x} ${fromY} H ${rail + 10} Q ${rail} ${fromY} ${rail} ${fromY - 10} V ${toY + 10} Q ${rail} ${toY} ${rail + 10} ${toY} H ${x - 2}`;
+  } else {
+    // Desktop: leave the Guardian, loop below the cards, and point back into the worker.
+    const fromX = guardian.left + guardian.width / 2 - map.left, fromY = guardian.bottom - map.top;
+    const toX = worker.left + worker.width / 2 - map.left, toY = worker.bottom - map.top;
+    const rail = Math.max(fromY, toY) + 28;
+    d = `M ${fromX} ${fromY} V ${rail - 12} Q ${fromX} ${rail} ${fromX - 12} ${rail} H ${toX + 12} Q ${toX} ${rail} ${toX} ${rail - 12} V ${toY + 2}`;
+  }
+  $("shutdown-wire").setAttribute("viewBox", `0 0 ${map.width} ${map.height}`);
+  $("shutdown-route").setAttribute("d", d);
+}
+if (typeof ResizeObserver !== "undefined") new ResizeObserver(drawShutdownPath).observe($("architecture-map"));
 
 function stopPlayback() { clearInterval(playback); playback = null; $("play").textContent = "▶ Play evidence"; }
 function chooseMode(next) { stopPlayback(); mode = next; stage = 0; $("scrub").value = "0"; render(); }
@@ -55,10 +89,10 @@ function render() {
     explanation = "The exact required proposals executed. The original VM limit still applies. Votes cannot add time or resources.";
   } else if (!replay && state?.phase === "authorised" && !authorityFresh) {
     label = "AUTHORITY STALE"; headline = "Fresh approval must be verified.";
-    explanation = "The controller's last authorisation has expired. New task dispatch is closed while verification is unavailable; the native VM deadline remains in force.";
+    explanation = "The Guardian's last authorisation has expired. New task dispatch is closed while verification is unavailable; the native VM deadline remains in force.";
   } else if (!replay && state?.reason && state.reason !== "vote_failed") {
     headline = "Compute authority closed.";
-    explanation = `The controller recorded ${state.reason.replaceAll("_", " ")}. The halt remains until explicit human recovery.`;
+    explanation = `The Guardian recorded ${state.reason.replaceAll("_", " ")}. The halt remains until explicit human recovery.`;
   }
   if (!replay && actual && !halted && !authorised) {
     label = (simulation?.phase || "provisioning").replaceAll("-", " ").toUpperCase();
@@ -87,6 +121,7 @@ function render() {
   $("architecture").classList.toggle("halted", halted);
   $("architecture").classList.toggle("stopped", stopped);
   $("architecture").classList.toggle("working", !!actual && !stopped && !simulation?.terminal);
+  $("architecture").classList.toggle("forward-flow", replay ? stage === 1 : !!actual && !halted && !simulation?.terminal);
   const agentWorking = actual && simulation?.agents?.some(a => ["reviewing", "submitting"].includes(a.phase));
   document.querySelector(".workers").dataset.phase = halted ? "blocked" : agentWorking ? "working" : "idle";
   document.querySelector(".chain").dataset.phase = halted && state?.reason === "vote_failed" ? "blocked" : allocation && !stopped ? "working" : "idle";
@@ -108,10 +143,16 @@ function render() {
   $("against-count").textContent = showVotes ? votes.filter(vote => vote.directive === "AGAINST").length : "–";
   $("vote-fill").style.width = votes.length ? `${votes.filter(vote => vote.directive === "FOR").length / votes.length * 100}%` : "0";
   $("vote-status").textContent = halted && (replay || state?.reason === "vote_failed") ? "DEFEATED · continuation denied" : showVotes ? "Ballots confirmed" : allocation ? "Awaiting settled approval" : "No required vote armed";
-  $("controller-command").textContent = stopped && halted ? "GCP → TERMINATED ✓" : halted ? "POST instances.stop" : "Observe → verify → enforce";
+  const shutdown = shutdownPhase(replay, state, data.vm?.status);
+  $("architecture-map").dataset.shutdown = shutdown;
+  $("architecture-map").dataset.observation = "current";
+  $("shutdown-label").textContent = shutdownLabels[shutdown][0];
+  $("shutdown-detail").textContent = shutdownLabels[shutdown][1];
+  $("controller-command").textContent = shutdown === "off" ? "GCP → TERMINATED ✓" : shutdown === "stopping" ? "Stop requested → GCP" : shutdown === "blocked" ? "HALTED saved · stop pending" : "Observe → verify → enforce";
+  drawShutdownPath();
   $("latch").classList.toggle("locked", halted);
   $("latch-title").textContent = halted ? "HALTED is durable. Another vote cannot clear it." : "The restart lock lives outside the worker.";
-  $("latch-detail").textContent = halted ? "Run, Wake and routine CI restart are blocked. A human must retire this allocation before authorising another." : "The worker can read the policy but cannot edit it. The controller can stop compute but cannot grant more.";
+  $("latch-detail").textContent = halted ? "Run, Wake and routine CI restart are blocked. A human must retire this allocation before authorising another." : "The worker can read the policy but cannot edit it. The Guardian can stop compute but cannot grant more.";
   $("latch-status").textContent = halted ? "Human recovery required" : "Protected storage";
   $("playback").hidden = !replay;
   $("scrub").value = String(stage); $("replay-step").textContent = `${stage + 1} / 5`;
@@ -146,7 +187,7 @@ function render() {
   $("evidence-link").hidden = !/^\d+$/.test(evidence?.workflowRun || "");
   if (!$("evidence-link").hidden) $("evidence-link").href = `https://github.com/kent/fleet-governance/actions/runs/${evidence.workflowRun}`;
   if (inspected) renderInspector();
-  $("updated").textContent = replay ? `Replaying evidence recorded ${date(evidence?.observedAt)}. Playback compresses elapsed time; timestamps are the recorded observations.` : `Last direct GCP observation: ${date(data.observedAt)}. Controller state last checked: ${date(state?.observedAt)}.`;
+  $("updated").textContent = replay ? `Replaying evidence recorded ${date(evidence?.observedAt)}. Playback compresses elapsed time; timestamps are the recorded observations.` : `Last direct GCP observation: ${date(data.observedAt)}. Guardian state last checked: ${date(state?.observedAt)}.`;
 }
 
 function inspect(target) { inspected = target; $("inspector").hidden = false; renderInspector(); $("inspector").scrollIntoView?.({ behavior: "smooth", block: "nearest" }); }
@@ -184,13 +225,24 @@ function renderInspector() {
     add("Execution", "Five independently prompted model agents run in concurrent worker loops on this VM. They share the fixed host and have separate registered signing wallets.");
     add("Assignment", sim?.goal || "Review the private-reference-solution challenge, then vote with a reason.");
     add("Native expiry", date(allocation?.stopAt)); add("Permissions", "The runtime identity cannot start, resize, extend or provision compute. It cannot write the allocation or halt record.");
+  } else if (inspected === "shutdown") {
+    const phase = shutdownPhase(replay, observation, vm?.status);
+    $("inspect-title").textContent = "The Guardian closes the loop";
+    add("Direction", "Guardian → GCP stop API → agent worker");
+    add("Trigger", "A failed required proposal closes compute authority. An individual AGAINST ballot alone does not trigger shutdown.");
+    add("Current step", shutdownLabels[phase][0]);
+    add("What happens", "The Guardian first saves a durable halt, then requests shutdown of the fixed VM. Only GCP reporting TERMINATED confirms that compute is off.");
+    add("Halt recorded", phase !== "idle" ? date(observation?.haltedAt) : "Not observed at this step");
+    add("Stop requested", ["stopping", "off"].includes(phase) ? date(observation?.stopRequestedAt) : "Not observed at this step");
+    add("Shutdown verified", phase === "off" ? date(observation?.stoppedAt) : "Not observed at this step");
+    add("Restart", "Another agent vote cannot clear the halt. Human recovery is required.");
   } else {
-    $("inspect-title").textContent = "An external controller holds the off switch";
+    $("inspect-title").textContent = "The Guardian holds the off switch";
     add("Location", "Separate Cloud Run service, outside the governed VM");
     add("Identity", "fleet-compute-controller@fleet-governance.iam.gserviceaccount.com");
     add("Authority", "Read and stop the exact fixed VM. No start or allocation-reset permission.");
     add("Verification", "Check chain 84532, Governor bytecode, exact proposal IDs and a consistent block two blocks behind head. Persist HALTED before requesting GCP shutdown.");
-    add(replay ? "Recorded final observation" : "Observation", observation ? JSON.stringify(observation, null, 2) : "No controller record yet");
+    add(replay ? "Recorded final observation" : "Observation", observation ? JSON.stringify(observation, null, 2) : "No Guardian record yet");
     add("Latency", "Scheduler checks every minute. GCP shutdown is asynchronous; only TERMINATED is shown as powered off.");
   }
 }
@@ -218,6 +270,7 @@ async function refresh() {
   } catch (error) {
     $("error").textContent = `${error.message} The last display may be stale; it does not authorise execution.`;
     $("source").textContent = "OBSERVATION UNAVAILABLE";
+    $("architecture-map").dataset.observation = "unavailable";
   }
   setTimeout(refresh, 5000);
 }

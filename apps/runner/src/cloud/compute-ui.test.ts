@@ -22,10 +22,20 @@ describe("compute evidence display", () => {
   it("does not call a stop request a stopped VM; replay never mutates live resources", async () => {
     await load({ allocation, state: controller, vm: { status: "RUNNING" }, observedAt: new Date().toISOString(), evidence });
     expect(document.getElementById("vm-state")?.textContent).toBe("RUNNING");
+    expect(document.getElementById("architecture-map")?.dataset.shutdown).toBe("stopping");
     click("replay-tab");
     expect(document.getElementById("source")?.textContent).toContain("RECORDED TEST");
     const scrub = document.getElementById("scrub") as HTMLInputElement;
+    scrub.value = "2"; scrub.dispatchEvent(new Event("input"));
+    expect(document.getElementById("architecture-map")?.dataset.shutdown).toBe("blocked");
+    expect(document.getElementById("controller-command")?.textContent).toContain("stop pending");
+    scrub.value = "3"; scrub.dispatchEvent(new Event("input"));
+    expect(document.getElementById("architecture-map")?.dataset.shutdown).toBe("stopping");
+    expect(document.getElementById("vm-state")?.textContent).toBe("STOP REQUESTED");
     scrub.value = "4"; scrub.dispatchEvent(new Event("input"));
+    expect(document.getElementById("architecture-map")?.dataset.shutdown).toBe("off");
+    click("shutdown-link");
+    expect(document.getElementById("inspect-title")?.textContent).toBe("The Guardian closes the loop");
     expect(document.getElementById("vm-state")?.textContent).toBe("TERMINATED");
     expect(document.querySelectorAll(".ballots img")).toHaveLength(0);
     expect(document.getElementById("ballots")?.textContent).toContain("<img");
@@ -42,6 +52,7 @@ describe("compute evidence display", () => {
     expect(document.getElementById("vm-state")?.textContent).toBe("RUNNING");
     expect(document.getElementById("architecture")?.classList.contains("stopped")).toBe(false);
     expect(document.querySelector("#agents button")?.classList.contains("blocked")).toBe(true);
+    expect(document.getElementById("architecture-map")?.dataset.shutdown).toBe("idle");
     expect(document.querySelector(".workers")?.getAttribute("data-phase")).toBe("idle");
     expect((document.getElementById("run-simulation") as HTMLButtonElement).disabled).toBe(true);
   });
@@ -63,6 +74,7 @@ describe("compute evidence display", () => {
     (document.querySelector('[data-inspect="controller"]') as HTMLButtonElement).click();
     expect(document.getElementById("inspect-content")?.textContent).toContain("vote_failed");
     click("live-tab");
-    expect(document.getElementById("inspect-content")?.textContent).toContain("No controller record yet");
+    expect(document.getElementById("inspect-content")?.textContent).toContain("No Guardian record yet");
+    expect(document.getElementById("architecture-map")?.dataset.shutdown).toBe("idle");
   });
 });

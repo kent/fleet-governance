@@ -4,3 +4,25 @@
 .state-legend{display:flex;align-items:center;gap:20px;padding:0 26px 18px;font-size:11px;color:#647686;flex-wrap:wrap}.state-legend span{display:flex;align-items:center;gap:6px}.state-legend i{width:8px;height:8px;border-radius:50%;display:inline-block}.state-legend .green{background:#498441}.state-legend .blue{background:#447aaf}.state-legend .red{background:#b34536}.state-legend small{margin-left:auto;font-size:10px}.zone[data-phase=idle]{background:#f1f6fb;border-color:#cedceb}.zone[data-phase=working]{background:#f0f8ec;border-color:#9cc487}.zone[data-phase=blocked]{background:#fff0eb;border-color:#d48e7f}.agent.idle{background:#e4effa;border-color:#b6cfe8;color:#3c70a4}.agent.blocked,.stopped .agent.off.blocked{background:#f8ddd5;border-color:#d59a8e;color:#a53a2a}.workers[data-phase=idle] .server-led{background:#447aaf;box-shadow:0 0 0 3px #e8f1fa}.workers[data-phase=blocked] .server-led{background:#b34536;box-shadow:0 0 0 3px #f8ddd5}.workers[data-phase=working] .server-led{background:#498441;box-shadow:0 0 0 3px #e6f4df}.controller[data-phase=working] .command{background:#e5efdc;color:#52703e}
 
 .stopped .agent.off:not(.blocked){background:#e4effa;border-color:#b6cfe8;color:#3c70a4}.power.off:not(.blocked) .power-symbol{background:#e4effa;color:#3c70a4}.power.off:not(.blocked) strong{color:#3c70a4}
+
+/* The shutdown route starts at the Guardian and returns to the physical worker. */
+.architecture-map{position:relative;padding-bottom:108px;--wire-color:#7299bd}
+.architecture-map .architecture{padding-bottom:0}
+.shutdown-wire{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;color:var(--wire-color)}
+.shutdown-route{stroke:currentColor;stroke-width:2;stroke-dasharray:5 7;stroke-linecap:round}
+.shutdown-link{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:12px;max-width:calc(100% - 48px);padding:10px 16px;border:1px solid #cbddec;border-radius:10px;background:#f6f9fc;color:#456f94;text-align:left;cursor:pointer}
+.shutdown-link strong{display:block;font-size:12px;font-weight:650;line-height:1.5}
+.shutdown-link small{display:block;font-size:10px;color:#73899c}
+.shutdown-icon{font-size:25px;line-height:1}
+.shutdown-inspect{font-size:10px;white-space:nowrap;margin-left:10px}
+.architecture-map[data-shutdown=blocked],.architecture-map[data-shutdown=stopping],.architecture-map[data-shutdown=off]{--wire-color:#b34536}
+.architecture-map:not([data-shutdown=idle]) .shutdown-link{background:#fff4ef;border-color:#dfb0a4;color:#a33f30}
+.architecture-map:not([data-shutdown=idle]) .shutdown-link small{color:#9a6a5e}
+.architecture-map[data-shutdown=stopping] .shutdown-route{stroke-width:3;stroke-dasharray:8 10;animation:guardian-stop-flow 1.2s linear infinite}
+.architecture-map[data-shutdown=off] .shutdown-route{stroke-width:3;stroke-dasharray:none}
+.architecture-map[data-observation=unavailable] .shutdown-route{animation:none}
+@keyframes guardian-stop-flow{to{stroke-dashoffset:-36}}
+@media(prefers-reduced-motion:reduce){.shutdown-route{animation:none!important}}
+@media(max-width:800px){.architecture-map{padding-bottom:118px}.architecture-map .architecture{padding-left:42px}.shutdown-link{max-width:calc(100% - 48px);width:max-content;gap:8px}.shutdown-link strong{font-size:11px}.shutdown-inspect{display:none}}
+
+.architecture .packet{animation:none}.architecture.forward-flow .packet{animation:flow 2.2s linear infinite}
