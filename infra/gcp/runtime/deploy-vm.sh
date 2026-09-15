@@ -18,10 +18,20 @@ mountpoint -q /srv/fleet
 
 # A deployment must not terminate an active experiment. All child processes of the
 # trusted Runner are visible here, including the headless CLI spawned by the UI.
-if docker inspect fleet-runner >/dev/null 2>&1; then
-  if docker top fleet-runner -eo args | grep -Eq '(dist/cli\.js|src/cli\.ts).*run|spawn-run'; then
-    echo 'An experiment is active. Finish or stop it before deploying.' >&2
-    exit 1
+existing_runner=$(docker ps -a --filter 'name=^/fleet-runner$' --format '{{.ID}}')
+if [[ -n "$existing_runner" ]]; then
+  runner_running=$(docker inspect --format '{{.State.Running}}' "$existing_runner")
+  if [[ "$runner_running" == true ]]; then
+    # Docker requires the PID column. Capture first so a failed inspection cannot
+    # be mistaken for an idle Runner by a conditional pipeline.
+    if ! runner_processes=$(docker top "$existing_runner" -eo pid,args); then
+      echo 'Cannot inspect the Runner processes. Deployment stopped.' >&2
+      exit 1
+    fi
+    if grep -Eq '(dist/cli\.js|src/cli\.ts).*run|spawn-run' <<< "$runner_processes"; then
+      echo 'An experiment is active. Finish or stop it before deploying.' >&2
+      exit 1
+    fi
   fi
 fi
 
