@@ -44,6 +44,7 @@ import { LedgerWatcher, evaluateAction } from "@fleet/gateway";
 import type { GatewayLogRecord, GatewayVerdict } from "@fleet/gateway";
 import { RunnerEnvError } from "../env.js";
 import { withRunConstitution } from "./constitution.js";
+import { ActivityAttestor } from "./activity-attestation.js";
 import { insertVoteRow, syncCplsAfterStage, waitForDaoNode } from "./cpls-sync.js";
 import type { FetchLike } from "./cpls-sync.js";
 import type { FeeEntry, FleetKeys, ReadSideSyncConfig } from "./fixture-runner.js";
@@ -530,10 +531,14 @@ async function runModelFixtureOwned(ctx: ModelRunContext, fixture: ModelFixtureV
     return running;
   };
 
+    const attestors: ActivityAttestor[] = [];
     for (let agentId = 0; agentId < ctx.members.length; agentId++) {
       const member = ctx.members[agentId]!;
       const key = ctx.keys.agentKeys[agentId];
       if (!key) throw new RunnerEnvError(`model fixture ${fixture.name}: no key configured for agent ${agentId}`);
+      const attestor = new ActivityAttestor({ key, runId: path.basename(ctx.runDir), chainId: ctx.chainId, taskId, agentId,
+        record: record => appendJsonl(path.join(ctx.runDir, "attestations.jsonl"), record) });
+      attestors.push(attestor);
 
       const workspace = await Workspace.fromFixture(
         path.resolve(ctx.repoRoot, fixture.repoFixture),
@@ -625,11 +630,13 @@ async function runModelFixtureOwned(ctx: ModelRunContext, fixture: ModelFixtureV
               proposalId: o.proposalId === null ? null : o.proposalId.toString(),
             };
             appendJsonl(objectionsPath, line);
+            attestor.record(line);
           },
         },
         log: (event: TaskLoopEvent): void => {
           const loopEventLine: LoopEventLineType = { type: "loop_event", at: new Date().toISOString(), agentId, event };
           appendJsonl(loopEventsPath, loopEventLine);
+          attestor.record(loopEventLine);
           if (event.type === "step_published") {
             const line: StepLineType = {
               type: "step",
@@ -694,6 +701,7 @@ async function runModelFixtureOwned(ctx: ModelRunContext, fixture: ModelFixtureV
     });
 
     await Promise.allSettled(running);
+    await Promise.all(attestors.map(attestor => attestor.flush()));
     if (followerTimer) clearTimeout(followerTimer);
     clearTimeout(deadlineTimer);
     const loopsEndedAt = new Date().toISOString();
