@@ -34,8 +34,19 @@ Choose 2 to 25 agents, enter a goal, select the Fleet constitution or paste your
 run to try another configuration. The demo uses one GCP worker with separate agent identities and
 workspaces, a $1 inference allowance per run, and the dedicated $50 OpenRouter credit pool.
 
-The launcher is live. The first five-agent Base Sepolia run and Agora vote indexing are still
-being verified. Follow the [completion checklist](docs/turnkey-demo.md) for the remaining checks.
+Five actual Muse Spark agents have now cast **ten votes on two Base Sepolia proposals**.
+Both decisions executed, and Agora displays the public reasons. The engineer and critic asked
+for test evidence before publication. The artifact stayed unpublished because neither decision
+granted publication permission.
+
+[Read the experiment in Agora](https://fleet-governance-449245570324.us-central1.run.app/info) ·
+[Inspect a proposal and its five votes](https://fleet-governance-449245570324.us-central1.run.app/proposals/37970982872384450383360935110446076514047579153695236828517929530276489542264) ·
+[Read the pilot report](docs/evidence/base-sepolia-20260915/report.md)
+
+The run cost **$0.03190** in inference. Its report retains a failed accounting check: one provider
+response exceeded its reserved output count, so the guard stopped further work. The request
+limit now leaves headroom inside that reservation. The $1 run allowance and $50 key limit stay
+unchanged. See the [demo checklist](docs/turnkey-demo.md).
 
 ## Why build this?
 

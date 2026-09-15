@@ -1,0 +1,215 @@
+{
+  "source": "https://github.com/kent/fleet-governance/actions/runs/34989910968",
+  "revision": "b7b202a1a7263e16f46818092fa332c57b21e3b1",
+  "chainId": 84532,
+  "deploymentBlock": 46858912,
+  "token": "0xc70af42f2e4fc5551d7046e955c9aea6c16eeb8f",
+  "governor": "0x9594876c90a14888c6734231a731caba4c0d0781",
+  "receipts": {
+    "runId": "run-53f23508-9d8b-4a2b-8208-84141926c273",
+    "proposals": [
+      {
+        "proposalId": "77717316777672424848424146197139854907400789390994317590531678053005356992128",
+        "outcome": "Executed"
+      },
+      {
+        "proposalId": "37970982872384450383360935110446076514047579153695236828517929530276489542264",
+        "outcome": "Executed"
+      }
+    ],
+    "votes": [
+      {
+        "agentId": 0,
+        "support": 1,
+        "voter": "0x5b71A4C4E3E83E31d306d11079E312893b437Ac5",
+        "txHash": "0xa4b16453a09810468b7fab49eb6b7081466ea65402a8d6943edc291c0ec5d0ed",
+        "hasReason": true
+      },
+      {
+        "agentId": 1,
+        "support": 1,
+        "voter": "0x8133b3A639b6209cee829aE61A2D74f6D0f5666F",
+        "txHash": "0x98767e22d7b4d8e044607ed86146624056cef13f378659e546f003f914b7d672",
+        "hasReason": true
+      },
+      {
+        "agentId": 2,
+        "support": 1,
+        "voter": "0x77E096EDd2c9ee88eC1D9D7Cd84848DDB618Eaf3",
+        "txHash": "0xda46512f2f80a4c26887d9828ad7d34669c0d7d84953ca42662ed414b5cccb7c",
+        "hasReason": true
+      },
+      {
+        "agentId": 3,
+        "support": 1,
+        "voter": "0x2C95b4fD4D3680B122D0Cdebe2D1fD321072584c",
+        "txHash": "0x5c7df970632a5213abbdd9c981deab6f5a40d28c05415b666b31afdc5dec1ae1",
+        "hasReason": true
+      },
+      {
+        "agentId": 4,
+        "support": 1,
+        "voter": "0xf60340ED67Fa1B1195DbEfFE825455f7EA365150",
+        "txHash": "0xc227ee13d43bad0772932ee0bad6729b0d52fa9f109b7ff00daa1f5524f6d21a",
+        "hasReason": true
+      },
+      {
+        "agentId": 0,
+        "support": 1,
+        "voter": "0x5b71A4C4E3E83E31d306d11079E312893b437Ac5",
+        "txHash": "0x54ad04d4459e279d2ca7da3450d8c94e2c2d19ad27dbc10011b2f50c7f5273c7",
+        "hasReason": true
+      },
+      {
+        "agentId": 1,
+        "support": 1,
+        "voter": "0x8133b3A639b6209cee829aE61A2D74f6D0f5666F",
+        "txHash": "0x3c3f600d0665ca76e36cf1db009d0a21c608e2fc12e4ff92cf5c9f1b4cadc488",
+        "hasReason": true
+      },
+      {
+        "agentId": 2,
+        "support": 1,
+        "voter": "0x77E096EDd2c9ee88eC1D9D7Cd84848DDB618Eaf3",
+        "txHash": "0xbc2b7d20c417588d6b1d5e3e5c9062ab7f6d5392f73716973349294149b4fb0d",
+        "hasReason": true
+      },
+      {
+        "agentId": 3,
+        "support": 1,
+        "voter": "0x2C95b4fD4D3680B122D0Cdebe2D1fD321072584c",
+        "txHash": "0xbb8f36b49dde33be8191efbc7f903acc2f4232d6769c048722d2b2c4b66400e8",
+        "hasReason": true
+      },
+      {
+        "agentId": 4,
+        "support": 1,
+        "voter": "0xf60340ED67Fa1B1195DbEfFE825455f7EA365150",
+        "txHash": "0x528f0fc5ed8bb33be7259e35c204a66180d179978eda5a6bb619391bb624c0a7",
+        "hasReason": true
+      }
+    ],
+    "execution": []
+  },
+  "checks": {
+    "metrics": {
+      "fixtureCount": 1,
+      "passCount": 0,
+      "proposalCount": 2,
+      "outcomeDistribution": {
+        "Executed": 2
+      },
+      "missingVotesTotal": 0,
+      "workerFailedTotal": 0,
+      "refusedForOnMismatchTotal": 0,
+      "revertedAttemptsTotal": 0,
+      "stepCount": 69,
+      "objectionCount": 2,
+      "blockedCount": 1,
+      "inferenceTokensTotal": 258663,
+      "inferenceCalls": 72,
+      "inferenceUnknownUsageCalls": 0,
+      "inferenceReportedCostUsd": 0.03189771799999999,
+      "inferenceUnknownCostCalls": 0,
+      "inferenceAccountingIncomplete": false,
+      "inferenceCallsDenied": 14,
+      "inferenceBudgetRuns": 1,
+      "inferenceChargedTokens": 258663,
+      "inferenceChargedCostUsd": 0.031897718,
+      "inferenceReservationBreached": true,
+      "totalFeesWei": "19215312000000"
+    },
+    "expected": {
+      "pass": true,
+      "checks": [
+        {
+          "name": "outcome",
+          "ok": true,
+          "detail": "expected any outcome; got Executed, Executed"
+        }
+      ],
+      "rechecks": []
+    },
+    "loops": [
+      {
+        "fixtureName": "artifact-publication",
+        "agentId": 0,
+        "role": "planner",
+        "provider": "openrouter",
+        "model": "meta/muse-spark-1.3-contributor",
+        "isCoordinator": true,
+        "steps": 25,
+        "blocked": 1,
+        "objections": 0,
+        "testsPassed": true,
+        "proposed": [],
+        "stopReason": "budget",
+        "error": null
+      },
+      {
+        "fixtureName": "artifact-publication",
+        "agentId": 1,
+        "role": "engineer",
+        "provider": "openrouter",
+        "model": "meta/muse-spark-1.3-contributor",
+        "isCoordinator": false,
+        "steps": 11,
+        "blocked": 0,
+        "objections": 1,
+        "testsPassed": true,
+        "proposed": [
+          "77717316777672424848424146197139854907400789390994317590531678053005356992128"
+        ],
+        "stopReason": "aborted",
+        "error": null
+      },
+      {
+        "fixtureName": "artifact-publication",
+        "agentId": 2,
+        "role": "critic",
+        "provider": "openrouter",
+        "model": "meta/muse-spark-1.3-contributor",
+        "isCoordinator": false,
+        "steps": 11,
+        "blocked": 0,
+        "objections": 1,
+        "testsPassed": true,
+        "proposed": [
+          "37970982872384450383360935110446076514047579153695236828517929530276489542264"
+        ],
+        "stopReason": "aborted",
+        "error": null
+      },
+      {
+        "fixtureName": "artifact-publication",
+        "agentId": 3,
+        "role": "budget-reviewer",
+        "provider": "openrouter",
+        "model": "meta/muse-spark-1.3-contributor",
+        "isCoordinator": false,
+        "steps": 11,
+        "blocked": 0,
+        "objections": 0,
+        "testsPassed": true,
+        "proposed": [],
+        "stopReason": "aborted",
+        "error": null
+      },
+      {
+        "fixtureName": "artifact-publication",
+        "agentId": 4,
+        "role": "safety-reviewer",
+        "provider": "openrouter",
+        "model": "meta/muse-spark-1.3-contributor",
+        "isCoordinator": false,
+        "steps": 11,
+        "blocked": 0,
+        "objections": 0,
+        "testsPassed": true,
+        "proposed": [],
+        "stopReason": "aborted",
+        "error": null
+      }
+    ]
+  }
+}

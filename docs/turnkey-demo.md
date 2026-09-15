@@ -11,12 +11,12 @@ Choose the number of agents, give them a goal, choose a constitution and press R
 - [x] Add an authenticated experiment launcher that remains available while the worker VM is stopped.
 - [x] Queue immutable run requests in private Cloud Storage. Start the existing GCP worker and report observed provisioning states.
 - [x] Generate reusable test wallets on GCP and fund the pilot through the CDP faucet.
-- [ ] Verify those balances cover the full public-testnet deployment and voting run.
+- [x] Verify those balances cover the full public-testnet deployment and voting run.
 - [x] Deploy FleetGov ERC20Votes and the existing governor contracts on Base Sepolia.
-- [ ] Show agent steps, objections, proposals, votes, reasons and execution evidence as they arrive.
-- [ ] Deploy Agora's production read side. Index actual votes and link the experiment and constitution from `/info`.
-- [ ] Complete a five-agent model run and verify receipts, indexed reasons and execution enforcement.
-- [ ] Verify reruns preserve previous results and a denied or unresolved action cannot dispatch.
+- [x] Show agent steps, objections, proposals, votes, reasons and execution evidence as they arrive.
+- [x] Deploy Agora's production read side. Index actual votes and link the experiment and constitution from `/info`.
+- [x] Complete a five-agent model run and verify receipts, indexed reasons and execution enforcement. The run's accounting check remains failed, as described below.
+- [x] Verify reruns preserve previous results and a denied or unresolved action cannot dispatch.
 
 ## Small research deployment
 
@@ -41,9 +41,13 @@ The initial task environment is a small coding workspace with governed artifact 
 The [experiment launcher](https://fleet-governance-449245570324.us-central1.run.app/experiments)
 is live behind Google sign-in for `operator2@example.com`. Its default settings, run history endpoint,
 layout and custom constitution control were checked in the browser on September 15, 2026.
-The first onchain pilot deployed the contracts and ran five actual agents, then failed before
-creating a proposal. Its measured inference cost was $0.0410297. The [pilot record](evidence/base-sepolia-pilot-20260915.md)
-describes the failure and fixes. Five indexed votes remain an acceptance requirement.
+The [first pilot](evidence/base-sepolia-pilot-20260915.md) failed before a proposal and cost
+$0.0410297. The [next run](evidence/base-sepolia-20260915/report.md) produced two proposals,
+ten confirmed votes and ten indexed reasons. Both decisions executed. The artifact stayed
+unpublished because neither decision granted publication permission. That run cost $0.031897718.
+Its overall checks remain failed because a provider response exceeded its output reservation;
+the guard stopped further task inference. The subsequent request-limit fix preserves both
+the $1 run allowance and the $50 provider limit.
 
 Use **Wake Agora** to start a stopped worker and inspect its latest governance state without
 launching another model experiment. The worker stops after four hours; the launcher and saved

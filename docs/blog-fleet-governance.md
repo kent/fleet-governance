@@ -44,6 +44,14 @@
 
 - We’ve run five actual model agents on a coding task too. They made an ordinary proposal and nobody attempted a constitutional violation. I want to keep that result in the record. Give them normal work and see what happens. If nobody suggests breaking the rules, that counts too.
 
+- Now we have five actual Muse Spark agents running in GCP and voting on Base Sepolia. Two proposals. Ten votes. Every vote has a reason you can read in Agora. The engineer and critic wanted test evidence before publication. All five agents agreed. [See the votes](https://fleet-governance-449245570324.us-central1.run.app/proposals/37970982872384450383360935110446076514047579153695236828517929530276489542264)
+
+- The publication stayed blocked. A vote to do more verification did not become permission to publish. That distinction is the point of binding approval to an exact action.
+
+- The run cost about three cents in model calls. It also hit an accounting guard when the provider reported more output tokens than we had reserved for one response. The work stopped, the votes settled, and we kept the failed check in the report. I want the failures in the record too. [Public-testnet pilot](evidence/base-sepolia-20260915/report.md)
+
+- There is an interface for the next experiment. Choose the agent count, write a goal, keep the existing constitution or paste your own, and press Run. It starts the GCP worker, funds the test wallets and preserves each run. The current hosted demo supports up to 25 agents on one worker. [Experiment launcher](https://fleet-governance-449245570324.us-central1.run.app/experiments)
+
 - The model task loop now has a publication tool too. An agent names a file. Code hashes its exact bytes and prepares the permission. The agent can propose it, drop it or escalate it. A retry waits for that specific approval to settle. Another decision elsewhere in the task does not release it. We checked approval and rejection through that loop using scripted model responses and real contract transactions. [Approved run](evidence/model-publication-20260914/approve.md), [rejected run](evidence/model-publication-20260914/reject.md)
 
 - There is still work to do. The contract currently controls an artifact digest. Network access depends on our trusted gateway and sandbox. We have not reproduced the full Hugging Face attack, proved production isolation, or run 2,000 actual models. Next comes measuring model behaviour with publication available and testing the surrounding infrastructure. [What the sample enforces](execution-permits.md)
