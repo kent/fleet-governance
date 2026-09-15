@@ -104,6 +104,30 @@ resource "google_secret_manager_secret" "experiment_model" {
   depends_on = [google_project_service.enabled["secretmanager.googleapis.com"]]
 }
 
+resource "google_secret_manager_secret" "wallets" {
+  secret_id = "fleet-base-sepolia-wallets"
+  labels    = local.labels
+  replication {
+    auto {}
+  }
+  lifecycle { prevent_destroy = true }
+  depends_on = [google_project_service.enabled["secretmanager.googleapis.com"]]
+}
+
+resource "google_secret_manager_secret_iam_member" "experiment_read" {
+  for_each = {
+    model      = google_secret_manager_secret.experiment_model.id
+    wallets    = google_secret_manager_secret.wallets.id
+    rpc_http   = google_secret_manager_secret.rpc["fleet-base-sepolia-rpc-url"].id
+    rpc_ws     = google_secret_manager_secret.rpc["fleet-base-sepolia-ws-url"].id
+    cdp_id     = google_secret_manager_secret.cdp["fleet-cdp-api-key-id"].id
+    cdp_secret = google_secret_manager_secret.cdp["fleet-cdp-api-key-secret"].id
+  }
+  secret_id = each.value
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.runtime.email}"
+}
+
 resource "google_secret_manager_secret" "rpc" {
   for_each  = toset(["fleet-base-sepolia-rpc-url", "fleet-base-sepolia-ws-url"])
   secret_id = each.value

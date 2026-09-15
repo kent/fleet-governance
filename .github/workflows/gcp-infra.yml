@@ -5,7 +5,7 @@ on:
       action:
         description: Infrastructure operation
         type: choice
-        options: [plan, apply, start, stop, import-cdp, import-rpc, import-openrouter]
+        options: [plan, apply, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets]
         default: plan
       machine_type:
         description: Pilot VM type
@@ -64,6 +64,16 @@ jobs:
         env:
           VM_ACTION: ${{ inputs.action }}
         run: gcloud compute instances "$VM_ACTION" fleet-research --zone=us-central1-a --quiet
+      - name: Prepare and fund five testnet agent wallets
+        if: inputs.action == 'prepare-wallets'
+        env:
+          FLEET_GCP_CLI_AUTH: '1'
+        run: |
+          npm install -g pnpm@11.9.0
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          pnpm exec vitest run --project unit apps/runner/src/cloud/wallets.test.ts
+          node apps/runner/dist/cloud/prepare-wallets.js
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         if: inputs.action == 'plan' || inputs.action == 'apply'
         with:
