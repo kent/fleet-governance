@@ -18,6 +18,7 @@ import { decodeRecordDecision, encodeRecordDecision } from "./actions.js";
 import { decodeExecutePermit, encodeExecutePermit, executionPermitArgs } from "./execution.js";
 import { explainRevert } from "./client.js";
 import type { NonceManager } from "./nonce.js";
+import { testnetHttpOptions } from "./log-transport.js";
 
 /**
  * The addresses and chain `FleetSigner` is allowed to touch. `ledger` is where every proposal's
@@ -249,8 +250,9 @@ export class FleetSigner {
       nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
       rpcUrls: { default: { http: [opts.rpcUrl] } },
     });
-    this.wallet = createWalletClient({ account, chain, transport: http(opts.rpcUrl) });
-    this.publicClient = createPublicClient({ chain, transport: http(opts.rpcUrl) });
+    const httpOptions = opts.policy.chainId === 84532 ? testnetHttpOptions : undefined;
+    this.wallet = createWalletClient({ account, chain, transport: http(opts.rpcUrl, httpOptions) });
+    this.publicClient = createPublicClient({ chain, transport: http(opts.rpcUrl, httpOptions) });
   }
 
   private async assertChain(): Promise<void> {
