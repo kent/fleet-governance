@@ -53,7 +53,8 @@ ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 NODE_OPTIONS=--max-old-space-s
 ENV NEXT_PUBLIC_AGORA_INSTANCE_NAME=fleet NEXT_PUBLIC_AGORA_INSTANCE_TOKEN=FLEET NEXT_PUBLIC_AGORA_ENV=dev
 ENV NEXT_PUBLIC_FLEET_CHAIN_ID=84532 NEXT_PUBLIC_FORK_NODE_URL=https://sepolia.base.org NEXT_PUBLIC_AGORA_API_KEY=research
 ENV NEXT_PUBLIC_AGORA_BASE_URL=https://fleet-governance-449245570324.us-central1.run.app
-RUN ./node_modules/.bin/vitest run --config fleet-tests/vitest.config.ts && npm run build
+RUN ./node_modules/.bin/vitest run --config fleet-tests/vitest.config.ts \
+    && DATABASE_URL=postgresql://build:build@127.0.0.1:9/build npm run build
 CMD ["npm", "run", "start"]
 
 FROM base AS development
