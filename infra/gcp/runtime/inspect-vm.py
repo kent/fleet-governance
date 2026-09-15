@@ -109,6 +109,7 @@ if reports.exists():
                                   for e in data.get('execution', {}).get('events', []) if e.get('type') in ['PermitExecuted', 'PermitRevocation', 'ArtifactPublished']],
                 }
                 print('Public receipt evidence:', json.dumps(proof))
+                print('Recorded checks:', redact(json.dumps({key: data.get(key) for key in ['metrics', 'expected', 'loops']})))
             except (ValueError, TypeError, AttributeError):
                 print('Receipt evidence is not available yet.')
 if model_key:
