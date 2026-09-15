@@ -250,11 +250,11 @@ resource "google_compute_firewall" "iap_ssh" {
 }
 
 resource "google_compute_firewall" "control_agora" {
-  name                    = "fleet-control-agora"
-  network                 = google_compute_network.fleet.name
-  direction               = "INGRESS"
-  source_tags             = ["fleet-control"]
-  target_service_accounts = [google_service_account.runtime.email]
+  name        = "fleet-control-agora"
+  network     = google_compute_network.fleet.name
+  direction   = "INGRESS"
+  source_tags = ["fleet-control"]
+  target_tags = ["fleet-worker"]
   allow {
     protocol = "tcp"
     ports    = ["3000"]
@@ -276,6 +276,7 @@ resource "google_compute_instance" "runner" {
   machine_type              = var.machine_type
   zone                      = var.zone
   labels                    = local.labels
+  tags                      = ["fleet-worker"]
   allow_stopping_for_update = true
   boot_disk {
     initialize_params {
