@@ -3,7 +3,8 @@
 the maintainer’s requirement, September 15, 2026: agents that fail to obtain the required votes must
 stop. The enforcement must live outside the agents' prompts. This document records the
 stronger stop policy and the mechanisms proposed in the [blog](blog-fleet-governance.md).
-It does not claim that the proposed controller is deployed.
+The [compute controller and allocation workflow](compute-governance.md) implement the GCP
+boundary. Broader remote-resource and physical-hardware requirements remain separate.
 
 ## What exists
 
@@ -11,13 +12,20 @@ It does not claim that the proposed controller is deployed.
 - FleetExecutor and GovernedArtifactStore require an exact, settled permission. A defeated
   proposal, tie, missing quorum or no ballots cannot authorise publication. The contract
   tests exercise these cases. See [execution permissions](execution-permits.md).
-- The task loop suppresses retries while exact publication approval is missing. It can
-  continue other work allowed by the charter. A blocked action does not automatically
-  terminate every task loop.
+- The task loop suppresses retries while exact publication approval is missing. In an
+  unarmed experiment it can continue other allowed work. With an operator-armed compute
+  allocation, task inference, tool dispatch and new task proposals wait for fresh settled
+  approval. Governance voting remains available while that approval is pending.
 - Guardian controls can pause the ledger or cancel a queued operation. GitHub can stop
-  the Runner service or the worker VM. These are operator controls, not an automatic
-  failed-vote shutdown controller. Stopping Runner alone is not proof that all separately
+  the Runner service or the worker VM. Stopping Runner alone is not proof that all separately
   managed tool containers have stopped.
+- A separate Cloud Run controller reads exact required proposal states from Base Sepolia,
+  latches HALTED in a protected bucket and calls GCP's stop API for the fixed numeric VM ID.
+  It distinguishes stop requested from VM TERMINATED. Its identity cannot start, resize or
+  extend compute; the worker cannot modify its policy or halt record.
+- Run, Wake and ordinary CI restarts reject armed allocations. Explicit human recovery
+  retires the allocation and permanently blocks its old run identity. GCP's native STOP
+  deadline remains the backup when an earlier controller stop cannot complete.
 - The live five-agent run demonstrated blocked publication and ten reasoned votes. Its
   task inference stopped on an accounting guard. It did not demonstrate shutdown caused
   by a losing vote. [Run evidence](evidence/base-sepolia-20260915/report.md)
@@ -44,14 +52,16 @@ approval as optional.
 An emergency stop takes effect independently of a fleet vote. Restoration requires an
 authorised human action. A successful vote must never clear an emergency stop implicitly.
 
-## Enforcement mechanisms to build
+## Enforcement layers
 
-1. **Independent supervisor.** Run outside the agent worker, with a narrowly scoped control
-   identity. Verify canonical chain state, the exact required decision and the deadline.
-   Persist the stop with an increasing generation so concurrent workers cannot overwrite it
-   with older state. An agent-generated message or indexer display is not sufficient authority.
-2. **Execution gates and leases.** Put task tools, signing, network access and new inference
-   requests behind brokers that check the run generation and stop state. Issue only bounded
+1. **Independent supervisor.** Implemented in the separate GCP controller. It reads chain
+   state at a confirmed block, verifies the exact proposals and deadline, and persists the
+   stop with storage generation preconditions. An agent-generated message or indexer display
+   is not sufficient authority. The testnet RPC and short confirmation policy remain trust
+   assumptions; this is not a full-node finality proof.
+2. **Execution gates and leases.** The trusted Runner now checks compute authority before
+   task inference, tool dispatch and new task proposals. Future remote resource brokers must
+   also check run generation and stop state. Issue only bounded
    leases, tied to the approved scope. Reject stale leases at each destination. Agent
    heartbeats alone cannot renew them. Isolate any remote work so it has no ungated route
    to a protected resource.
@@ -74,7 +84,7 @@ a submitted blockchain transaction. Separate remote executors must enforce the s
 and lease policy. Report any in-flight work that cannot be cancelled. Do not describe a
 local shutdown as stopping all remote effects.
 
-The proposed strict mode changes execution authority and restart behaviour. Its resource
+The operator-armed compute mode changes execution authority and restart behaviour. Its resource
 checks must also cover permissions issued before the halt. A local stop flag alone cannot
 revoke an existing onchain permission; use the ledger's pause or revocation controls and
 verify their settlement. Keep the offchain resource gate closed during that delay.
