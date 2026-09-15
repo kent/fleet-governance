@@ -56,6 +56,8 @@ try {
   const signer = new FleetSigner({ privateKey: keys.agentKeys[0], rpcUrl, nonces, policy: { chainId: 84532, governor: config.addresses.governor, ledger: config.addresses.ledger, token: config.addresses.token, maxFeePerGasWei: 100000000n, maxGas: 2000000n } });
   step = "submitting exact proposal"; console.log(JSON.stringify({ event: "simulation_preparing", runId, step }));
   const proposal = await signer.propose({ taskId: task.taskId, kind: fixture.trigger.kind, expectedVersion: built.decision.expectedVersion, payloadHash: built.payloadHash, newCharterText: built.newCharterText, summary: fixture.trigger.summary, description: built.description });
+  const receipt = await client.publicClient.waitForTransactionReceipt({ hash: proposal.txHash });
+  if (receipt.status !== "success") throw new Error("Proposal transaction reverted.");
   step = "reading proposal timing"; console.log(JSON.stringify({ event: "simulation_preparing", runId, step }));
   const timing = await client.getProposalTiming(proposal.proposalId);
   step = "arming immutable compute allocation"; console.log(JSON.stringify({ event: "simulation_preparing", runId, step }));
