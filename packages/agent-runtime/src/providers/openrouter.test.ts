@@ -76,7 +76,7 @@ describe("OpenRouterProvider (against a local fake HTTP server)", () => {
     const inputTokens = provider.estimateInputTokens(request);
     await provider.complete({ ...request, spending: { inputTokens, inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.2 } });
     expect(bodies).toHaveLength(1);
-    expect(bodies[0]).toMatchObject({ max_tokens: 500, provider: { require_parameters: true, allow_fallbacks: false,
+    expect(bodies[0]).toMatchObject({ max_completion_tokens: 375, provider: { require_parameters: true, allow_fallbacks: false,
       max_price: { prompt: 0.1, completion: 0.2, request: 0 } } });
     expect(inputTokens).toBe(Buffer.byteLength(JSON.stringify({ messages: bodies[0]!.messages, response_format: bodies[0]!.response_format }), "utf8") + 4096);
     expect(provider.estimateInputTokens(req({ schema: Schema.describe("x".repeat(10_000)) }))).toBeGreaterThan(inputTokens + 9000);
@@ -153,8 +153,8 @@ describe("OpenRouterProvider (against a local fake HTTP server)", () => {
     const seenMaxTokens: number[] = [];
     const handle = await startFakeServer((request, res, body) => {
       callCount++;
-      const parsed = JSON.parse(body) as { max_tokens: number };
-      seenMaxTokens.push(parsed.max_tokens);
+      const parsed = JSON.parse(body) as { max_completion_tokens: number };
+      seenMaxTokens.push(parsed.max_completion_tokens);
       if (callCount === 1) {
         jsonResponse(res, 200, {
           model: "meta/muse-spark-1.3-contributor",

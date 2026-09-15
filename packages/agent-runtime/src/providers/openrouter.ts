@@ -329,13 +329,17 @@ export class OpenRouterProvider implements Provider {
 
   private requestBody<T>(req: CompleteRequest<T>) {
     const { schema: jsonSchema, forcedNullable } = buildJsonSchema(req.schema as z.ZodType<unknown>);
+    // Muse Spark reported 2,041 billed completion tokens for a 2,000-token request in the
+    // public pilot. Leave headroom inside the existing reservation; never enlarge its ceiling.
+    // The ledger still halts all further inference if reported usage exceeds that reservation.
+    const completionLimit = req.spending ? req.maxTokens - Math.min(128, Math.floor(req.maxTokens / 4)) : req.maxTokens;
     const body = {
       model: this.model,
       messages: [
         { role: "system", content: req.system },
         { role: "user", content: req.user },
       ],
-      max_tokens: req.maxTokens,
+      max_completion_tokens: completionLimit,
       response_format: {
         type: "json_schema",
         json_schema: { name: "fleet_output", strict: true, schema: jsonSchema },
