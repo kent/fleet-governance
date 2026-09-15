@@ -203,6 +203,18 @@ jobs:
           OPENROUTER_VERSION: ${{ inputs.openrouter_secret_version }}
           VERIFY_INFERENCE: ${{ inputs.verify_inference }}
         run: |
+          # RUNNING precedes SSH readiness after a cold VM start. Retry only the
+          # read-only connectivity probe, never a partially executed deployment.
+          ready=false
+          for attempt in $(seq 1 12); do
+            if gcloud compute ssh fleet-research --zone=us-central1-a --tunnel-through-iap --quiet \
+              --ssh-flag='-oConnectTimeout=10' --ssh-flag='-oConnectionAttempts=1' --command=true; then
+              ready=true
+              break
+            fi
+            sleep 5
+          done
+          [[ "$ready" == true ]] || { echo 'Worker SSH did not become ready.' >&2; exit 1; }
           remote="fleet-runtime-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           gcloud compute scp --recurse infra/gcp/runtime "fleet-research:~/$remote" --zone=us-central1-a --tunnel-through-iap --quiet
           gcloud compute ssh fleet-research --zone=us-central1-a --tunnel-through-iap --quiet \
