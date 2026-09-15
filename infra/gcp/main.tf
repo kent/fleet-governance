@@ -81,6 +81,19 @@ resource "google_secret_manager_secret_iam_member" "runtime_read" {
   member    = "serviceAccount:${google_service_account.runtime.email}"
 }
 
+# Faucet credentials belong to provisioning. Do not inject them into Runner or
+# grant its runtime account access until a workload actually needs them.
+resource "google_secret_manager_secret" "cdp" {
+  for_each  = toset(["fleet-cdp-api-key-id", "fleet-cdp-api-key-secret"])
+  secret_id = each.value
+  labels    = local.labels
+  replication {
+    auto {}
+  }
+  lifecycle { prevent_destroy = true }
+  depends_on = [google_project_service.enabled["secretmanager.googleapis.com"]]
+}
+
 resource "google_storage_bucket" "data" {
   for_each                    = toset(["artifacts", "archive"])
   name                        = "${var.project_id}-${each.value}-449245570324"
