@@ -230,25 +230,28 @@ export class FleetClient {
     });
   }
 
-  async getProposalTiming(proposalId: bigint): Promise<{ snapshot: bigint; deadline: bigint; eta: bigint }> {
+  async getProposalTiming(proposalId: bigint, blockNumber?: bigint): Promise<{ snapshot: bigint; deadline: bigint; eta: bigint }> {
     const [snapshot, deadline, eta] = await Promise.all([
       this.publicClient.readContract({
         address: this.addresses.governor,
         abi: agoraGovernorAbi,
         functionName: "proposalSnapshot",
         args: [proposalId],
+        blockNumber,
       }),
       this.publicClient.readContract({
         address: this.addresses.governor,
         abi: agoraGovernorAbi,
         functionName: "proposalDeadline",
         args: [proposalId],
+        blockNumber,
       }),
       this.publicClient.readContract({
         address: this.addresses.governor,
         abi: agoraGovernorAbi,
         functionName: "proposalEta",
         args: [proposalId],
+        blockNumber,
       }),
     ]);
     return { snapshot, deadline, eta };

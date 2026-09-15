@@ -62,10 +62,13 @@ try {
   const signer = new FleetSigner({ privateKey: keys.agentKeys[0], rpcUrl, nonces, policy: { chainId: 84532, governor: config.addresses.governor, ledger: config.addresses.ledger, token: config.addresses.token, maxFeePerGasWei: 100000000n, maxGas: 2000000n } });
   step = "submitting exact proposal"; console.log(JSON.stringify({ event: "simulation_preparing", runId, step }));
   const proposal = await signer.propose({ taskId: task.taskId, kind: fixture.trigger.kind, expectedVersion: built.decision.expectedVersion, payloadHash: built.payloadHash, newCharterText: built.newCharterText, summary: fixture.trigger.summary, description: built.description });
-  const receipt = await client.publicClient.waitForTransactionReceipt({ hash: proposal.txHash });
+  // The controller observes head minus two blocks. Three confirmations make the
+  // new proposal visible at that depth before its allocation can be published.
+  const receipt = await client.publicClient.waitForTransactionReceipt({ hash: proposal.txHash, confirmations: 3 });
   if (receipt.status !== "success") throw new Error("Proposal transaction reverted.");
   step = "reading proposal timing"; console.log(JSON.stringify({ event: "simulation_preparing", runId, step }));
-  const timing = await client.getProposalTiming(proposal.proposalId);
+  const timing = await client.getProposalTiming(proposal.proposalId, receipt.blockNumber);
+  if (timing.snapshot <= 0n || timing.deadline <= timing.snapshot || timing.deadline <= BigInt(Math.floor(Date.now() / 1000))) throw new Error("Confirmed proposal has no usable voting window.");
   step = "arming immutable compute allocation"; console.log(JSON.stringify({ event: "simulation_preparing", runId, step }));
   const allocation = await armComputeAllocation({ runId, governor: config.addresses.governor, requiredProposalIds: [proposal.proposalId.toString()], approvalSeconds: Math.max(300, Number(timing.deadline) - Math.floor(Date.now() / 1000) + 180) });
   const work: SimulationWork = { schema: "fleet.simulation-work.v1", runId, allocationId: allocation.allocationId, chainId: 84532, addresses: config.addresses, proposalId: proposal.proposalId.toString(), proposeTxHash: proposal.txHash, taskId: task.taskId.toString(), startBlock: startBlock.toString(), goal, constitution, createdAt: new Date().toISOString() };

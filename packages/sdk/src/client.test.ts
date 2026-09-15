@@ -27,6 +27,15 @@ describe("task reads after confirmed creation", () => {
     expect(read.mock.calls.map(([call]) => [call.functionName, call.blockNumber])).toEqual([["getTask", 123n], ["charterText", 123n]]);
     await expect(client.getTask(3n)).rejects.toThrow("stale latest");
   });
+  it("reads all proposal timing fields at the confirmed proposal block", async () => {
+    const client = new FleetClient({ rpcUrl: "http://127.0.0.1:1", chainId: 84532, addresses: ADDRESSES });
+    const read = vi.spyOn(client.publicClient, "readContract").mockImplementation(async call => {
+      if (call.blockNumber !== 124n) throw new Error("Proposal missing at stale latest head");
+      return call.functionName === "proposalSnapshot" ? 1000n : call.functionName === "proposalDeadline" ? 1300n : 0n;
+    });
+    await expect(client.getProposalTiming(7n, 124n)).resolves.toEqual({ snapshot: 1000n, deadline: 1300n, eta: 0n });
+    expect(read.mock.calls.map(([call]) => call.blockNumber)).toEqual([124n, 124n, 124n]);
+  });
 });
 
 describe("single member resolution", () => {
