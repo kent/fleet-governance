@@ -71,8 +71,11 @@ createServer(async (request, response) => {
       json(response, 200, { agentCount: 5, maxAgents: 25, goal: DEMO_DEFAULT_GOAL, constitution: readFileSync(path.join(root, "experiments/constitutions/fleet-v1.md"), "utf8") }); return;
     }
     if (url.pathname === "/constitution") {
-      response.writeHead(200, { "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff" });
-      response.end(readFileSync(path.join(root, "experiments/constitutions/fleet-v1.md"))); return;
+      const constitution = readFileSync(path.join(root, "experiments/constitutions/fleet-v1.md"), "utf8")
+        .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+      const page = readFileSync(path.join(root, "apps/runner/public/constitution.html"), "utf8");
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'self'; script-src 'none'; style-src 'self'; frame-ancestors 'none'; base-uri 'self'" });
+      response.end(page.replace("{{CONSTITUTION}}", () => constitution)); return;
     }
     if (url.pathname === "/experiments" || /^\/experiments\/run-[0-9a-f-]+$/.test(url.pathname)) {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'" });
