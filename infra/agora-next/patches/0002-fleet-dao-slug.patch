@@ -1,0 +1,10 @@
+--- a/prisma/schema.prisma
++++ b/prisma/schema.prisma
+@@ -6070,6 +6070,7 @@
+ }
+ 
+ enum DaoSlug {
++  FLEET
+   OP
+   ENS
+   UNI

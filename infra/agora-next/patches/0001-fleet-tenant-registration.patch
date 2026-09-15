@@ -307,7 +307,7 @@ index 63e8c98..1e595b9 100644
          };
 +      case TENANT_NAMESPACES.FLEET:
 +        return {
-+          name: "Fleet Vote",
++          name: "FleetGov",
 +          symbol: "FLEET",
 +          decimals: 18,
 +          address: loadFleetDeployment().token,
