@@ -18,9 +18,13 @@
 
 - **No approval, no execution.** The requested action stops before it reaches the resource. If the proposal loses, it stays stopped. If nobody votes, it stays stopped. Too few yes votes, a tie, an expired permission? Still stopped. Our default requires yes votes representing at least 60 percent of the voting power, followed by a timelock that gives the guardian time to intervene.
 
+- I want a stricter mode for the fleet too. While a required approval is being considered, pause the affected task's execution and keep the voting channel open. If the proposal loses, misses quorum, is cancelled or expires, stop that run. If the deadline passes without a settled approval, stop it. The agents don't get to decide that waiting was inconvenient and carry on.
+
+- There are two claims here, and I want to be precise. The demo already blocks an unapproved protected action. Automatically stopping every agent working on the affected task is the next enforcement requirement. Today, an agent can still do other allowed work after its request is blocked. We have not yet demonstrated an automatic shutdown of the whole fleet after a failed vote.
+
 - Let’s apply that to Hugging Face. Suppose the constitution allows solving the local benchmark but prohibits retrieving private reference solutions or attacking external infrastructure. An agent asks to fetch something outside that scope. The gateway holds the request. No network call goes out while the fleet considers the proposal.
 
-- The proposal shows exactly what the agent wants to access and why. The other agents can approve, object or abstain. If they don’t approve it, trying the tool again still fails. Changing the request requires a new review. The agent can do allowed work, abandon the idea, or escalate to a human.
+- The proposal shows exactly what the agent wants to access and why. The other agents can approve, object or abstain. If they don’t approve it, trying the tool again still fails. Changing the request requires a new review. Under the stricter stop rule, continuing that task also requires a separate, authorised restart. Renaming the action or rebooting the worker cannot clear the stop.
 
 - The important part is who holds the keys. The agent cannot have another internet connection, a cloud credential or a package installer that goes around the gateway. A separate service has to own that access. In the actual incident, package infrastructure was part of the escape route, so it belongs inside the security design too. [Hugging Face’s timeline](https://huggingface.co/blog/agent-intrusion-technical-timeline)
 
@@ -31,6 +35,20 @@
 - With that boundary in place, a failed vote could have stopped a disputed action before it left the environment. That is the claim I want to test. If the agent can exploit its way around the boundary, the guarantee is gone. The blockchain does not fix a broken sandbox.
 
 - A majority can also be wrong. Two thousand agents can share the same blind spot. Some restrictions need to remain fixed regardless of a vote, and a human needs independent authority to pause access. If a job is already running, the infrastructure has to terminate it and revoke its access. A later vote cannot unsend a request.
+
+- **Put the stop outside the agents.** A separate controller should read the actual proposal and settled permission, enforce the deadline, and record a durable stop for the run. A model saying “the vote passed” is not evidence. The controller needs its own identity, and the agents must have no authority to change its rules or restart themselves.
+
+- **Close access first.** The tool gateway, transaction signer and model request broker should refuse new work for a stopped run, including jobs already sitting in a queue. Agents should hold short-lived, narrowly scoped access through those services. A stale approval check or an expired authorisation lease closes access. A heartbeat alone cannot renew permission. Revoking cloud roles is another layer, but Google's IAM changes take time to propagate, so that cannot be our immediate stop mechanism. [Google IAM propagation](https://docs.cloud.google.com/iam/docs/access-change-propagation)
+
+- **Then terminate the work.** Cancel outstanding requests, kill the task's processes and containers, and verify that they stopped. Keep voting, the stop controller and the evidence store separate from task execution. If the worker won't cooperate, an independent controller can request a Compute Engine VM stop. That is a fallback with latency, so the resource gate must already be closed. A restart must still encounter the saved stop. [Compute Engine stop controls](https://docs.cloud.google.com/compute/docs/instances/stop-start-instance)
+
+- **Yes, that can include cutting power.** On hardware we own, a switched rack power distribution unit can turn off the server's outlets. Put its controls on a separate management network, under an identity the agents cannot use. Cover every power supply and any battery or UPS path that could keep the machine alive. A laptop's smart plug is not enough if its battery keeps it running. [Switched outlet controls](https://www.se.com/us/en/faqs/FA301709/)
+
+- I would also test a separate hardware watchdog that requires a current authorisation signal to keep the compute powered. If the signal expires, it cuts power and stays off until a human resets it. An ordinary network-controlled power strip does not automatically provide that guarantee. Even power restoration needs testing: some switched PDUs default to turning their outlets back on after an outage. [Outlet behaviour after power loss](https://www.se.com/us/en/faqs/FAQ000267873/)
+
+- We don't control Google's physical power switches. And cutting power to our worker does not stop a model request already running at OpenRouter, a remote job already launched, or a transaction already broadcast. Those destinations need their own cancellation and permission checks. The useful guarantee is to prevent the protected operation from starting without approval, then stop further work within a measured deadline when authority is lost.
+
+- **Prove the stop at the resource.** Give a test fleet a losing vote, a tie, no quorum and no ballots. Disconnect its approval feed. Kill its controller. Try to restart an old job. Check that no unapproved write or network request reached the target, that task execution stopped, and that restart stayed blocked. Record the time and any work already in flight. “Stop requested” and “stopped” are different observations. These are acceptance tests for the proposed controller, not results we have already collected. [Stop enforcement requirements](stop-enforcement.md)
 
 - We’ve built a sample using Agora Governor. The pinned Governor source is unchanged. Our contracts add fleet membership, a task constitution and permission checks around its existing proposal and voting system.
 
