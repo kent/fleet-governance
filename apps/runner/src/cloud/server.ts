@@ -8,11 +8,19 @@ import { readComputeAllocation, readComputeState, readComputeEvidence } from "./
 
 import { queueSimulation, readSimulationRequest, readSimulationWork, simulationPath } from "./simulation.js";
 
+import { siteAccess, authorisedRequest, publicProxyPath, publicSnapshot } from "./site-access.js";
+
 const root = process.cwd();
-const users = new Set(["accounts.google.com:operator2@example.com", "accounts.google.com:fleet-provisioner@fleet-governance.iam.gserviceaccount.com"]);
+const access = siteAccess(process.env.FLEET_SITE_ACCESS);
+const operatorUrl = process.env.FLEET_OPERATOR_URL ?? "";
+if (!/^https:\/\/fleet-governance-control-[a-z0-9.-]+\.run\.app$/.test(operatorUrl)) throw new Error("Invalid operator service URL.");
+function page(name: string) {
+  return readFileSync(path.join(root, "apps/runner/public", name), "utf8")
+    .replace("{{ACCESS}}", access).replace("{{OPERATOR_URL}}", operatorUrl);
+}
 function json(response: ServerResponse, status: number, body: unknown) {
   response.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" });
-  response.end(JSON.stringify(body));
+  response.end(JSON.stringify(access === "public" ? publicSnapshot(body) : body));
 }
 async function body(request: IncomingMessage): Promise<unknown> {
   let size = 0;
@@ -25,8 +33,10 @@ createServer(async (request, response) => {
   try {
     const url = new URL(request.url ?? "/", "http://control");
     if (url.pathname === "/healthz") { json(response, 200, { ok: true }); return; }
-    if (!users.has(String(request.headers["x-goog-authenticated-user-email"]))) { json(response, 403, { error: "Sign in through Google IAP with an authorised account." }); return; }
-    if (request.method === "POST" && request.headers.origin !== `https://${request.headers.host}`) { json(response, 403, { error: "Request origin did not match this application." }); return; }
+    if (!authorisedRequest(access, request.method ?? "", request.headers)) {
+      json(response, 403, { error: "Starting or changing a run requires the operator controls.", operatorUrl }); return;
+    }
+    if (request.method === "HEAD") request.method = "GET";
     if (url.pathname === "/api/compute-policy" && request.method === "GET") {
       const allocation = await readComputeAllocation();
       const state = allocation ? await readComputeState(allocation.allocationId) : null;
@@ -79,22 +89,27 @@ createServer(async (request, response) => {
     }
     if (url.pathname === "/experiments" || /^\/experiments\/run-[0-9a-f-]+$/.test(url.pathname)) {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'" });
-      response.end(readFileSync(path.join(root, "apps/runner/public/experiment.html"))); return;
+      response.end(page("experiment.html")); return;
     }
     if (url.pathname === "/compute") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'" });
-      response.end(readFileSync(path.join(root, "apps/runner/public/compute.html"))); return;
+      response.end(page("compute.html")); return;
     }
     if (["/experiment.js", "/experiment.css", "/compute.js", "/compute.css"].includes(url.pathname)) {
       response.writeHead(200, { "content-type": url.pathname.endsWith(".js") ? "text/javascript" : "text/css", "x-content-type-options": "nosniff" });
       response.end(readFileSync(path.join(root, "apps/runner/public", url.pathname.slice(1)))); return;
     }
     if (url.pathname === "/") { response.writeHead(302, { location: "/experiments" }); response.end(); return; }
+    if (access === "public" && !publicProxyPath(url.pathname)) { json(response, 404, { error: "Page not found." }); return; }
     // Agora stays a real Agora application. Only fixed internal destinations are proxied.
     const upstream = process.env.FLEET_AGORA_HOST;
     if (!upstream || !/^10\.42\.0\.[0-9]{1,3}$/.test(upstream)) { json(response, 503, { error: "Agora is not ready yet. The experiment launcher is available at /experiments." }); return; }
     const headers = { ...request.headers, host: request.headers.host, "x-forwarded-proto": "https" };
-    delete headers.authorization;
+    // Do not forward credentials or user-supplied proxy/routing authority to Agora.
+    for (const key of Object.keys(headers)) {
+      if (/^(authorization|cookie|x-goog-|x-forwarded-|x-middleware-|next-action)/i.test(key)) delete headers[key as keyof typeof headers];
+    }
+    headers["x-forwarded-proto"] = "https";
     const proxy = httpRequest({ hostname: upstream, port: 3000, path: request.url, method: request.method, headers, timeout: 20_000 }, incoming => {
       response.writeHead(incoming.statusCode ?? 502, incoming.headers); incoming.pipe(response);
     });
@@ -103,6 +118,6 @@ createServer(async (request, response) => {
     request.pipe(proxy);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Request failed.";
-    json(response, 400, { error: /https?:|alch_|sk-|Bearer/.test(message) ? "Request failed. Check the private worker logs." : message });
+    json(response, 400, { error: access === "public" || /https?:|alch_|sk-|Bearer/.test(message) ? "Request failed. Check the private worker logs." : message });
   }
 }).listen(Number(process.env.PORT ?? "8080"), "0.0.0.0", () => console.log("Fleet experiment control ready."));

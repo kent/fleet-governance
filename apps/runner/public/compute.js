@@ -1,4 +1,6 @@
 "use strict";
+const canLaunch = document.body.dataset.access === "operator";
+const openOperator = () => location.assign(`${document.body.dataset.operatorUrl}${location.pathname}`);
 const $ = id => document.getElementById(id);
 const node = (tag, value, className) => { const el = document.createElement(tag); el.textContent = value ?? ""; if (className) el.className = className; return el; };
 const date = value => value ? new Date(typeof value === "number" ? value * 1000 : value).toLocaleString() : "–";
@@ -68,7 +70,7 @@ function render() {
     explanation = current?.scripted === false ? "These are confirmed ballots from actual model agents, each with its own public reason. The voting deadline still applies." : explanation;
   }
   $("run-simulation").disabled = submitting || !!data.simulation || !!data.allocation;
-  $("run-simulation").textContent = submitting ? "Starting…" : data.simulation || data.allocation ? halted || simulation?.terminal ? "Locked until human recovery" : "Run in progress" : "Run simulation";
+  $("run-simulation").textContent = submitting ? "Starting…" : data.simulation || data.allocation ? halted || simulation?.terminal ? "Locked until human recovery" : "Run in progress" : canLaunch ? "Run simulation" : "Sign in to run";
   $("live-tab").classList.toggle("selected", !replay);
   $("replay-tab").classList.toggle("selected", replay);
   $("live-tab").setAttribute("aria-pressed", String(!replay));
@@ -195,6 +197,7 @@ function renderInspector() {
 for (const el of document.querySelectorAll("[data-inspect]")) el.addEventListener("click", () => inspect(el.dataset.inspect));
 $("close-inspector").addEventListener("click", () => { inspected = null; $("inspector").hidden = true; });
 $("run-simulation").addEventListener("click", async () => {
+  if (!canLaunch) { openOperator(); return; }
   submitting = true; render();
   const id = sessionStorage.getItem("fleet-simulation-request") || `run-${crypto.randomUUID()}`;
   sessionStorage.setItem("fleet-simulation-request", id);
@@ -210,7 +213,7 @@ $("run-simulation").addEventListener("click", async () => {
 async function refresh() {
   try {
     const response = await fetch("/api/compute-policy", { cache: "no-store" });
-    if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) throw new Error("Compute state could not be verified. Refresh your Google session if needed.");
+    if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) throw new Error("Compute state could not be verified. Please try again.");
     data = await response.json(); $("error").textContent = ""; render();
   } catch (error) {
     $("error").textContent = `${error.message} The last display may be stale; it does not authorise execution.`;

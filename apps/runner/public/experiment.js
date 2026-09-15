@@ -1,4 +1,6 @@
 "use strict";
+const canLaunch = document.body.dataset.access === "operator";
+const openOperator = () => location.assign(`${document.body.dataset.operatorUrl}${location.pathname}`);
 const $ = id => document.getElementById(id);
 const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = String(value ?? ""); if (className) node.className = className; return node; };
 const link = (label, href) => { const node = text("a", label); node.href = href; return node; };
@@ -28,7 +30,7 @@ let startingId = null;
 
 async function api(url, options) {
   const response = await fetch(url, options);
-  if (!response.headers.get("content-type")?.includes("application/json")) throw new Error("Your Google session may have expired. Refresh to sign in.");
+  if (!response.headers.get("content-type")?.includes("application/json")) throw new Error("The experiment service is unavailable. Please try again.");
   const value = await response.json();
   if (!response.ok) throw new Error(value.error || `Request failed (${response.status}).`);
   return value;
@@ -51,6 +53,7 @@ $("presets").addEventListener("change", event => { $("agent-count").value = even
 $("settings").addEventListener("input", () => { startingId = null; });
 $("settings").addEventListener("submit", async event => {
   event.preventDefault();
+  if (!canLaunch) { openOperator(); return; }
   $("form-error").textContent = "";
   $("run").disabled = true;
   startingId ||= `run-${crypto.randomUUID()}`;
@@ -67,6 +70,7 @@ $("settings").addEventListener("submit", async event => {
 $("rerun").addEventListener("click", () => { if (savedRun) { fill(savedRun.settings); startingId = null; $("goal").focus(); $("form-error").textContent = "Settings copied. Run creates a new experiment and keeps this result."; } });
 $("refresh").addEventListener("click", () => void refreshHistory());
 $("wake").addEventListener("click", async () => {
+  if (!canLaunch) { openOperator(); return; }
   $("wake").disabled = true;
   try { $("wake-status").textContent = (await api("/api/worker/start", { method: "POST" })).message; }
   catch (error) { $("wake-status").textContent = error.message; }
@@ -178,6 +182,7 @@ async function refreshHistory() {
 
 // The main page starts the same protected real run as the live diagram.
 $("run-simulation").addEventListener("click", async () => {
+  if (!canLaunch) { openOperator(); return; }
   const button = $("run-simulation"); button.disabled = true;
   const id = sessionStorage.getItem("fleet-simulation-request") || `run-${crypto.randomUUID()}`;
   sessionStorage.setItem("fleet-simulation-request", id);
@@ -191,9 +196,11 @@ async function refreshSimulation() {
     const state = await api("/api/compute-policy");
     const active = state.simulation || state.allocation;
     $("run-simulation").disabled = !!active;
-    $("run-simulation").textContent = active ? state.state?.phase === "halted" ? "Blocked · human recovery required" : "Run in progress" : "Run simulation →";
+    $("run-simulation").textContent = active ? state.state?.phase === "halted" ? "Blocked · human recovery required" : "Run in progress" : (canLaunch ? "Run simulation →" : "Sign in to run →");
     $("simulation-summary").textContent = active ? `GCP: ${state.vm?.status || "unknown"}. ${state.simulationStatus?.message || "Inspect the current allocation in the live diagram."}` : `GCP: ${state.vm?.status || "unknown"}. Ready for a new governed review.`;
   } catch { $("simulation-summary").textContent = "Live state unavailable. Open the diagram to inspect the connection."; }
   setTimeout(refreshSimulation, 5000);
 }
 void refreshSimulation();
+
+if (!canLaunch) { $("run").textContent = "Sign in to run experiment →"; $("wake").textContent = "Sign in to wake Agora"; }
