@@ -81,3 +81,17 @@ resource "google_project_service" "compute_scheduler" {
   service            = "cloudscheduler.googleapis.com"
   disable_on_destroy = false
 }
+
+# instances.testIamPermissions requires instances.list even when testing that all
+# mutation permissions are absent. This is read-only inventory, not VM administration.
+# https://docs.cloud.google.com/compute/docs/reference/rest/v1/instances/testIamPermissions
+resource "google_project_iam_custom_role" "runtime_permission_probe" {
+  role_id     = "fleetRuntimePermissionProbe"
+  title       = "Read Fleet instance inventory for permission verification"
+  permissions = ["compute.instances.list"]
+}
+resource "google_project_iam_member" "runtime_permission_probe" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.runtime_permission_probe.name
+  member  = "serviceAccount:${google_service_account.runtime.email}"
+}
