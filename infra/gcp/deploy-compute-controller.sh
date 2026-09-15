@@ -23,6 +23,9 @@ gcloud scheduler jobs "$operation" http fleet-compute-policy --location=us-centr
   --schedule='* * * * *' --time-zone=UTC --uri="$url/reconcile" --http-method=POST \
   --oidc-service-account-email="$scheduler" --oidc-token-audience="$url" \
   --attempt-deadline=120s --max-retry-attempts=3 --min-backoff=5s --max-backoff=30s --quiet
+if [[ "$(gcloud scheduler jobs describe fleet-compute-policy --location=us-central1 --format='value(state)')" == PAUSED ]]; then
+  gcloud scheduler jobs resume fleet-compute-policy --location=us-central1 --quiet
+fi
 
 # Unauthenticated requests must not be able to drive the controller.
 status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$url/reconcile")

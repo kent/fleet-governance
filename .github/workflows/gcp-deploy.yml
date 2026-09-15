@@ -145,6 +145,8 @@ jobs:
             variable="${variable//-/_}"
             printf '%s=%s/%s@%s\n' "$variable" "$REGISTRY" "$name" "$digest" >> "$GITHUB_ENV"
           done
+      - name: Deploy independent compute governance controller
+        run: bash infra/gcp/deploy-compute-controller.sh
       - name: Check and start the fixed worker
         run: |
           # A routine deployment must not revive an allocation that governance stopped.
@@ -192,8 +194,6 @@ jobs:
           }
           Path('infra/gcp/runtime/worker-config.json').write_text(json.dumps(config))
           PY
-      - name: Deploy independent compute governance controller
-        run: bash infra/gcp/deploy-compute-controller.sh
       - name: Deploy worker through IAP and verify containment
         env:
           OPENROUTER_VERSION: ${{ inputs.openrouter_secret_version }}
