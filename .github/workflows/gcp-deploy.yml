@@ -22,7 +22,9 @@ permissions:
   contents: read
   id-token: write
 concurrency:
-  group: gcp-fleet-governance
+  # Image-only builds may run while a governance drill owns the worker. All
+  # operations that start or deploy compute still share the infrastructure lock.
+  group: ${{ inputs.deploy && 'gcp-fleet-governance' || format('gcp-fleet-build-{0}', github.run_id) }}
   cancel-in-progress: false
 env:
   CLOUDSDK_CORE_PROJECT: fleet-governance
