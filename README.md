@@ -18,6 +18,7 @@ reference implementation, with the enforcement boundaries described below.
 [Inspect the 2,000-member results](docs/evidence/execution-2000-1789411525744/report.md) ·
 [Understand the execution permissions](docs/execution-permits.md) ·
 [Read the fleet shutdown requirements](docs/stop-enforcement.md) ·
+[Control compute with a required vote](docs/compute-governance.md) ·
 [Rebuild the public record](docs/record-reconstruction.md)
 
 GCP infrastructure and deployment run through GitHub Actions, configured for a dedicated project
@@ -48,6 +49,13 @@ The run cost **$0.03190** in inference. Its report retains a failed accounting c
 response exceeded its reserved output count, so the guard stopped further work. The request
 limit now leaves headroom inside that reservation. The $1 run allowance and $50 key limit stay
 unchanged. See the [demo checklist](docs/turnkey-demo.md).
+
+The [compute policy visualisation](https://fleet-governance-449245570324.us-central1.run.app/compute)
+shows the separate controller, required vote, VM state and durable restart lock. Live GCP
+observations are separate from recorded shutdown replays. The operator can arm a fixed
+allocation through GitHub; a failed required approval then triggers the independent VM stop.
+A normal unarmed experiment retains the exact-action gateway and native VM expiry. See the
+[compute demo and recovery steps](docs/compute-governance.md) for this distinction.
 
 ## Why build this?
 
