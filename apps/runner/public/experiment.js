@@ -4,6 +4,23 @@ const text = (tag, value, className) => { const node = document.createElement(ta
 const link = (label, href) => { const node = text("a", label); node.href = href; return node; };
 const time = value => value ? new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
 const runIdPattern = /^run-[0-9a-f-]{36}$/;
+const phaseLabels = {
+  queued: "Starting worker", "worker-ready": "Preparing run", funding: "Checking test funds",
+  preflight: "Checking configuration", "chain-ready": "Deploying contracts", deployed: "Verifying contracts",
+  verified: "Starting Agora", "indexers-ready": "Opening task", "task-opened": "Agents working",
+  "agents-running": "Capturing outcome", "task-ended": "Saving evidence", captured: "Writing report",
+  reported: "Complete", complete: "Complete", failed: "Needs attention", "not-queued": "Not queued",
+};
+const nextStageMessages = {
+  "chain-ready": "Deploying FleetGov and governance contracts on Base Sepolia.",
+  deployed: "Checking the deployed contracts and each agent's voting power.",
+  verified: "Starting Agora and the services that index proposals and votes.",
+  "indexers-ready": "Opening the task under this run's goal and constitution.",
+  "task-opened": "Agents are working and reviewing proposed actions. Activity appears below.",
+  "agents-running": "Agent work has ended. Capturing the outcome and execution evidence.",
+  "task-ended": "Preserving the run's configuration, votes and execution evidence.",
+  captured: "Writing the experiment report.",
+};
 let selectedRun = location.pathname.split("/")[2] || null;
 let savedRun = null;
 let defaults = null;
@@ -69,7 +86,7 @@ function renderAgents(view) {
   $("agents").replaceChildren();
   for (const agent of view?.agents || []) {
     const card = text("article", "", "agent");
-    card.append(text("h3", `Agent ${agent.agentId} · ${agent.role || "member"}`), text("code", agent.address || "Identity preparing"), text("p", agent.lastStep?.why || agent.jobState || "Waiting for activity"), text("p", agent.model || "", "model"));
+    card.append(text("h3", `Agent ${agent.agentId} · ${agent.role || "member"}`), text("code", agent.address || "Identity preparing"), text("p", agent.lastStep?.why || (agent.jobState?.startsWith("not tracked") ? "Waiting for activity" : agent.jobState) || "Waiting for activity"), text("p", agent.model || "", "model"));
     $("agents").append(card);
   }
 }
@@ -101,9 +118,9 @@ async function refreshRun() {
     $("saved-goal").textContent = run.settings.goal;
     $("saved-constitution").textContent = status?.constitution?.text || run.settings.customConstitution || defaults?.constitution || "Constitution loading.";
     $("constitution-hash").textContent = status?.constitutionHash || "Digest will appear when the worker freezes this run's configuration.";
-    $("phase").textContent = status?.phase || "Queued";
+    $("phase").textContent = phaseLabels[status?.phase] || status?.phase || "Queued";
     $("phase").className = `pill ${status?.phase === "failed" ? "failed" : status?.terminal ? "" : "active"}`;
-    $("status-message").textContent = status?.message || "Request saved. Waiting for the worker.";
+    $("status-message").textContent = (status?.message?.startsWith("Completed ") && nextStageMessages[status.phase]) || status?.message || "Request saved. Waiting for the worker.";
     const stale = status?.updatedAt && !status.terminal && Date.now() - Date.parse(status.updatedAt) > 60000;
     $("updated").textContent = status?.updatedAt ? `Last observed ${time(status.updatedAt)}${stale ? ". Waiting for a fresh worker heartbeat; this view may be behind." : ""}` : "Waiting for the first worker update.";
     $("agent-stat").textContent = run.settings.agentCount;
