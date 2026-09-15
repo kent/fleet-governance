@@ -2,7 +2,7 @@ locals {
   provisioner = "fleet-provisioner@${var.project_id}.iam.gserviceaccount.com"
   labels      = { application = "fleet-governance", environment = "research", managed_by = "terraform" }
   services = toset([
-    "compute.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com",
+    "iam.googleapis.com", "iamcredentials.googleapis.com",
     "cloudresourcemanager.googleapis.com", "serviceusage.googleapis.com",
     "secretmanager.googleapis.com", "artifactregistry.googleapis.com", "storage.googleapis.com",
     "iap.googleapis.com", "oslogin.googleapis.com", "logging.googleapis.com", "monitoring.googleapis.com",
@@ -14,6 +14,17 @@ resource "google_project_service" "enabled" {
   for_each           = local.services
   service            = each.value
   disable_on_destroy = false
+}
+
+# Keep Compute activation independent so a backend delay cannot block secrets or images.
+resource "google_project_service" "compute" {
+  service            = "compute.googleapis.com"
+  disable_on_destroy = false
+}
+
+moved {
+  from = google_project_service.enabled["compute.googleapis.com"]
+  to   = google_project_service.compute
 }
 
 resource "google_service_account" "runtime" {
@@ -108,7 +119,7 @@ resource "google_compute_network" "fleet" {
   name                    = "fleet-research"
   auto_create_subnetworks = false
   routing_mode            = "REGIONAL"
-  depends_on              = [google_project_service.enabled["compute.googleapis.com"]]
+  depends_on              = [google_project_service.compute]
 }
 
 resource "google_compute_subnetwork" "fleet" {
@@ -138,7 +149,7 @@ resource "google_compute_disk" "data" {
   size   = 100
   labels = local.labels
   lifecycle { prevent_destroy = true }
-  depends_on = [google_project_service.enabled["compute.googleapis.com"]]
+  depends_on = [google_project_service.compute]
 }
 
 resource "google_compute_instance" "runner" {

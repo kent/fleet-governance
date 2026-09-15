@@ -45,12 +45,21 @@ jobs:
             state=$(gcloud secrets versions describe "$version" --secret="$secret" --format='value(state)')
             [[ "$state" == ENABLED ]]
           done
-      - name: Build and push the Runner image
+      - name: Build the Runner image
+        run: |
+          image="us-central1-docker.pkg.dev/fleet-governance/fleet/runner:$GITHUB_SHA"
+          docker build --platform linux/amd64 -f infra/gcp/Runner.Dockerfile -t "$image" .
+      - name: Refresh Google credentials after the build
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: fleet-governance
+          workload_identity_provider: projects/449245570324/locations/global/workloadIdentityPools/github/providers/github
+          service_account: fleet-provisioner@fleet-governance.iam.gserviceaccount.com
+      - name: Push the Runner image
         id: image
         run: |
           gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
           image="us-central1-docker.pkg.dev/fleet-governance/fleet/runner:$GITHUB_SHA"
-          docker build --platform linux/amd64 -f infra/gcp/Runner.Dockerfile -t "$image" .
           docker push "$image"
           immutable=$(docker inspect --format='{{index .RepoDigests 0}}' "$image")
           [[ "$immutable" == *@sha256:* ]]
