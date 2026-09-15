@@ -61,8 +61,8 @@ export async function armComputeAllocation(input: unknown): Promise<ComputeAlloc
   return allocation;
 }
 
-/** Called only after the workflow pauses Scheduler, removes its invoker binding,
- * waits for existing requests to drain, and verifies Compute Engine TERMINATED.
+/** Called only after the workflow pauses Scheduler, deletes the controller service,
+ * waits beyond its 120-second request timeout for existing requests to drain, and verifies Compute Engine TERMINATED.
  * Recovery is a separate human authorisation, never an agent vote or routine Wake. */
 export async function releaseComputeAllocation(expectedId: string): Promise<void> {
   const allocation = await readComputeAllocation();
