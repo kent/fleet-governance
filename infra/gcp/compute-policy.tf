@@ -69,6 +69,14 @@ resource "google_storage_bucket_iam_member" "launcher_compute_read" {
   member = "serviceAccount:${google_service_account.control.email}"
 }
 
+# The trusted Runner can check the latch before dispatch, but cannot issue policy,
+# erase a stop or grant itself another allocation. Agent tool containers have no credentials.
+resource "google_storage_bucket_iam_member" "runtime_compute_read" {
+  bucket = google_storage_bucket.compute_control.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.runtime.email}"
+}
+
 resource "google_project_service" "compute_scheduler" {
   service            = "cloudscheduler.googleapis.com"
   disable_on_destroy = false

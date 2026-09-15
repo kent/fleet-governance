@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { ACTIVE, runPath, type DemoRun, type DemoStatus } from "./control.js";
 import { readObject, writeObject } from "./google.js";
+import { isComputeRunBlocked } from "./compute-store.js";
 
 const delay = () => new Promise(resolve => setTimeout(resolve, 5000));
 let stopping = false;
@@ -15,6 +16,7 @@ while (!stopping && process.env.FLEET_WORKER_ENABLED === "1") {
   try {
     const active = await readObject<{ runId: string }>(ACTIVE);
     if (!active) { await delay(); continue; }
+    if (await isComputeRunBlocked(active.runId)) { await delay(); continue; }
     const status = await readObject<DemoStatus>(runPath(active.runId, "status.json"));
     if (status?.terminal) { await delay(); continue; }
     const run = await readObject<DemoRun>(runPath(active.runId, "request.json"));

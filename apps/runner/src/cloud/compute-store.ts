@@ -45,6 +45,10 @@ export async function readComputeState(allocationId: string): Promise<{ value: C
   // inferred optional types include it; the persisted record type uses absent keys.
   return stored ? { value: recordSchema.parse(stored.value) as ComputeRecord, generation: stored.generation } : null;
 }
+export async function isComputeRunBlocked(runId: string): Promise<boolean> {
+  if (!/^run-[0-9a-f-]{36}$/.test(runId)) throw new Error("Invalid compute run identity.");
+  return await object(`blocked-runs/${runId}.json`) !== null;
+}
 export async function saveComputeState(value: ComputeRecord, generation: string): Promise<boolean> {
   const validated = recordSchema.parse(value);
   if (!/^[0-9]+$/.test(generation)) throw new Error("Invalid compute state generation.");

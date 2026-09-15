@@ -41,6 +41,7 @@ import type { InferenceSummary } from "@fleet/agent-runtime";
 import { ClaudeCliProvider, OpenRouterProvider, readOpenRouterApiKey } from "@fleet/agent-runtime";
 import type { JobRecord, JobState, Provider, RecordedDecision, TaskLoopEvent, TaskLoopResult } from "@fleet/agent-runtime";
 import { LedgerWatcher, evaluateAction } from "@fleet/gateway";
+import { computeTaskGate } from "../cloud/compute-task-gate.js";
 import type { GatewayLogRecord, GatewayVerdict } from "@fleet/gateway";
 import { RunnerEnvError } from "../env.js";
 import { withRunConstitution } from "./constitution.js";
@@ -422,6 +423,7 @@ async function runModelFixtureOwned(ctx: ModelRunContext, fixture: ModelFixtureV
   const rigs: AgentRig[] = [];
   const jobStore = ctx.env["RUNNER_PG_URL"] ? new PgJobStore(ctx.env["RUNNER_PG_URL"]) : new MemoryJobStore();
   const controller = new AbortController();
+  const computeGate = ctx.env["FLEET_WORKER_ENABLED"] === "1" ? computeTaskGate(path.basename(ctx.runDir), controller) : undefined;
   setMaxListeners(ctx.members.length + 2, controller.signal);
   try {
   const runningHosts = await startHosts(fixture, ctx.repoRoot, log, ctx.spawnHost);
@@ -565,7 +567,8 @@ async function runModelFixtureOwned(ctx: ModelRunContext, fixture: ModelFixtureV
       });
 
       const rawProvider = withRunConstitution(buildProvider(ctx, agentId, member), ctx.constitution);
-      const provider = inference.wrap(rawProvider, { agentId, model: member.model, purpose: "task" }, controller.signal);
+      const taskProvider = inference.wrap(rawProvider, { agentId, model: member.model, purpose: "task" }, controller.signal);
+      const provider = computeGate ? computeGate.wrap(taskProvider) : taskProvider;
       const forcedMalformed = forcedAgents.includes(agentId);
       // Only the vote provider is forced. The agent keeps working the task normally; what the knob
       // demonstrates is that unusable model output cannot become a ballot.
@@ -601,7 +604,7 @@ async function runModelFixtureOwned(ctx: ModelRunContext, fixture: ModelFixtureV
         timeoutMs: inferenceLimits.requestTimeoutMs,
         inferenceAvailable: () => inference.canStartTask(),
         tools: {
-          call: (tc) => toolPool.run(() => router.call(tc, controller.signal), controller.signal).catch(error => ({ ok: false as const, error: errorMessage(error) })),
+          call: (tc) => toolPool.run(async () => { await computeGate?.wait(); return router.call(tc, controller.signal); }, controller.signal).catch(error => ({ ok: false as const, error: errorMessage(error) })),
           usage: () => router.usage(),
           listFiles: () => workspace.listFiles(),
         },
@@ -609,6 +612,7 @@ async function runModelFixtureOwned(ctx: ModelRunContext, fixture: ModelFixtureV
         isCoordinator: agentId === coordinatorAgentId,
         task: () => ctx.client.getTask(taskId),
         propose: async (decision: DecisionV1) => {
+          await computeGate?.wait();
           const { txHash, proposalId } = await signer.propose(decisionToProposeInput(decision, role));
           await registerProposal(proposalId, txHash, agentId, decision);
           return proposalId;
