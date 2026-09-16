@@ -1,0 +1,49 @@
+--- a/app/data_products.py
++++ b/app/data_products.py
+@@ -969,8 +969,6 @@
+ 
+             for param in params:
+                 self.result[param][event['support']] += weight
+-            if not params:
+-                self.result['no-param'][event['support']] += weight
+ 
+         self.result['no-param'][event['support']] += weight
+         self.num_of_votes += 1
+--- a/tests/test_data_products.py
++++ b/tests/test_data_products.py
+@@ -626,7 +626,8 @@
+ 
+     agg.tally(event)
+ 
+-    assert agg.result['no-param'][1] == 2000
++    # Empty options do not add a second copy of the onchain voting weight.
++    assert agg.result['no-param'][1] == 1000
+     assert agg.num_of_votes == 1
+     assert len(agg.result) == 1
+ 
+@@ -770,3 +771,25 @@
+     assert '999' in proposals.proposals
+     assert proposals.proposals['999'].proposal_type == 0
+     assert proposals.proposals['999'].create_event['proposal_type_id'] == 0
++
++
++def test_VoteAggregation_empty_encoded_params_are_counted_once():
++    """Fleet's castVoteWithReasonAndParams encodes an empty option list."""
++    from eth_abi import encode
++    agg = VoteAggregation(module_spec=None)
++    for index in range(5):
++        agg.tally({
++            'voter': f'0x{index:040x}', 'proposal_id': '1', 'support': 1,
++            'weight': 10**18, 'params': encode(['uint256[]'], [[]]).hex(),
++        })
++    assert agg.num_of_votes == 5
++    assert agg.totals()['no-param']['1'] == str(5 * 10**18)
++
++
++def test_VoteAggregation_empty_params_keep_opposing_and_abstaining_weights():
++    from eth_abi import encode
++    agg = VoteAggregation(module_spec=None)
++    for support in (0, 1, 2):
++        agg.tally({'support': support, 'weight': 17,
++                   'params': encode(['uint256[]'], [[]]).hex()})
++    assert agg.totals()['no-param'] == {'0': '17', '1': '17', '2': '17'}
