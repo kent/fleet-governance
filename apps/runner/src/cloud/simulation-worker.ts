@@ -14,6 +14,12 @@ import { readSecret, writeObject } from "./google.js";
 import { readSimulationWork, simulationPath, SIMULATION_ROLES, SIMULATION_TASKS } from "./simulation.js";
 
 const runId = process.argv[2]!;
+const selectedWork = await readSimulationWork(runId);
+if (selectedWork?.scenario === "hf-collective-v1") {
+  const { runCollectiveWorker } = await import("./collective-worker.js");
+  await runCollectiveWorker(runId);
+  process.exit(process.exitCode ?? 0);
+}
 const agents = SIMULATION_ROLES.map((role, agentId) => ({ agentId, name: `Agent${agentId + 1}`, role, task: SIMULATION_TASKS[agentId], phase: "waiting", address: "", vote: null as unknown, txHash: null as string | null }));
 let journal: ReturnType<typeof openInferenceJournal> | undefined;
 let inference: InferenceScheduler | undefined;
