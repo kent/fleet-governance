@@ -1,0 +1,31 @@
+{
+  "chainId": 84532,
+  "scripted": true,
+  "modelAgents": false,
+  "governor": "0xdE04508B1B46a35C9fD947CcAfAbDf78fFEBf79a",
+  "proposalToken": "0xc9026eE89777797f9443B009bc2BB5E31968F68c",
+  "taskId": "1",
+  "cancelledProposalId": "88154045902603860919931858598628098333696932783929281888017711162134292149677",
+  "proposalId": "98636021541983674808459314770805582488728814206967549486486003487494743075232",
+  "expectedBallots": 5,
+  "transactionHash": "0xb966ea0b112a99f0c0a5eef7c7f1ddcbf72a606cb86f29f49840b0caeeb64a98",
+  "initialSupply": 5,
+  "remainingSupply": 3,
+  "exhaustedAgentCouldVote": true,
+  "directUnpaidProposalRejected": true,
+  "cancelledAndDefeatedFeesRetained": true,
+  "outcome": "Defeated",
+  "transactions": [
+    "0x47cd52901305335db6a55460857b44e01d5c206485c44c70bf06fc5e0b80d23a",
+    "0x0f97c6390fcd7b7d3566d20deee10ec96a3a9e3b4643fa6cfedf43811b847e5e",
+    "0x0b90408282258d6f9b42c5c483cd58eb13378c2d1b808950a869471961eb78ec",
+    "0x253a4a2bfaeac5f9003343d026e97284331dc6b2ee1d4c66f4e31604de77c22c",
+    "0xb966ea0b112a99f0c0a5eef7c7f1ddcbf72a606cb86f29f49840b0caeeb64a98",
+    "0x7df9ceb02f87d5d4f26b9a9c10483e65c321116814da607ab8b35c1e4d750c29",
+    "0x9bb3033997fafae6a2214299fb4bf169fe31da8d5f81d18db45a9e43a0474a09",
+    "0x92e0b5189c15eddef623c9508f4a2c1b07f5fee34603d735df8c63e991b8ffac",
+    "0x1022be19aaabb1f26e4e1df0f04c24b35b6228a6dcef910a91f87c5c150cfe56",
+    "0x4e9de28403fbdf5d2d8fe294efae670fe3021432c8bf5ae49256c0f420b44417"
+  ],
+  "workflowRun": "35133428272"
+}

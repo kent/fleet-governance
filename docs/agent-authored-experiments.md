@@ -96,6 +96,11 @@ part of the trust boundary.
 
 ## Evidence and verification
 
+The [current ERC-20 deployment and live protocol test](evidence/token-governance-base-sepolia-20260916/report.md)
+verify atomic burns, rejection after exhaustion, non-refundable fees and voting with an
+empty proposal balance. That test used scripted ballots. Earlier model experiments below
+retain their original Governor and credit-ledger rules.
+
 The public `/experiments` index merges historical task runs and compute experiments.
 `/experiments/<run-id>` is the canonical record. New requests preserve their configuration;
 preparation copies it into operator-controlled storage. The diagram and activity log show

@@ -1,13 +1,33 @@
 {
   "chainId": 84532,
-  "deploymentBlock": 46858912,
-  "source": "docs/evidence/base-sepolia-20260915/report.md",
+  "deploymentBlock": 46907131,
+  "source": "docs/evidence/token-governance-base-sepolia-20260916/report.md",
   "addresses": {
-    "registry": "0x5890f7fdaa0504c317c6bbe361f267223f3b3c60",
-    "token": "0xc70af42f2e4fc5551d7046e955c9aea6c16eeb8f",
-    "timelock": "0xfb7355706bf12d34d013928d281c942848c3be76",
-    "ledger": "0x1a6761e911b3f3c2ce33a4fd5eddaf50cda3d9ed",
-    "hook": "0x2af75b471f04398d6816238277113eb0cf8a22c0",
-    "governor": "0x9594876c90a14888c6734231a731caba4c0d0781"
+    "artifactStore": "0xDf473E1EBDd941DFc211dFFe9a5c164503314550",
+    "executor": "0x1b483311993086aab16bA637eb66Ee2379430881",
+    "governor": "0xdE04508B1B46a35C9fD947CcAfAbDf78fFEBf79a",
+    "hook": "0x5986F7fC203e32B8d94f9f46594dfd7D545422c0",
+    "ledger": "0xA9108a2e6b39DBE6beeA997b8CC4FCeCBD436e45",
+    "registry": "0x2580Fd78D393b3F92bB7ce9Cf79B6cAA77560Ad9",
+    "timelock": "0x6bd2C45Af116f07dDA5eF89F92c7521d2AE2f84a",
+    "token": "0x7d49b367A4c028c886A90ab8648e94e37b57A3d3"
+  },
+  "proposalBudget": {
+    "schema": "fleet.proposal-budget.v3",
+    "chainId": 84532,
+    "address": "0xdaec0A3AD81Fd988120c877cb47450323809DAFb",
+    "governor": "0xdE04508B1B46a35C9fD947CcAfAbDf78fFEBf79a",
+    "hook": "0x5986F7fC203e32B8d94f9f46594dfd7D545422c0",
+    "token": "0x7d49b367A4c028c886A90ab8648e94e37b57A3d3",
+    "operator": "0xd904518FB12640a8405b36c33b0F0C87098F7977",
+    "codeHash": "0x46eb1cd5c2b8233f26e1d44ec61fb8e7afc04501d5386a0eaefc8bfddb08695a",
+    "observedBlock": "46907148",
+    "revision": "53553bc198aa1c6cef57864ceb8cea36e35fd4dc",
+    "workflowRun": "35133129643"
+  },
+  "verification": {
+    "proposalId": "98636021541983674808459314770805582488728814206967549486486003487494743075232",
+    "expectedBallots": 5,
+    "scripted": true
   }
 }

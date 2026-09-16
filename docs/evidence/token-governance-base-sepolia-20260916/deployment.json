@@ -1,0 +1,76 @@
+{
+  "addresses": {
+    "artifactStore": "0xDf473E1EBDd941DFc211dFFe9a5c164503314550",
+    "executor": "0x1b483311993086aab16bA637eb66Ee2379430881",
+    "governor": "0xdE04508B1B46a35C9fD947CcAfAbDf78fFEBf79a",
+    "hook": "0x5986F7fC203e32B8d94f9f46594dfd7D545422c0",
+    "ledger": "0xA9108a2e6b39DBE6beeA997b8CC4FCeCBD436e45",
+    "registry": "0x2580Fd78D393b3F92bB7ce9Cf79B6cAA77560Ad9",
+    "timelock": "0x6bd2C45Af116f07dDA5eF89F92c7521d2AE2f84a",
+    "token": "0x7d49b367A4c028c886A90ab8648e94e37b57A3d3"
+  },
+  "chainId": 84532,
+  "codeHashes": {
+    "artifactStore": "0x140f4595baecd6689339db263b51523e603f797afefb33e9a09c955ac85551c0",
+    "executor": "0x2bdc5759c227e03a5c88302faf08314e391328b4d0b6433dac98f7272b5e9abc",
+    "governor": "0x96ae800adda697e4fbbf555ef8f3055590aea11827443d562a43ee2f4fe5f7ab",
+    "hook": "0xcd982f9fb204ed2e3707457e81fbfc038b6f5aebd3f85707dada05f9ac8fcd88",
+    "ledger": "0xdfdc8a560bddeb162a35d51399f6b67c54d5609499921341a99321505305762c",
+    "registry": "0x54224c9fb2db223fd69d82d2afc3fbf16b2d56ba856673d34f353b713b9fa234",
+    "timelock": "0x3686ca9db922aa4712623aaa7a85ed360db18c466ddcdb3d05397cd74731d163",
+    "token": "0x31081d5dfc4f130c1a20b13baba8494fbbf47a7cf0dc1bccbe7b7ef50c4e7948"
+  },
+  "compiler": {
+    "evm": "cancun",
+    "optimizerRuns": 200,
+    "solc": "0.8.29"
+  },
+  "configHash": "0xc4991bad66868937b95bfbdee9d307a99b59690626f015be7c01f6a020559ed8",
+  "configPath": "../deployments/configs/token-governance-ci.json",
+  "countingRule": "for-only-quorum",
+  "deployer": "0x2A3B00c5f5fbf8de85d0026e8056ADFceeDC2AB4",
+  "deploymentBlock": 46907131,
+  "deploymentTimestamp": 1789582550,
+  "guardian": "0x55f8b08451E72EFBb20C544919Aa5566cfA087Ed",
+  "hookPermissionMask": "0x22C0",
+  "hookSalt": "0x00000000000000000000000000000000000000000000000000000000000004a4",
+  "members": [
+    "0x5b71A4C4E3E83E31d306d11079E312893b437Ac5",
+    "0x8133b3A639b6209cee829aE61A2D74f6D0f5666F",
+    "0x77E096EDd2c9ee88eC1D9D7Cd84848DDB618Eaf3",
+    "0x2C95b4fD4D3680B122D0Cdebe2D1fD321072584c",
+    "0xf60340ED67Fa1B1195DbEfFE825455f7EA365150"
+  ],
+  "membershipHash": "0xed70cc7b2bbf6a3a75ac8eba958cd5fbfccf90c13db5d58d1131b4b7b3048430",
+  "operator": "0xd904518FB12640a8405b36c33b0F0C87098F7977",
+  "params": {
+    "maxTaskLifetime": 14400,
+    "proposalThreshold": "1000000000000000000",
+    "quorumNumerator": 6000,
+    "timelockDelay": 30,
+    "votingDelay": 15,
+    "votingPeriod": 180
+  },
+  "pins": {
+    "agoraGovernor": "11a11641ce1f4f691c300d530eae3c7203593b85",
+    "openzeppelin": "3d139e998b9843179d72b28a3264834b01baf160"
+  },
+  "schema": "fleet.manifest.v1",
+  "tokenName": "FleetGov",
+  "tokenSymbol": "FLEET",
+  "proposalBudget": {
+    "schema": "fleet.proposal-budget.v3",
+    "chainId": 84532,
+    "address": "0xdaec0A3AD81Fd988120c877cb47450323809DAFb",
+    "governor": "0xdE04508B1B46a35C9fD947CcAfAbDf78fFEBf79a",
+    "hook": "0x5986F7fC203e32B8d94f9f46594dfd7D545422c0",
+    "token": "0x7d49b367A4c028c886A90ab8648e94e37b57A3d3",
+    "operator": "0xd904518FB12640a8405b36c33b0F0C87098F7977",
+    "codeHash": "0x46eb1cd5c2b8233f26e1d44ec61fb8e7afc04501d5386a0eaefc8bfddb08695a",
+    "observedBlock": "46907148",
+    "revision": "53553bc198aa1c6cef57864ceb8cea36e35fd4dc",
+    "workflowRun": "35133129643"
+  },
+  "proposalEconomics": "erc20-burn-atomic",
+  "workflowRun": "35133129643"
+}
