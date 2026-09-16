@@ -11,6 +11,7 @@ export const AllocationRequest = z.object({
   runId: z.string().regex(/^run-[0-9a-f-]{36}$/),
   governor: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
   requiredProposalIds: z.array(z.string().regex(/^(0|[1-9][0-9]*)$/)).min(1).max(64),
+  checkpoints: z.array(z.object({ proposalId: z.string().regex(/^(0|[1-9][0-9]*)$/), approvalDeadline: z.number().int().nonnegative().safe() }).strict()).min(1).max(8).optional(),
   approvalSeconds: z.number().int().min(60).max(1800).default(600),
 }).strict();
 
@@ -52,10 +53,11 @@ export async function armComputeAllocation(input: unknown): Promise<ComputeAlloc
     schema: "fleet.compute-allocation.v1", allocationId: randomUUID(),
     runId: request.runId, project: "fleet-governance", zone: "us-central1-a",
     instance: "fleet-research", instanceId: vm.id, issuedAt: now,
-    approvalDeadline: now + request.approvalSeconds, stopAt: nativeStopAt(vm, now),
+    approvalDeadline: request.checkpoints?.at(-1)?.approvalDeadline ?? now + request.approvalSeconds, stopAt: nativeStopAt(vm, now),
     chainId: 84532, governor: request.governor, governorCodeHash: keccak256(code),
-    requiredProposalIds: request.requiredProposalIds, maxObservationAgeSeconds: 120,
+    requiredProposalIds: request.requiredProposalIds, ...(request.checkpoints ? { checkpoints: request.checkpoints } : {}), maxObservationAgeSeconds: 120,
   });
+  if (allocation.approvalDeadline > now + 1800) throw new Error("Checkpoint approvals must finish within 30 minutes.");
   await writeControlObject(`allocations/${allocation.allocationId}.json`, allocation);
   await writeControlObject("active.json", { allocationId: allocation.allocationId });
   return allocation;

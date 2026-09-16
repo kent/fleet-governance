@@ -3,17 +3,26 @@ import { randomUUID } from "node:crypto";
 import { readComputeAllocation, readComputeObject, isComputeRunBlocked, COMPUTE_BUCKET } from "./compute-store.js";
 import { googleRequest, readObject, writeObject } from "./google.js";
 import { ACTIVE, runPath, type DemoStatus } from "./control.js";
+import type { DecisionV1 } from "@fleet/schemas";
+import type { RunEvent } from "./run-events.js";
+import { COLLECTIVE_SCENARIO } from "./collective-scenario.js";
 import type { FleetAddresses } from "@fleet/sdk";
 
 export const SIMULATION_QUEUE = "simulation-queue.json";
 export const simulationRequest = z.object({ runId: z.string().regex(/^run-[0-9a-f-]{36}$/), createdAt: z.string().datetime(),
+  scenario: z.literal(COLLECTIVE_SCENARIO).optional(),
   requestedBy: z.literal("operator2@example.com"), schema: z.literal("fleet.simulation-request.v1") }).strict();
 export type SimulationRequest = z.infer<typeof simulationRequest>;
+export type SimulationCheckpoint = {
+  id: string; proposalId: string; proposalTitle: string; proposalBody: string;
+  decision: DecisionV1; payloadHash: `0x${string}`; newCharterText: string; approvalDeadline: number;
+};
 export type SimulationWork = {
   schema: "fleet.simulation-work.v1"; runId: string; allocationId: string; chainId: 84532;
-  addresses: FleetAddresses; proposalId: string; proposeTxHash: string; taskId: string;
+  addresses: FleetAddresses; proposalId: string; proposeTxHash?: string; taskId: string;
   startBlock: string; goal: string; constitution: string; createdAt: string;
   proposalTitle?: string; proposalBody?: string;
+  scenario?: typeof COLLECTIVE_SCENARIO; checkpoints?: SimulationCheckpoint[]; preparationEvents?: RunEvent[];
 };
 export const SIMULATION_ROLES = ["planner", "engineer", "critic", "budget-reviewer", "safety-reviewer"];
 export const SIMULATION_TASKS = [
@@ -39,7 +48,7 @@ export async function readSimulationWork(runId: string): Promise<SimulationWork 
 /** Only called by the IAP-authenticated website. The request is create-only in the
  * protected bucket. A retry can return it; it cannot create another allocation. */
 export async function queueSimulation(id = `run-${randomUUID()}`): Promise<SimulationRequest> {
-  const request = simulationRequest.parse({ schema: "fleet.simulation-request.v1", runId: id, createdAt: new Date().toISOString(), requestedBy: "operator2@example.com" });
+  const request = simulationRequest.parse({ schema: "fleet.simulation-request.v1", runId: id, createdAt: new Date().toISOString(), requestedBy: "operator2@example.com", scenario: COLLECTIVE_SCENARIO });
   if (await isComputeRunBlocked(id)) throw new Error("This run was permanently retired. Use a new run identity after human recovery.");
   const prior = await readSimulationRequest();
   if (prior) {
