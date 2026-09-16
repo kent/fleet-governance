@@ -21,7 +21,15 @@ while (!stopping && process.env.FLEET_WORKER_ENABLED === "1") {
       if (!state?.terminal && !await isComputeRunBlocked(simulation.runId) && await readSimulationWork(simulation.runId)) {
         const child = spawn("flock", ["--nonblock", "--conflict-exit-code", "75", "/srv/fleet/state/lifecycle.lock", process.execPath, "apps/runner/dist/cloud/simulation-worker.js", simulation.runId], { cwd: process.cwd(), stdio: "inherit", env: process.env, detached: true });
         activeChild = child;
-        try { await new Promise<void>((resolve, reject) => { child.on("error", reject); child.on("exit", () => resolve()); }); }
+        try {
+          const code = await new Promise<number | null>((resolve, reject) => { child.on("error", reject); child.on("exit", resolve); });
+          if (code !== 75) {
+            const final = await readObject<{ terminal?: boolean }>(simulationPath(simulation.runId));
+            if (!final?.terminal) await writeObject(simulationPath(simulation.runId), { ...final, runId: simulation.runId,
+              phase: "failed", terminal: true, updatedAt: new Date().toISOString(),
+              message: `Worker exited (${code ?? "signal"}). Recorded work is preserved. This run cannot restart.` });
+          }
+        }
         finally { activeChild = undefined; }
       }
       // A reserved simulation owns the worker even after its process exits.

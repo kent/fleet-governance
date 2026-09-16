@@ -1,4 +1,4 @@
-import { closeSync, fsyncSync, mkdirSync, openSync, writeSync } from "node:fs";
+import { closeSync, fsyncSync, mkdirSync, openSync, writeSync, renameSync } from "node:fs";
 import { createWalletClient, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
@@ -15,6 +15,8 @@ import { readSecret, writeObject } from "./google.js";
 import { readSimulationWork, simulationPath, SIMULATION_ROLES, type SimulationCheckpoint } from "./simulation.js";
 import { COLLECTIVE_ASSIGNMENTS, COLLECTIVE_SCENARIO, COLLECTIVE_STEPS, CollectiveWorkReply, runCollectiveTool, type CollectiveMessage } from "./collective-scenario.js";
 import { runEvent, type RunEvent } from "./run-events.js";
+import { statusPublisher } from "./status-publisher.js";
+import { safeFailure } from "./simulation-diagnostics.js";
 
 const delay = () => new Promise(resolve => setTimeout(resolve, 3000));
 const now = () => Math.floor(Date.now() / 1000);
@@ -29,14 +31,23 @@ export async function runCollectiveWorker(runId: string): Promise<void> {
     task: COLLECTIVE_ASSIGNMENTS[agentId]!, phase: "waiting", address: "", vote: null, txHash: null, recent: [] }));
   const activity: ActivityAttestation[] = [], events: RunEvent[] = [], messages: CollectiveMessage[] = [], rounds: Round[] = [];
   let journal: ReturnType<typeof openInferenceJournal> | undefined, inference: InferenceScheduler | undefined;
-  let writes = Promise.resolve();
+  let claimed = false;
+  const dir = `/srv/fleet/state/simulations/${runId}`;
+  const publish = statusPublisher(snapshot => writeObject(simulationPath(runId), snapshot));
   let status: Record<string, unknown> = { runId, scenario: COLLECTIVE_SCENARIO, scripted: false, model: DEMO_MODEL,
     agents, activity, events, rounds, votes: [], communication: { mode: "shared-findings-board", messages }, terminal: false };
   const persist = async (phase: string, message: string) => {
     status = { ...status, phase, message, updatedAt: new Date().toISOString(), ...(inference ? { inference: inference.summary() } : {}) };
     const snapshot = JSON.parse(JSON.stringify(status));
-    writes = writes.then(() => writeObject(simulationPath(runId), snapshot));
-    await writes;
+    // Keep a complete local receipt before attempting remote publication. A failed
+    // upload or process exit must not erase the work already recorded by this run.
+    const file = openSync(`${dir}/status.tmp`, "w", 0o600);
+    try { writeSync(file, JSON.stringify(snapshot)); fsyncSync(file); }
+    finally { closeSync(file); }
+    renameSync(`${dir}/status.tmp`, `${dir}/status.json`);
+    const directory = openSync(dir, "r");
+    try { fsyncSync(directory); } finally { closeSync(directory); }
+    await publish(snapshot);
   };
   const emit = async (event: Omit<RunEvent, "id" | "runId" | "at">, phase = String(status.phase || "starting")) => {
     events.push(runEvent(runId, event)); await persist(phase, event.title);
@@ -51,10 +62,10 @@ export async function runCollectiveWorker(runId: string): Promise<void> {
         || checkpoint.proposalId !== allocation.checkpoints![index]!.proposalId
         || checkpoint.approvalDeadline !== allocation.checkpoints![index]!.approvalDeadline)
       || await isComputeRunBlocked(runId)) throw new Error("Collective authority did not match.");
-    const dir = `/srv/fleet/state/simulations/${runId}`;
     mkdirSync(dir, { recursive: true });
     const claim = openSync(`${dir}/started.json`, "wx", 0o600);
     writeSync(claim, JSON.stringify({ runId, scenario: COLLECTIVE_SCENARIO, startedAt: new Date().toISOString() })); fsyncSync(claim); closeSync(claim);
+    claimed = true;
     rounds.push(...work.checkpoints.map((checkpoint, index) => ({ checkpoint: index, id: checkpoint.id, proposalId: checkpoint.proposalId, title: checkpoint.proposalTitle, phase: "planned", votes: [] })));
     status = { ...status, ...work, allocation };
     await emit({ component: "compute", type: "worker.started", title: "Agent worker process started", detail: "The fixed GCP worker claimed this run once. A restart cannot repeat it.", evidence: { pid: process.pid } });
@@ -253,7 +264,10 @@ export async function runCollectiveWorker(runId: string): Promise<void> {
     status.terminal = true; status.outcome = "Completed";
     for (const agent of agents) agent.phase = "finished";
     await emit({ component: "task", type: "task.completed", title: "The bounded investigation is complete", detail: "All planned decisions executed. The task records remain available. The original compute expiry still applies and no more model work is scheduled." }, "approved");
-  } catch {
+  } catch (error) {
+    console.error(JSON.stringify({ event: "collective_worker_failure", runId, claimed, failure: safeFailure(error) }));
+    // Duplicate launch/retired authority cannot overwrite the real owner's record.
+    if (!claimed) { process.exitCode = 1; return; }
     status.terminal = true;
     await emit({ component: "task", type: "run.failed", title: "The run stopped dispatching work", detail: "A required runtime, budget or authority check could not finish. No approval is inferred. The independent Guardian and fixed deadlines remain in force." }, "failed").catch(() => {});
     console.error("Collective worker stopped. Private provider diagnostics withheld.");

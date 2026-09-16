@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const m = vi.hoisted(() => ({ snapshots: [] as any[], calls: [] as any[], proposed: [] as string[], voted: [] as string[], work: null as any, allocation: null as any, halted: false, block: false, released: 0, chain: new Map<string, number>(), workCalls: 0 }));
-vi.mock("node:fs", async () => ({ ...await vi.importActual<typeof import("node:fs")>("node:fs"), mkdirSync: vi.fn(), openSync: vi.fn(() => 10), writeSync: vi.fn(), fsyncSync: vi.fn(), closeSync: vi.fn() }));
+vi.mock("node:fs", async () => ({ ...await vi.importActual<typeof import("node:fs")>("node:fs"), mkdirSync: vi.fn(), openSync: vi.fn(() => 10), writeSync: vi.fn(), fsyncSync: vi.fn(), closeSync: vi.fn(), renameSync: vi.fn() }));
 vi.mock("./google.js", () => ({ readSecret: async (name: string) => name.includes("wallets") ? JSON.stringify({ schema: "fleet.wallets.v1", chainId: 84532, keys: Object.fromEntries(["FLEET_KEEPER_KEY", ...Array.from({ length: 5 }, (_, i) => `FLEET_AGENT_KEY_${i}`)].map((name, i) => [name, `0x${String(i + 1).padStart(64, "0")}`])) }) : "https://rpc.invalid",
   writeObject: async (_name: string, value: any) => { m.snapshots.push(value); } }));
 vi.mock("./compute-store.js", () => ({ readComputeAllocation: async () => m.allocation, isComputeRunBlocked: async () => m.block,
@@ -42,9 +42,11 @@ vi.mock("@fleet/agent-runtime", async () => ({ ...await vi.importActual<typeof i
 }));
 import { runCollectiveWorker } from "./collective-worker.js";
 import { verifyActivity } from "../pipeline/activity-attestation.js";
+import { openSync } from "node:fs";
 import { COLLECTIVE_STEPS } from "./collective-scenario.js";
 const runId = "run-00000000-0000-4000-8000-000000000001";
 beforeEach(() => {
+  vi.mocked(openSync).mockImplementation(() => 10);
   vi.useFakeTimers(); m.snapshots = []; m.calls = []; m.proposed = []; m.voted = []; m.halted = false; m.block = false; m.released = 0; m.chain = new Map(); m.workCalls = 0;
   const now = Math.floor(Date.now() / 1000);
   const checkpoints = COLLECTIVE_STEPS.map((step, index) => ({ id: step.id, proposalId: String(101 + index), proposalTitle: step.title, proposalBody: step.context, decision: { kind: "CHOOSE_PATH", expectedVersion: 1 }, approvalDeadline: now + 540 * (index + 1), payloadHash: `0x${"d".repeat(64)}`, newCharterText: "" }));
@@ -83,4 +85,11 @@ it("cannot replay a retired run even if its earlier checkpoints were approved", 
   m.block = true; m.released = 2;
   const running = runCollectiveWorker(runId); await vi.runAllTimersAsync(); await running;
   expect(m.workCalls).toBe(0); expect(m.proposed).toEqual([]); expect(m.voted).toEqual([]);
+  expect(m.snapshots).toHaveLength(0);
+});
+
+it("never overwrites recorded work when the one-time start marker already exists", async () => {
+  vi.mocked(openSync).mockImplementationOnce(() => { throw Object.assign(new Error("Already claimed"), { code: "EEXIST" }); });
+  const running = runCollectiveWorker(runId); await vi.runAllTimersAsync(); await running;
+  expect(m.workCalls).toBe(0); expect(m.proposed).toEqual([]); expect(m.snapshots).toHaveLength(0);
 });
