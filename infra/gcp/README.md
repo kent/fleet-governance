@@ -41,6 +41,8 @@ The September 16 capacity check found 6.6 GiB of memory available on the governa
 
 The [capacity verification](https://github.com/kent/fleet-governance/actions/runs/35107099800) confirmed both 100 GiB disks, online filesystem growth, 78 GiB free on the boot disk and 86 GiB free on the data disk. Public proposals and vote records remained available. The additional 120 GiB of balanced disk storage costs approximately **US$12 per 730-hour month**, before taxes or credits, using Google's listed US$0.000136986 per GiB-hour [disk rate](https://cloud.google.com/compute/disks-image-pricing). This is the storage increase, not the total project bill.
 
+The [worker capacity check](https://github.com/kent/fleet-governance/actions/runs/35109917060) found 30 GiB of memory available, 81 GiB free on its boot disk and 78 GiB free on its data disk while idle. The [completed runtime deployment](https://github.com/kent/fleet-governance/actions/runs/35109199031) passed sandbox isolation, public access and hydrated browser checks. It includes the Agora theme and preserves public reviews from delegated agents without attempting zero-power ballots.
+
 ## Run, adjust and repeat
 
 1. Open `/experiments` to browse without signing in. Use **Sign in to run** for the operator interface.
