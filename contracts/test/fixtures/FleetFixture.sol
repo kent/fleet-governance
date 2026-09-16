@@ -7,6 +7,8 @@ import {FleetRegistry} from "../../src/FleetRegistry.sol";
 import {FleetVotes} from "../../src/FleetVotes.sol";
 import {TaskLedger} from "../../src/TaskLedger.sol";
 import {FleetHook} from "../../src/FleetHook.sol";
+import {FleetProposalBudget} from "../../src/FleetProposalBudget.sol";
+import {FleetBudgetHook} from "../../src/FleetBudgetHook.sol";
 import {AgoraGovernor} from "agora-governor/src/AgoraGovernor.sol";
 import {IGovernor} from "@openzeppelin/contracts/governance/IGovernor.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
@@ -67,7 +69,7 @@ abstract contract FleetFixture is Test {
         p.create2Deployer = address(this);
         p.deployer = address(this);
 
-        addrs = FleetDeployer.deploy(p);
+        addrs = useProposalBudget() ? FleetDeployer.deployWithProposalBudget(p) : FleetDeployer.deploy(p);
         registry = FleetRegistry(addrs.registry);
         token = FleetVotes(addrs.token);
         timelock = TimelockController(payable(addrs.timelock));
@@ -77,9 +79,18 @@ abstract contract FleetFixture is Test {
         vm.warp(block.timestamp + 1);
     }
 
+    function useProposalBudget() internal pure virtual returns (bool) { return false; }
+
     function openTask() internal returns (uint256 taskId) {
         vm.prank(operator);
         taskId = ledger.openTask(CHARTER, MAX_LIFETIME);
+        if (useProposalBudget()) {
+            address bank = address(FleetBudgetHook(address(hook)).proposalBudget());
+            vm.prank(operator);
+            FleetProposalBudget(bank).registerRunPolicy(
+                taskId, keccak256(abi.encode(taskId)), 8, uint64(block.timestamp) + MAX_LIFETIME, 1, 1e18, members
+            );
+        }
     }
 
     function actionCalldata(

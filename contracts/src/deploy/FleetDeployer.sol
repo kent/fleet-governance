@@ -7,6 +7,7 @@ import {FleetRegistry} from "../FleetRegistry.sol";
 import {FleetVotes} from "../FleetVotes.sol";
 import {TaskLedger} from "../TaskLedger.sol";
 import {FleetHook} from "../FleetHook.sol";
+import {FleetBudgetHook} from "../FleetBudgetHook.sol";
 import {HookMiner} from "./HookMiner.sol";
 import {FleetMembership} from "../libraries/FleetMembership.sol";
 import {FleetExecutor} from "../FleetExecutor.sol";
@@ -55,6 +56,14 @@ library FleetDeployer {
     uint160 internal constant HOOK_PERMISSION_MASK = 0x22C0;
 
     function deploy(FleetDeployParams memory p) internal returns (FleetAddresses memory a) {
+        return _deploy(p, false);
+    }
+
+    function deployWithProposalBudget(FleetDeployParams memory p) internal returns (FleetAddresses memory a) {
+        return _deploy(p, true);
+    }
+
+    function _deploy(FleetDeployParams memory p, bool tokenProposals) private returns (FleetAddresses memory a) {
         FleetRegistry registry = deployRegistry(p.members, p.agentManifests, p.fleetManifest);
         FleetVotes token = new FleetVotes(p.tokenName, p.tokenSymbol, registry);
         _initializeToken(token, p.members.length);
@@ -66,10 +75,12 @@ library FleetDeployer {
         (address predictedHook, bytes32 salt) = HookMiner.find(
             p.create2Deployer,
             HOOK_PERMISSION_MASK,
-            type(FleetHook).creationCode,
+            tokenProposals ? type(FleetBudgetHook).creationCode : type(FleetHook).creationCode,
             abi.encode(registry, ledger, p.deployer)
         );
-        FleetHook hook = new FleetHook{salt: salt}(registry, ledger, p.deployer);
+        FleetHook hook = tokenProposals
+            ? FleetHook(address(new FleetBudgetHook{salt: salt}(registry, ledger, p.deployer)))
+            : new FleetHook{salt: salt}(registry, ledger, p.deployer);
         if (address(hook) != predictedHook) revert HookAddressMismatch(predictedHook, address(hook));
 
         address governor = _deployGovernor(

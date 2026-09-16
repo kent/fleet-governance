@@ -35,7 +35,7 @@ contract DeployFleet is Script {
         uint256 startBlock = block.number;
         uint256 startTimestamp = block.timestamp;
         vm.startBroadcast(pk);
-        a = FleetDeployer.deploy(p);
+        a = vm.envOr("FLEET_TOKEN_PROPOSALS", false) ? FleetDeployer.deployWithProposalBudget(p) : FleetDeployer.deploy(p);
         vm.stopBroadcast();
 
         _writeManifest(cfgPath, json, p, a, startBlock, startTimestamp);

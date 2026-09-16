@@ -5,10 +5,10 @@ import {ICreditToken} from "./FleetProposalCredits.sol";
 import {FleetProposalToken} from "./FleetProposalToken.sol";
 
 /// @notice Deploys one fixed-supply ERC-20 per experiment and burns the proposal fee.
-/// @dev The legacy Governor remains unchanged. The Guardian independently rejects
-///      any task proposal without this contract's burn receipt. No agent or operator
-///      can mint more tokens, replace the token, or change a registered run's rules.
+/// @dev Only the Governor's fixed hook can charge, inside the proposal transaction.
+///      No agent or operator can mint more tokens, replace the token, or change rules.
 contract FleetProposalBudget {
+    error NotHook();
     error NotOperator();
     error InvalidRun();
     error RunAlreadyRegistered();
@@ -36,6 +36,7 @@ contract FleetProposalBudget {
     address public immutable governor;
     ICreditToken public immutable token;
     address public immutable operator;
+    address public immutable hook;
     mapping(uint256 => Run) public runs;
     mapping(bytes32 => bool) public registered;
     mapping(uint256 => FleetProposalToken) public proposalToken;
@@ -46,11 +47,12 @@ contract FleetProposalBudget {
     event ProposalRules(uint256 indexed taskId, uint8 proposalCost, uint256 proposalThreshold);
     event ProposalCreditSpent(uint256 indexed taskId, uint256 indexed proposalId, address indexed proposer, uint8 remaining);
 
-    constructor(address governor_, ICreditToken token_, address operator_) {
-        require(governor_.code.length > 0 && address(token_).code.length > 0 && operator_ != address(0), "invalid binding");
+    constructor(address governor_, ICreditToken token_, address operator_, address hook_) {
+        require(governor_.code.length > 0 && address(token_).code.length > 0 && operator_ != address(0) && hook_ != address(0), "invalid binding");
         governor = governor_;
         token = token_;
         operator = operator_;
+        hook = hook_;
     }
 
     function registerRunPolicy(uint256 taskId, bytes32 runHash, uint8 allowance, uint64 expiresAt,
@@ -74,21 +76,22 @@ contract FleetProposalBudget {
         emit ProposalRules(taskId, proposalCost, proposalThreshold);
     }
 
-    /// @notice Burn the configured FPROP fee and bind it to an exact proposal ID.
-    ///         No refunds, including after cancellation, defeat or failed publication.
-    function spend(uint256 taskId, uint256 proposalId) external {
+    /// @notice Called during Governor.propose: a successful proposal burns its fee;
+    ///         any reverted proposal also rolls back the burn. No outcome-based refund.
+    function charge(uint256 taskId, uint256 proposalId, address proposer) external {
+        if (msg.sender != hook) revert NotHook();
         Run memory run = runs[taskId];
         if (run.expiresAt == 0 || block.timestamp >= run.expiresAt) revert RunClosed();
-        if (token.balanceOf(msg.sender) == 0) revert NotTokenHolder();
+        if (token.balanceOf(proposer) == 0) revert NotTokenHolder();
         FleetProposalToken budget = proposalToken[taskId];
-        if (budget.balanceOf(msg.sender) < run.proposalCost) revert NoCredits();
-        uint256 power = token.getVotes(msg.sender);
+        if (budget.balanceOf(proposer) < run.proposalCost) revert NoCredits();
+        uint256 power = token.getVotes(proposer);
         if (power < run.proposalThreshold) revert InsufficientVotingPower();
         if (proposalId == 0 || receipts[proposalId].spentAt != 0) revert AlreadyPaid();
-        budget.burnForProposal(msg.sender, run.proposalCost);
-        receipts[proposalId] = Receipt(taskId, msg.sender, uint64(block.timestamp), run.proposalCost, power);
+        budget.burnForProposal(proposer, run.proposalCost);
+        receipts[proposalId] = Receipt(taskId, proposer, uint64(block.timestamp), run.proposalCost, power);
         _proposals[taskId].push(proposalId);
-        emit ProposalCreditSpent(taskId, proposalId, msg.sender, uint8(budget.balanceOf(msg.sender)));
+        emit ProposalCreditSpent(taskId, proposalId, proposer, uint8(budget.balanceOf(proposer)));
     }
 
     function remaining(uint256 taskId, address agent) external view returns (uint8) {

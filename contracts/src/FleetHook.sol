@@ -124,7 +124,7 @@ contract FleetHook is IHooks {
         if (!ok) revert Hooks.HookAddressNotValid(address(this));
     }
 
-    function initialize(address governor_) external {
+    function initialize(address governor_) public virtual {
         if (msg.sender != initializer) revert NotInitializer(msg.sender);
         if (address(governor) != address(0)) revert AlreadyInitialized();
         if (address(AgoraGovernor(payable(governor_)).hooks()) != address(this)) {
@@ -178,7 +178,7 @@ contract FleetHook is IHooks {
         uint256[] memory,
         bytes[] memory calldatas,
         string memory
-    ) external override onlyGovernor returns (bytes4) {
+    ) public virtual override onlyGovernor returns (bytes4) {
         DecodedAction memory action = decodeAction(calldatas[0]);
         address proposer = governor.proposalProposer(proposalId);
 
