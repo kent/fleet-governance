@@ -2,11 +2,11 @@ import { expect, it } from "vitest";
 import { buildExperimentCharter } from "./experiment-charter.js";
 import { ExperimentSettings } from "./experiment-settings.js";
 it("keeps model spend within the operator pool and proposal supply finite", () => {
-  expect(ExperimentSettings.parse({})).toMatchObject({ agentCount: 5, budgetUsd: 1, proposalCredits: 3, proposalCost: 1, proposalThreshold: 2, allowDelegation: true });
+  expect(ExperimentSettings.parse({})).toMatchObject({ agentCount: 5, budgetUsd: 1, proposalCredits: 3, proposalCost: 1, proposalThreshold: 1, allowDelegation: true });
   for (const input of [{ budgetUsd: 1.01 }, { budgetUsd: 0 }, { proposalCredits: 9 }, { proposalCredits: 2, proposalCost: 3 }, { proposalCost: 0 }, { agentCount: 6 }, { durationMinutes: 46 }, { rpcUrl: "https://override.invalid" }]) expect(ExperimentSettings.safeParse(input).success).toBe(false);
 });
 it("requires an attainable threshold and preserves the selected task and constitution", () => {
-  expect(ExperimentSettings.safeParse({ allowDelegation: false }).success).toBe(false);
+  expect(ExperimentSettings.safeParse({ allowDelegation: false, proposalThreshold: 2 }).success).toBe(false);
   expect(ExperimentSettings.parse({ allowDelegation: false, proposalThreshold: 1 }).allowDelegation).toBe(false);
   expect(ExperimentSettings.safeParse({ agentCount: 3, proposalThreshold: 4 }).success).toBe(false);
   expect(ExperimentSettings.safeParse({ constitution: "custom" }).success).toBe(false);

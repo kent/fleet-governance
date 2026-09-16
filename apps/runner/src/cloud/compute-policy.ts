@@ -8,6 +8,8 @@ const timestamp = z.number().int().nonnegative().safe();
 export const ProposalDiscovery = z.object({
   taskId: decimal, hook: address, hookCodeHash: hash,
   creditsContract: address, creditsCodeHash: hash, runHash: hash,
+  // Absent only in historical credit-ledger allocations. New runs pin a real ERC-20.
+  proposalToken: z.object({ address, codeHash: hash, initialSupply: z.number().int().min(1).max(40) }).strict().optional(),
   startBlock: decimal, creditsPerAgent: z.number().int().min(1).max(8),
   agents: z.array(address).min(3).max(5),
   proposalCost: z.number().int().min(1).max(8).default(1),

@@ -1,12 +1,12 @@
 import { readFileSync } from "node:fs";
 import { decodeEventLog, decodeFunctionData, type Hex } from "viem";
-import { fleetVotesAbi } from "@fleet/abi";
+import { fleetVotesAbi, agoraGovernorAbi } from "@fleet/abi";
 import { parseDecisionDescription, type FleetClient } from "@fleet/sdk";
 import { verifyActivity, type ActivityAttestation } from "../pipeline/activity-attestation.js";
 import { ExperimentSettings } from "./experiment-settings.js";
 import { buildAgentDecision } from "./emergent-decision.js";
 import { AgentProposal } from "./emergent-scenario.js";
-import { proposalCreditsAbi } from "./proposal-credits.js";
+import { proposalCreditsAbi, proposalTokenAbi } from "./proposal-credits.js";
 import type { ComputeAllocation, ComputeObservation } from "./compute-policy.js";
 import type { SimulationWork } from "./simulation.js";
 
@@ -43,10 +43,24 @@ export async function verifyAgentExperiment(input: { work: SimulationWork; alloc
     if (!selected || selected.agentId !== round.proposerAgentId || !activity.some(r => r.agentId === selected.agentId && r.sequence < selected.sequence && (r.event as any).type === "work_report")) throw new Error("No signed agent draft preceded this proposal.");
     const [created, votes, receipt, payment] = await Promise.all([client.getProposalCreated(BigInt(observed.proposalId)), client.listVotes(BigInt(observed.proposalId)),
       client.publicClient.getTransactionReceipt({ hash: round.creditTxHash }), client.publicClient.getTransaction({ hash: round.creditTxHash })]);
-    const decoded = decodeFunctionData({ abi: proposalCreditsAbi, data: payment.input });
     if (receipt.status !== "success" || receipt.blockNumber > created.blockNumber || created.proposer.toLowerCase() !== selected.address.toLowerCase()
-      || payment.from.toLowerCase() !== created.proposer.toLowerCase() || payment.to?.toLowerCase() !== allocation.discovery.creditsContract.toLowerCase()
-      || decoded.functionName !== "spend" || decoded.args[0] !== BigInt(work.taskId) || decoded.args[1] !== BigInt(observed.proposalId)) throw new Error("Credit transaction did not match the actual proposer.");
+      || payment.from.toLowerCase() !== created.proposer.toLowerCase()) throw new Error("Proposal payment did not match the actual proposer.");
+    if (allocation.discovery.proposalToken) {
+      const decoded = decodeFunctionData({ abi: agoraGovernorAbi, data: payment.input });
+      const burns = receipt.logs.filter(log => {
+        if (log.address.toLowerCase() !== allocation.discovery!.proposalToken!.address.toLowerCase()) return false;
+        try {
+          const event = decodeEventLog({ abi: proposalTokenAbi, eventName: "Transfer", data: log.data, topics: log.topics });
+          return event.args.from.toLowerCase() === created.proposer.toLowerCase() && event.args.to === "0x0000000000000000000000000000000000000000" && event.args.value === BigInt(settings.proposalCost);
+        } catch { return false; }
+      });
+      if (payment.to?.toLowerCase() !== allocation.governor.toLowerCase() || decoded.functionName !== "propose"
+        || round.creditTxHash !== created.txHash || receipt.blockNumber !== created.blockNumber || burns.length !== 1) throw new Error("Atomic ERC-20 proposal burn did not match.");
+    } else {
+      const decoded = decodeFunctionData({ abi: proposalCreditsAbi, data: payment.input });
+      if (payment.to?.toLowerCase() !== allocation.discovery.creditsContract.toLowerCase() || decoded.functionName !== "spend"
+        || decoded.args[0] !== BigInt(work.taskId) || decoded.args[1] !== BigInt(observed.proposalId)) throw new Error("Credit transaction did not match the actual proposer.");
+    }
     const decision = parseDecisionDescription(created.description).decision;
     const draft = AgentProposal.parse((selected.event as any).proposal);
     const built = buildAgentDecision({ draft, agentId: selected.agentId, role: roster.find(a => a.agentId === selected.agentId)!.role,

@@ -1,7 +1,7 @@
 import { BaseError, ContractFunctionRevertedError, keccak256, type PublicClient, type Hex } from "viem";
 import { agoraGovernorAbi, fleetHookAbi, fleetVotesAbi } from "@fleet/abi";
 import type { ComputeAllocation, ComputeObservation } from "./compute-policy.js";
-import { proposalCreditsAbi } from "./proposal-credits.js";
+import { proposalCreditsAbi, proposalTokenAbi, proposalBudgetHookAbi } from "./proposal-credits.js";
 
 export function isMissingProposal(error: unknown, proposalId: bigint): boolean {
   const reverted = error instanceof BaseError ? error.walk(cause => cause instanceof ContractFunctionRevertedError) : undefined;
@@ -49,12 +49,36 @@ export async function discoverTaskProposals(client: Pick<PublicClient, "getBytec
     reservations.set(id.toString(), { proposer: receipt[1], paidAt: Number(receipt[2]) });
   }
   const ids = [...new Set([...reservations.keys(), ...proposed.keys()])];
+  if (p.proposalToken) {
+    const budgetToken = p.proposalToken.address as Hex;
+    const [canonicalToken, bankHook, hookBank, code, controller, taskId, runHash, decimals, initialSupply, supply, balances] = await Promise.all([
+      client.readContract({ address: credits, abi: proposalCreditsAbi, functionName: "proposalToken", args: [BigInt(p.taskId)], blockNumber }),
+      client.readContract({ address: credits, abi: proposalCreditsAbi, functionName: "hook", blockNumber }),
+      client.readContract({ address: hook, abi: proposalBudgetHookAbi, functionName: "proposalBudget", blockNumber }),
+      client.getBytecode({ address: budgetToken, blockNumber }),
+      client.readContract({ address: budgetToken, abi: proposalTokenAbi, functionName: "controller", blockNumber }),
+      client.readContract({ address: budgetToken, abi: proposalTokenAbi, functionName: "taskId", blockNumber }),
+      client.readContract({ address: budgetToken, abi: proposalTokenAbi, functionName: "runHash", blockNumber }),
+      client.readContract({ address: budgetToken, abi: proposalTokenAbi, functionName: "decimals", blockNumber }),
+      client.readContract({ address: budgetToken, abi: proposalTokenAbi, functionName: "initialSupply", blockNumber }),
+      client.readContract({ address: budgetToken, abi: proposalTokenAbi, functionName: "totalSupply", blockNumber }),
+      Promise.all(p.agents.map(agent => client.readContract({ address: budgetToken, abi: proposalTokenAbi, functionName: "balanceOf", args: [agent as Hex], blockNumber }))),
+    ]);
+    const expectedSupply = BigInt(p.agents.length * p.creditsPerAgent);
+    if (canonicalToken.toLowerCase() !== budgetToken.toLowerCase() || !code || keccak256(code) !== p.proposalToken.codeHash
+      || controller.toLowerCase() !== credits.toLowerCase() || bankHook.toLowerCase() !== hook.toLowerCase() || hookBank.toLowerCase() !== credits.toLowerCase()
+      || taskId !== BigInt(p.taskId) || runHash !== p.runHash || decimals !== 0
+      || initialSupply !== expectedSupply || BigInt(p.proposalToken.initialSupply) !== expectedSupply
+      || supply + count * BigInt(p.proposalCost) !== expectedSupply || balances.reduce((sum, balance) => sum + balance, 0n) !== supply
+      || balances.some((balance, index) => balance + BigInt([...reservations.values()].filter(r => r.proposer.toLowerCase() === p.agents[index]!.toLowerCase()).length * p.proposalCost) !== BigInt(p.creditsPerAgent))
+      || ids.some(id => !reservations.has(id) || !proposed.has(id))) throw new Error("ERC-20 proposal burns did not match the fixed supply and Governor hook.");
+  }
   const result: ComputeObservation["proposals"] = [];
   for (const proposalId of ids) {
     const payment = reservations.get(proposalId), proposer = proposed.get(proposalId);
     let state: number;
     try { state = Number(await client.readContract({ address: governor, abi: agoraGovernorAbi, functionName: "state", args: [BigInt(proposalId)], blockNumber })); }
-    catch (error) { if (!payment || proposer || !isMissingProposal(error, BigInt(proposalId))) throw error; state = -1; }
+    catch (error) { if (p.proposalToken || !payment || proposer || !isMissingProposal(error, BigInt(proposalId))) throw error; state = -1; }
     // A reservation for some other task's existing proposal cannot release this task.
     if (state !== -1 && !proposer) throw new Error("Paid proposal is not part of the task.");
     const creditPaid = !!payment && (!proposer || proposer.toLowerCase() === payment.proposer.toLowerCase());

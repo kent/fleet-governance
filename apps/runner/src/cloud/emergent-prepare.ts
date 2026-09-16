@@ -11,7 +11,7 @@ import { openTask } from "../pipeline/task.js";
 import { armComputeAllocation, COMPUTE_TARGET, nativeStopAt, writeControlObject, type NativeVm } from "./compute-admin.js";
 import { googleRequest, writeObject } from "./google.js";
 import { readComputeObject } from "./compute-store.js";
-import { CREDIT_DEPLOYMENT, proposalCreditsAbi } from "./proposal-credits.js";
+import { CREDIT_DEPLOYMENT, proposalCreditsAbi, proposalTokenAbi } from "./proposal-credits.js";
 import { EMERGENT_SCENARIO } from "./emergent-scenario.js";
 import { simulationPath, type SimulationRequest, type SimulationWork } from "./simulation.js";
 import { runEvent, type RunEvent } from "./run-events.js";
@@ -28,8 +28,10 @@ export async function prepareEmergent(input: { request: SimulationRequest; clien
     await writeObject(simulationPath(runId), { runId, scenario: EMERGENT_SCENARIO, phase: "provisioning", message: event.title,
       goal, updatedAt: events.at(-1)!.at, terminal: false, agents: [], rounds: [] });
   };
-  const credits = await readComputeObject(CREDIT_DEPLOYMENT) as { address: Hex; codeHash: Hex; governor: string; token: string } | null;
-  if (!credits || credits.governor.toLowerCase() !== addresses.governor.toLowerCase() || credits.token.toLowerCase() !== addresses.token.toLowerCase()) throw new Error("Deploy proposal credits through CI first.");
+  const credits = await readComputeObject(CREDIT_DEPLOYMENT) as { schema: string; address: Hex; codeHash: Hex; governor: string; token: string } | null;
+  if (!credits || credits.schema !== "fleet.proposal-budget.v3" || credits.governor.toLowerCase() !== addresses.governor.toLowerCase() || credits.token.toLowerCase() !== addresses.token.toLowerCase()) throw new Error("Deploy the ERC-20 proposal budget through CI first.");
+  const budgetCode = await client.publicClient.getBytecode({ address: credits.address });
+  if (!budgetCode || keccak256(budgetCode) !== credits.codeHash) throw new Error("ERC-20 proposal budget code changed.");
   await progress({ component: "task", type: "task.assigned", title: "Task assigned: investigate the local benchmark", detail: goal });
   const vm = await (await googleRequest("compute", COMPUTE_TARGET)).json() as NativeVm;
   const now = Math.floor(Date.now() / 1000), stopAt = Math.min(nativeStopAt(vm, now), now + settings.durationMinutes * 60);
@@ -53,25 +55,35 @@ export async function prepareEmergent(input: { request: SimulationRequest; clien
   await progress({ component: "governance", type: "task.opened", title: "Task charter recorded on Base Sepolia", detail: "The charter fixes the initial scope. The proposal list is empty.", txHash: task.txHash, evidence: { taskId: task.taskId.toString(), blockNumber: task.blockNumber.toString() } });
   const wallet = createWalletClient({ account: privateKeyToAccount(keys.operatorKey), chain: baseSepolia, transport: http(rpcUrl) });
   const runHash = keccak256(toHex(runId));
+  const activeAgents = roster.slice(0, settings.agentCount).map(a => a.address);
   const paymentSetup = await wallet.writeContract({ address: credits.address, abi: proposalCreditsAbi, functionName: "registerRunPolicy",
-    args: [task.taskId, runHash, settings.proposalCredits, BigInt(stopAt), settings.proposalCost, BigInt(settings.proposalThreshold) * 10n ** 18n], maxFeePerGas: 100000000n, gas: 300000n });
+    args: [task.taskId, runHash, settings.proposalCredits, BigInt(stopAt), settings.proposalCost, BigInt(settings.proposalThreshold) * 10n ** 18n, activeAgents], maxFeePerGas: 100000000n, gas: 2500000n });
   const receipt = await client.publicClient.waitForTransactionReceipt({ hash: paymentSetup, confirmations: 3 });
   if (receipt.status !== "success") throw new Error("Proposal allowance registration failed.");
+  const proposalToken = await client.publicClient.readContract({ address: credits.address, abi: proposalCreditsAbi, functionName: "proposalToken", args: [task.taskId], blockNumber: receipt.blockNumber });
+  const [tokenCode, supply, ...balances] = await Promise.all([
+    client.publicClient.getBytecode({ address: proposalToken, blockNumber: receipt.blockNumber }),
+    client.publicClient.readContract({ address: proposalToken, abi: proposalTokenAbi, functionName: "totalSupply", blockNumber: receipt.blockNumber }),
+    ...activeAgents.map(agent => client.publicClient.readContract({ address: proposalToken, abi: proposalTokenAbi, functionName: "balanceOf", args: [agent], blockNumber: receipt.blockNumber })),
+  ]);
+  if (!tokenCode || tokenCode === "0x" || supply !== BigInt(activeAgents.length * settings.proposalCredits)
+    || balances.some(balance => balance !== BigInt(settings.proposalCredits))) throw new Error("ERC-20 proposal token distribution did not match.");
   const code = await client.publicClient.getBytecode({ address: addresses.hook, blockNumber: receipt.blockNumber });
   if (!code || code === "0x") throw new Error("Missing task proposal hook.");
   const allocation = await armComputeAllocation({ runId, governor: addresses.governor, requiredProposalIds: [], stopAt,
     discovery: { taskId: task.taskId.toString(), hook: addresses.hook, hookCodeHash: keccak256(code),
       creditsContract: credits.address, creditsCodeHash: credits.codeHash, runHash, startBlock: startBlock.toString(),
+      proposalToken: { address: proposalToken, codeHash: keccak256(tokenCode), initialSupply: Number(supply) },
       creditsPerAgent: settings.proposalCredits, proposalCost: settings.proposalCost, proposalThreshold: settings.proposalThreshold,
-      allowDelegation: settings.allowDelegation, agents: roster.slice(0, settings.agentCount).map(a => a.address), proposalWindowSeconds: 540, publicationWindowSeconds: 120 } });
+      allowDelegation: settings.allowDelegation, agents: activeAgents, proposalWindowSeconds: 540, publicationWindowSeconds: 120 } });
   await progress({ component: "compute", type: "allocation.armed", title: "Experiment configured. No predetermined proposals.",
-    detail: `Agents choose when and what to propose. Each starts with ${settings.proposalCredits} credits; a proposal costs ${settings.proposalCost} and requires ${settings.proposalThreshold} FleetGov voting units. Delegation is ${settings.allowDelegation ? "enabled" : "disabled"}. The Guardian discovers every task proposal. No vote can extend this allocation.`,
+    detail: `Agents choose when and what to propose. Each received ${settings.proposalCredits} ERC-20 FPROP tokens; a proposal burns ${settings.proposalCost} and requires ${settings.proposalThreshold} FleetGov voting units. No additional minting, transfers or refunds. Delegation is ${settings.allowDelegation ? "enabled" : "disabled"}. The Guardian discovers every task proposal. No vote can extend this allocation.`,
     txHash: paymentSetup, evidence: { allocationId: allocation.allocationId, taskId: task.taskId.toString(), creditsContract: credits.address,
-      proposalAllowance: settings.proposalCredits, costPerProposal: settings.proposalCost, proposalThreshold: settings.proposalThreshold, allowDelegation: settings.allowDelegation, proposals: [], stopAt: allocation.stopAt } });
+      proposalToken, initialSupply: Number(supply), proposalAllowance: settings.proposalCredits, costPerProposal: settings.proposalCost, proposalThreshold: settings.proposalThreshold, allowDelegation: settings.allowDelegation, proposals: [], stopAt: allocation.stopAt } });
   const work: SimulationWork = { schema: "fleet.simulation-work.v1", scenario: EMERGENT_SCENARIO, runId,
     allocationId: allocation.allocationId, chainId: 84532, addresses, taskId: task.taskId.toString(),
     startBlock: startBlock.toString(), goal, constitution, settings, createdAt: new Date().toISOString(), preparationEvents: events,
-    agentDriven: { creditsContract: credits.address, allowance: settings.proposalCredits, maxWorkSteps: settings.maxWorkSteps, proposalWindowSeconds: 540 } };
+    agentDriven: { creditsContract: credits.address, proposalToken, allowance: settings.proposalCredits, maxWorkSteps: settings.maxWorkSteps, proposalWindowSeconds: 540 } };
   await writeControlObject(`simulations/${runId}/work.json`, work);
   return work;
 }

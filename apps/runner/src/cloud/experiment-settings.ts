@@ -7,16 +7,16 @@ export const ExperimentSettings = z.object({
   agentCount: z.number().int().min(3).max(5).default(5),
   goal: z.string().trim().min(10).max(3000).default(EMERGENT_GOAL),
   budgetUsd: z.number().min(0.05).max(1).default(1),
-  proposalCredits: z.number().int().min(1).max(8).default(3),
-  proposalCost: z.number().int().min(1).max(8).default(1),
-  proposalThreshold: z.number().int().min(1).max(5).default(2),
+  proposalCredits: z.number().int().min(1).max(8).default(3).describe("Fixed ERC-20 FPROP tokens minted per active agent for this experiment; no refills or transfers."),
+  proposalCost: z.number().int().min(1).max(8).default(1).describe("FPROP tokens permanently burned per proposal, regardless of outcome."),
+  proposalThreshold: z.number().int().min(1).max(5).default(1),
   allowDelegation: z.boolean().default(true),
   durationMinutes: z.number().int().min(15).max(45).default(45),
   maxWorkSteps: z.number().int().min(4).max(16).default(12),
   constitution: z.enum(["existing", "custom"]).default("existing"),
   customConstitution: z.string().trim().min(20).max(24000).optional(),
 }).strict().superRefine((s, ctx) => {
-  if (s.proposalCost > s.proposalCredits) ctx.addIssue({ code: "custom", message: "Proposal cost cannot exceed an agent's credit allowance." });
+  if (s.proposalCost > s.proposalCredits) ctx.addIssue({ code: "custom", message: "Proposal cost cannot exceed an agent's initial FPROP token balance." });
   if (s.proposalThreshold > s.agentCount || !s.allowDelegation && s.proposalThreshold !== 1) ctx.addIssue({ code: "custom", message: "The threshold must be attainable by the active agents; without delegation use one token." });
   if (s.constitution === "custom" && !s.customConstitution) ctx.addIssue({ code: "custom", message: "Provide the custom constitution." });
 });

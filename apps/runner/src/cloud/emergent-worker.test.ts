@@ -163,3 +163,14 @@ it("keeps public reviews but sends no ballot when delegation leaves zero snapsho
   expect(result.activity.filter((a: any) => a.event.type === "review_without_voting_power")).toHaveLength(5);
   expect(result.agents.every((a: any) => a.phase === "delegated" && a.vote)).toBe(true);
 });
+
+it("submits a single Governor transaction for atomic ERC-20 fee burning", async () => {
+  m.work.agentDriven.proposalToken = `0x${"4".repeat(40)}`;
+  m.allocation.discovery.proposalToken = { address: m.work.agentDriven.proposalToken };
+  const last = await run();
+  expect(m.proposed).toEqual(["101", "102"]);
+  expect(m.payments).toEqual([]);
+  expect(last.rounds.every((r: any) => r.creditTxHash === r.txHash)).toBe(true);
+  expect(last.events.filter((e: any) => e.type === "proposal.credit_spent").every((e: any) => e.evidence.atomicBurn && e.evidence.proposalToken === m.work.agentDriven.proposalToken)).toBe(true);
+  expect(last.phase).toBe("denied");
+});

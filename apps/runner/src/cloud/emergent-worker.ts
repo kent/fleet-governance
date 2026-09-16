@@ -64,6 +64,7 @@ export async function runEmergentWorker(runId: string): Promise<void> {
       || work.runId !== runId || allocation.runId !== runId || allocation.allocationId !== work.allocationId
       || work.chainId !== 84532 || work.addresses.governor.toLowerCase() !== allocation.governor.toLowerCase()
       || work.taskId !== allocation.discovery.taskId || work.agentDriven.creditsContract.toLowerCase() !== allocation.discovery.creditsContract.toLowerCase()
+      || work.agentDriven.proposalToken?.toLowerCase() !== allocation.discovery.proposalToken?.address.toLowerCase()
       || work.agentDriven.allowance !== allocation.discovery.creditsPerAgent || work.checkpoints || work.proposalId
       || await isComputeRunBlocked(runId)) throw new Error("Agent-originated run authority did not match.");
     const settings = ExperimentSettings.parse(work.settings ?? { proposalThreshold: 1 });
@@ -269,17 +270,31 @@ export async function runEmergentWorker(runId: string): Promise<void> {
       await attest(proposer, { type: "proposal_selected", step, proposalId: id.toString(), proposal: draft });
       await emit({ component: "governance", type: "decision.required", agentId: proposer.agentId, proposalId: id.toString(),
         title: `${proposer.name} proposes: ${draft.title}`, detail: draft.rationale, evidence: { origin: "agent", cost: proposalCost, tool: draft.tool } }, "decision");
-      const payer = createWalletClient({ account: privateKeyToAccount(bundle.keys[`FLEET_AGENT_KEY_${proposer.agentId}`]!), chain: baseSepolia, transport: http(rpcUrl) });
-      const creditNonce = await nonces.reserve(proposer.address as Hex);
-      const creditTxHash = await payer.writeContract({ address: creditsAddress, abi: proposalCreditsAbi, functionName: "spend",
-        args: [BigInt(work.taskId), id], nonce: creditNonce.nonce, gas: 300000n, maxFeePerGas: 100000000n });
-      await creditNonce.commit(creditTxHash);
-      const creditReceipt = await client.publicClient.waitForTransactionReceipt({ hash: creditTxHash, confirmations: 3 });
-      if (creditReceipt.status !== "success") throw new Error("Proposal credit payment failed.");
+      const submitProposal = async () => {
+        const proposal = await signers[proposer.agentId]!.propose({ taskId: BigInt(work.taskId), kind: built.decision.kind,
+          expectedVersion: built.decision.expectedVersion, payloadHash: built.payloadHash, newCharterText: "", summary: draft.title, description: built.description });
+        if (proposal.proposalId !== id) throw new Error("Agent proposal identity changed.");
+        const receipt = await client.publicClient.waitForTransactionReceipt({ hash: proposal.txHash, confirmations: 3 });
+        if (receipt.status !== "success") throw new Error("Proposal reverted.");
+        return { proposal, receipt };
+      };
+      // New Governors burn FPROP in afterPropose. There is no separate agent payment
+      // call, and a reverted Governor transaction also rolls back its token burn.
+      const atomic = work.agentDriven.proposalToken ? await submitProposal() : undefined;
+      let creditTxHash: Hex;
+      if (atomic) creditTxHash = atomic.proposal.txHash;
+      else {
+        // Keep historical credit-ledger runs readable/recoverable under their own rules.
+        const payer = createWalletClient({ account: privateKeyToAccount(bundle.keys[`FLEET_AGENT_KEY_${proposer.agentId}`]!), chain: baseSepolia, transport: http(rpcUrl) });
+        const creditNonce = await nonces.reserve(proposer.address as Hex);
+        creditTxHash = await payer.writeContract({ address: creditsAddress, abi: proposalCreditsAbi, functionName: "spend",
+          args: [BigInt(work.taskId), id], nonce: creditNonce.nonce, gas: 300000n, maxFeePerGas: 100000000n });
+        await creditNonce.commit(creditTxHash);
+      }
+      const creditReceipt = atomic?.receipt ?? await client.publicClient.waitForTransactionReceipt({ hash: creditTxHash, confirmations: 3 });
+      if (creditReceipt.status !== "success") throw new Error("Proposal payment failed.");
       const paymentBlock = await client.publicClient.getBlock({ blockNumber: creditReceipt.blockNumber });
       proposer.creditsRemaining = await creditBalance(proposer);
-      // Payment and proposal share FleetSigner's nonce manager. A confirmed payment
-      // consumes its own nonce; the following proposal reserves the next one.
       const index = rounds.length;
       const checkpoint: SimulationCheckpoint = { id: `agent-proposal-${index + 1}`, proposalId: id.toString(),
         proposalTitle: draft.title, proposalBody: built.description, decision: built.decision, payloadHash: built.payloadHash,
@@ -289,16 +304,12 @@ export async function runEmergentWorker(runId: string): Promise<void> {
         creditTxHash, proposalTool: draft.tool, proposalCost };
       rounds.push(round); status.checkpointIndex = index; status.votes = [];
       for (const agent of agents) { agent.vote = null; agent.txHash = null; }
-      await attest(proposer, { type: "proposal_credit_spent", proposalId: id.toString(), txHash: creditTxHash, cost: proposalCost, remaining: proposer.creditsRemaining });
+      await attest(proposer, { type: "proposal_credit_spent", proposalId: id.toString(), txHash: creditTxHash, cost: proposalCost, remaining: proposer.creditsRemaining, ...(work.agentDriven.proposalToken ? { proposalToken: work.agentDriven.proposalToken, atomicBurn: true } : {}) });
       await emit({ component: "governance", type: "proposal.credit_spent", agentId: proposer.agentId, proposalId: id.toString(),
-        txHash: creditTxHash, blockNumber: creditReceipt.blockNumber.toString(), title: `${proposer.name} spent ${proposalCost} proposal credit(s)`,
-        detail: `${proposer.creditsRemaining}/${work.agentDriven.allowance} credits remain. No refund, replenishment or change to voting power.` }, "decision");
+        txHash: creditTxHash, blockNumber: creditReceipt.blockNumber.toString(), title: work.agentDriven.proposalToken ? `${proposer.name} burned ${proposalCost} FPROP to propose` : `${proposer.name} spent ${proposalCost} proposal credit(s)`,
+        detail: `${proposer.creditsRemaining}/${work.agentDriven.allowance} ${work.agentDriven.proposalToken ? "ERC-20 FPROP tokens" : "credits"} remain. No refund, replenishment or change to voting power.`, evidence: { ...(work.agentDriven.proposalToken ? { proposalToken: work.agentDriven.proposalToken, atomicBurn: true } : {}) } }, "decision");
       await votingAlive(checkpoint);
-      const proposal = await signers[proposer.agentId]!.propose({ taskId: BigInt(work.taskId), kind: built.decision.kind,
-        expectedVersion: built.decision.expectedVersion, payloadHash: built.payloadHash, newCharterText: "", summary: draft.title, description: built.description });
-      if (proposal.proposalId !== id) throw new Error("Agent proposal identity changed.");
-      const receipt = await client.publicClient.waitForTransactionReceipt({ hash: proposal.txHash, confirmations: 3 });
-      if (receipt.status !== "success") throw new Error("Proposal reverted.");
+      const { proposal, receipt } = atomic ?? await submitProposal();
       round.txHash = proposal.txHash; round.phase = "voting";
       status.proposalId = id.toString(); status.proposeTxHash = proposal.txHash;
       await emit({ component: "governance", type: "proposal.confirmed", agentId: proposer.agentId, checkpoint: index,

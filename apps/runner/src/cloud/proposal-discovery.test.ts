@@ -80,3 +80,28 @@ it("detects delegation that bypasses a disabled experiment setting", async () =>
   await expect(discoverTaskProposals(client, { ...policy, discovery: { ...policy.discovery!, allowDelegation: false } }, 150n)).rejects.toThrow("Delegation violated");
   expect(await discoverTaskProposals(client, policy, 150n)).toHaveLength(1);
 });
+
+function tokenPolicy() {
+  const original = readContract.getMockImplementation()!;
+  readContract.mockImplementation(async input => {
+    const tokenReads: Record<string, unknown> = { proposalToken: address(4), hook: address(7), proposalBudget: address(6),
+      controller: address(6), taskId: 9n, runHash: policy.discovery!.runHash, decimals: 0, initialSupply: 15n, totalSupply: 14n };
+    if (input.functionName === "balanceOf") return input.args[0] === address(1) ? 2n : 3n;
+    return input.functionName in tokenReads ? tokenReads[input.functionName] : original(input);
+  });
+  return { ...policy, discovery: { ...policy.discovery!, proposalToken: { address: address(4), codeHash: keccak256("0x6000"), initialSupply: 15 } } };
+}
+it("verifies ERC-20 supply, individual balances and immutable hook bindings at one block", async () => {
+  expect(await discoverTaskProposals(client, tokenPolicy(), 150n)).toHaveLength(1);
+  expect(readContract.mock.calls.every(([input]) => input.blockNumber === 150n)).toBe(true);
+});
+it.each(["proposalToken", "hook", "proposalBudget", "controller", "totalSupply", "balanceOf"])("rejects altered token authority or balance: %s", async field => {
+  const allocation = tokenPolicy(), original = readContract.getMockImplementation()!;
+  readContract.mockImplementation(async input => input.functionName === field ? (field === "totalSupply" || field === "balanceOf" ? 99n : address(2)) : original(input));
+  await expect(discoverTaskProposals(client, allocation, 150n)).rejects.toThrow("ERC-20 proposal burns");
+});
+it("requires atomic token burns and proposal publication to exist together", async () => {
+  const allocation = tokenPolicy();
+  logs = []; states = {};
+  await expect(discoverTaskProposals(client, allocation, 150n)).rejects.toThrow("ERC-20 proposal burns");
+});
