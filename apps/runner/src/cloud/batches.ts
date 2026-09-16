@@ -3,8 +3,8 @@ import { z } from "zod";
 import { BatchPlan, BatchId, BATCH_ACTIVE, batchPath, validateBatch } from "./batch-authority.js";
 import { OperatorEmail } from "./operators.js";
 import { protectedRecord, putProtected } from "./protected-records.js";
-import { readComputeAllocation } from "./compute-store.js";
-import { readSimulationRequest } from "./simulation.js";
+import { readComputeAllocation, readComputeState } from "./compute-store.js";
+import { readSimulationRequest, readSimulationWork } from "./simulation.js";
 import { experimentRecord } from "./experiment-records.js";
 
 export const BatchState = z.object({ batchId: BatchId, index: z.number().int().min(0).max(25),
@@ -17,7 +17,13 @@ export async function getBatch(batchId: string) {
   const plan = BatchPlan.parse(stored.value);
   const [state, approved, cancellation] = await Promise.all([protectedRecord(batchPath(batchId, "state")), protectedRecord(batchPath(batchId, "approval")), protectedRecord(batchPath(batchId, "cancel"))]);
   const experiments = [];
-  for (const id of plan.runIds) experiments.push((await experimentRecord(id))?.experiment ?? { runId: id, phase: "not-started", url: `/experiments/${id}` });
+  for (const id of plan.runIds) {
+    const [record, work] = await Promise.all([experimentRecord(id), readSimulationWork(id)]);
+    const guardian = work ? (await readComputeState(work.allocationId))?.value : null;
+    experiments.push({ ...(record?.experiment ?? { runId: id, phase: "not-started", url: `/experiments/${id}` }),
+      guardian: guardian ? { phase: guardian.phase, reason: guardian.reason, observedVmStatus: guardian.observedVmStatus,
+        stopAcceptedAt: guardian.stopAcceptedAt, stoppedAt: guardian.stoppedAt } : null });
+  }
   return { plan, state: state?.value ?? { phase: "draft" }, approved: !!approved, cancellationRequested: !!cancellation, experiments };
 }
 export async function createBatch(id: string, input: unknown, requestedBy: OperatorEmail, runIds?: string[]) {

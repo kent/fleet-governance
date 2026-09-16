@@ -172,7 +172,7 @@ function render() {
   }
   if (!replay && actual && !halted && !authorised) {
     label = (simulation?.phase || "provisioning").replaceAll("-", " ").toUpperCase();
-    headline = simulation?.phase === "reviewing" ? "Five agents. Five independent reviews." : simulation?.phase === "voting" || simulation?.phase === "settling" ? "The agents are deciding on Base Sepolia." : simulation?.phase === "preparation-failed" ? "Preparation needs attention." : simulation?.phase === "failed" ? "The run could not finish." : simulation?.terminal ? "The run has finished its work." : "Starting a real governed run.";
+    headline = simulation?.phase === "queued" ? "Waiting for the cloud batch controller." : simulation?.phase === "reviewing" ? "Five agents. Five independent reviews." : simulation?.phase === "voting" || simulation?.phase === "settling" ? "The agents are deciding on Base Sepolia." : simulation?.phase === "preparation-failed" ? "Preparation needs attention." : simulation?.phase === "failed" ? "The run could not finish." : simulation?.terminal ? "The run has finished its work." : "Starting a real governed run.";
     explanation = simulation?.message || "A protected request is preparing the worker, task and fixed resource limits.";
     if (simulation?.terminal && !["approved", "denied", "completed"].includes(simulation.phase)) {
       label = "RUN NEEDS ATTENTION"; headline = "The run ended before completing.";
@@ -194,7 +194,7 @@ function render() {
   $("state-label").textContent = label;
   $("headline").textContent = headline;
   $("explanation").textContent = explanation;
-  $("vm-state").textContent = stopped ? "TERMINATED" : replay && stage === 3 ? "STOP REQUESTED" : data.vm?.status || "Unknown";
+  $("vm-state").textContent = simulation?.phase === "queued" && !allocation ? "NOT STARTED" : stopped ? "TERMINATED" : replay && stage === 3 ? "STOP REQUESTED" : data.vm?.status || "Unknown";
   if (replay && stage < 3) $("vm-state").textContent = "RUNNING";
   $("power").classList.toggle("off", stopped);
   $("power").classList.toggle("blocked", halted);
@@ -635,7 +635,7 @@ $("run-simulation").addEventListener("click", async () => {
     const response = await fetch("/api/simulations", { method: "POST", headers: { "idempotency-key": id, "content-type": "application/json" }, body: "{}" });
     const result = await response.json(); if (!response.ok) throw new Error(result.error || "Simulation could not start.");
     sessionStorage.removeItem("fleet-simulation-request"); mode = "live";
-    data.simulation = result; render();
+    location.assign(`/experiments/${result.runId}`);
   } catch (error) { $("error").textContent = error.message; }
   finally { submitting = false; render(); }
 });
