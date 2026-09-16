@@ -10,6 +10,10 @@ on:
         description: Deploy only the public site and operator controls, without starting or changing the worker
         type: boolean
         default: false
+      history_only:
+        description: Deploy independent Agora, DAO Node and Goldsky ingestion without touching the governed worker
+        type: boolean
+        default: false
       image_revision:
         description: Reuse images from a full main-branch commit SHA (blank builds this revision)
         type: string
@@ -125,9 +129,10 @@ jobs:
         env:
           OPENROUTER_VERSION: ${{ inputs.openrouter_secret_version }}
           SITE_ONLY: ${{ inputs.site_only }}
+          HISTORY_ONLY: ${{ inputs.history_only }}
         run: |
           [[ "$OPENROUTER_VERSION" =~ ^[1-9][0-9]*$ ]]
-          if [[ "$SITE_ONLY" != true ]]; then
+          if [[ "$SITE_ONLY" != true && "$HISTORY_ONLY" != true ]]; then
           for secret in fleet-openrouter-experiment-api-key fleet-postgres-password fleet-jwt-secret fleet-base-sepolia-wallets fleet-base-sepolia-rpc-url fleet-base-sepolia-ws-url fleet-cdp-api-key-id fleet-cdp-api-key-secret; do
             version=1
             [[ "$secret" != fleet-openrouter-experiment-api-key ]] || version="$OPENROUTER_VERSION"
@@ -145,13 +150,13 @@ jobs:
             printf '%s=%s/%s@%s\n' "$variable" "$REGISTRY" "$name" "$digest" >> "$GITHUB_ENV"
           done
       - name: Deploy independent compute governance controller
-        if: ${{ !inputs.site_only }}
+        if: ${{ !inputs.site_only && !inputs.history_only }}
         run: bash infra/gcp/deploy-compute-controller.sh
       - name: Deploy fixed simulation preparation job
-        if: ${{ !inputs.site_only }}
+        if: ${{ !inputs.site_only && !inputs.history_only }}
         run: bash infra/gcp/deploy-simulation.sh
       - name: Check and start the fixed worker
-        if: ${{ !inputs.site_only }}
+        if: ${{ !inputs.site_only && !inputs.history_only }}
         run: |
           # A routine deployment must not revive an allocation that governance stopped.
           # This check reads the independent bucket, not the worker's run status.
@@ -163,19 +168,56 @@ jobs:
             echo "VM is in $state; wait for its current operation." >&2
             exit 1
           fi
-          ip=$(gcloud compute instances describe fleet-research --zone=us-central1-a --format='value(networkInterfaces[0].networkIP)')
-          [[ "$ip" =~ ^10\.42\.0\.[0-9]+$ ]]
-          echo "FLEET_AGORA_HOST=$ip" >> "$GITHUB_ENV"
-      - name: Read worker address without starting it
-        if: inputs.site_only
+      - name: Read independent history address
         run: |
-          ip=$(gcloud compute instances describe fleet-research --zone=us-central1-a --format='value(networkInterfaces[0].networkIP)')
+          ip=$(gcloud compute instances describe fleet-readside --zone=us-central1-a --format='value(networkInterfaces[0].networkIP)')
           [[ "$ip" =~ ^10\.42\.0\.[0-9]+$ ]]
           echo "FLEET_AGORA_HOST=$ip" >> "$GITHUB_ENV"
+      - name: Configure the independent history receiver
+        if: inputs.history_only
+        run: |
+          python3 -B -m unittest discover -s infra/indexer -v
+          python3 - <<'PYCONFIG'
+          import json, os
+          from pathlib import Path
+          Path('infra/gcp/runtime/history-config.json').write_text(json.dumps({
+            'FLEET_RUNNER_IMAGE': os.environ['IMAGE_RUNNER'],
+            'FLEET_DAO_IMAGE': os.environ['IMAGE_DAO_NODE'],
+            'FLEET_CPLS_IMAGE': os.environ['IMAGE_CPLS'],
+            'FLEET_AGORA_IMAGE': os.environ['IMAGE_AGORA'],
+          }))
+          PYCONFIG
+          gcloud compute scp --recurse infra/gcp/runtime fleet-readside:~/fleet-history-runtime \
+            --zone=us-central1-a --tunnel-through-iap --quiet
+          gcloud compute ssh fleet-readside --zone=us-central1-a --tunnel-through-iap --quiet \
+            --command="sudo bash \$HOME/fleet-history-runtime/deploy-history.sh '$IMAGE_RUNNER' '$IMAGE_REVISION' bootstrap"
+      - name: Deploy authenticated Goldsky transport
+        if: inputs.history_only
+        run: |
+          gcloud run deploy fleet-governance-indexer --region=us-central1 --image="$IMAGE_RUNNER" \
+            --command=node --args=apps/runner/dist/cloud/ingest-proxy.js --port=8080 \
+            --service-account=fleet-ingest@fleet-governance.iam.gserviceaccount.com \
+            --memory=512Mi --cpu=1 --min=0 --max=2 --concurrency=10 --timeout=30 \
+            --network=fleet-research --subnet=fleet-research --vpc-egress=private-ranges-only \
+            --set-env-vars="FLEET_READSIDE_HOST=$FLEET_AGORA_HOST" --no-invoker-iam-check --quiet
+      - name: Deploy the Goldsky event pipeline
+        if: inputs.history_only
+        run: |
+          npm install -g @goldskycom/cli@13.13.2
+          mkdir -p "$HOME/.goldsky/bin"
+          curl -fsS https://install-turbo.goldsky.com/linux/turbo-latest -o "$HOME/.goldsky/bin/turbo"
+          echo "825928b2f7dbd9a5f9c33ba7116f98637b8ba0c8c5dca1a70227fc41904ef816  $HOME/.goldsky/bin/turbo" | sha256sum -c -
+          chmod +x "$HOME/.goldsky/bin/turbo"
+          python3 -B infra/goldsky/deploy.py
+      - name: Start Agora after Goldsky delivers historical votes
+        if: inputs.history_only
+        run: |
+          gcloud compute ssh fleet-readside --zone=us-central1-a --tunnel-through-iap --quiet \
+            --command="sudo bash \$HOME/fleet-history-runtime/deploy-history.sh '$IMAGE_RUNNER' '$IMAGE_REVISION' serve"
       - name: Deploy public viewing and protected operator controls
         run: bash infra/gcp/deploy-site.sh
       - name: Prepare worker configuration
-        if: ${{ !inputs.site_only }}
+        if: ${{ !inputs.site_only && !inputs.history_only }}
         run: |
           python3 - <<'PY'
           import json, os
@@ -191,7 +233,7 @@ jobs:
           Path('infra/gcp/runtime/worker-config.json').write_text(json.dumps(config))
           PY
       - name: Deploy worker through IAP and verify containment
-        if: ${{ !inputs.site_only }}
+        if: ${{ !inputs.site_only && !inputs.history_only }}
         env:
           OPENROUTER_VERSION: ${{ inputs.openrouter_secret_version }}
           VERIFY_INFERENCE: ${{ inputs.verify_inference }}

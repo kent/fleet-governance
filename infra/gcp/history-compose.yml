@@ -1,0 +1,40 @@
+# Overlay on docker-compose.yml, deployed only to fleet-readside.
+services:
+  dao-node:
+    environment:
+      DAO_NODE_ARCHIVE_NODE_HTTP: http://127.0.0.1:8010/rpc
+      DAO_NODE_ARCHIVE_NODE_HTTP_BLOCK_COUNT_SPAN: "20000"
+      NUM_REALTIME_CLIENTS: "0"
+      POLLING_WAIT_CYCLE: "3"
+    depends_on:
+      event-store: { condition: service_healthy }
+  agora-next:
+    mem_limit: 3g
+    environment:
+      NODE_OPTIONS: --max-old-space-size=2048
+  archive-reader:
+    image: ${FLEET_RUNNER_IMAGE:?required}
+    restart: unless-stopped
+    network_mode: host
+    command: ["node", "apps/runner/dist/cloud/archive-proxy.js"]
+    environment:
+      FLEET_ARCHIVE_BUCKET: ${GCS_BUCKET_NAME}
+    read_only: true
+  event-store:
+    image: ${FLEET_CPLS_IMAGE:?required}
+    entrypoint: ["python3", "/fleet-indexer/server.py"]
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      FLEET_RPC_HTTP: ${FLEET_RPC_HTTP}
+      FLEET_INGEST_TOKEN: ${FLEET_INGEST_TOKEN}
+    volumes:
+      - ./indexer:/fleet-indexer:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30

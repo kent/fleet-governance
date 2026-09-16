@@ -2,7 +2,8 @@ import { createServer } from "node:http";
 import { get } from "node:https";
 import { accessToken } from "./google.js";
 
-const bucket = "fleet-governance-archive-449245570324";
+const bucket = process.env.FLEET_ARCHIVE_BUCKET ?? "fleet-governance-archive-449245570324";
+if (!["fleet-governance-archive-449245570324", "fleet-governance-history-449245570324"].includes(bucket)) throw new Error("Invalid archive bucket");
 // Loopback-only ADC reader. The private archive bucket never becomes public.
 createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", "http://archive");
