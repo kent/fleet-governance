@@ -50,9 +50,13 @@ export async function readSimulationRequest(): Promise<SimulationRequest | null>
 // its shape, not current launch authority, and redact requestedBy at the boundary.
 // Launchers and workers must keep using readSimulationRequest above.
 const recordedSimulationRequest = simulationRequest.extend({ requestedBy: z.string().email() });
-export async function readRecordedSimulationRequest(): Promise<SimulationRequest | null> {
-  const value = await readComputeObject(SIMULATION_QUEUE);
-  return value ? recordedSimulationRequest.parse(value) : null;
+export async function readRecordedSimulationRequest(runId?: string): Promise<SimulationRequest | null> {
+  if (runId) simulationPath(runId);
+  const value = await readComputeObject(runId ? `simulations/${runId}/request.json` : SIMULATION_QUEUE);
+  if (!value) return null;
+  const record = recordedSimulationRequest.parse(value);
+  if (runId && record.runId !== runId) throw new Error("Recorded request belongs to another run.");
+  return record;
 }
 export async function readSimulationWork(runId: string): Promise<SimulationWork | null> {
   simulationPath(runId);

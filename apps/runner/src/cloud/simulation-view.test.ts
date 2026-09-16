@@ -14,7 +14,7 @@ const previous = "run-00000000-0000-4000-8000-000000000002";
 const original = agentRoster[0]!.address;
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(readRecordedSimulationRequest).mockResolvedValue({ runId: current } as never);
+  vi.mocked(readRecordedSimulationRequest).mockImplementation(async runId => runId ? null : { runId: current } as never);
   vi.mocked(readComputeAllocation).mockResolvedValue({ runId: current, allocationId: "current" } as never);
   vi.mocked(readComputeAllocationById).mockResolvedValue({ runId: previous, allocationId: "previous" } as never);
   vi.mocked(readComputeState).mockResolvedValue({ value: { phase: "halted", observedVmStatus: "TERMINATED" } } as never);
@@ -42,6 +42,18 @@ it("preserves a failed preparation attempt even when it never published an alloc
   expect(snapshot.simulationStatus?.phase).toBe("preparation-failed");
   expect(snapshot.allocation).toBeNull();
   expect(snapshot.vm.status).toBe("UNKNOWN");
+  expect(googleRequest).not.toHaveBeenCalled();
+});
+
+it("retains protected settings after a failed preparation is recovered and its queue removed", async () => {
+  const settings = { name: "Recovered experiment", agentCount: 5, budgetUsd: 0.25 };
+  vi.mocked(readRecordedSimulationRequest).mockImplementation(async runId => runId === previous ? { runId: previous, settings } as never : null);
+  vi.mocked(readSimulationWork).mockResolvedValue(null);
+  vi.mocked(readObject).mockResolvedValue({ runId: previous, phase: "recovered", terminal: true });
+  const snapshot = await simulationSnapshot(previous);
+  expect(snapshot.simulation).toMatchObject({ runId: previous, settings });
+  expect(snapshot.allocation).toBeNull();
+  expect(snapshot.isCurrentRun).toBe(false);
   expect(googleRequest).not.toHaveBeenCalled();
 });
 

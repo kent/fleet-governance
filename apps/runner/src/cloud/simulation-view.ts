@@ -52,6 +52,7 @@ export async function simulationSnapshot(selectedRun?: string) {
   const [active, request, evidence] = await Promise.all([readComputeAllocation(), readRecordedSimulationRequest(), readComputeEvidence()]);
   const runId = selectedRun ?? request?.runId ?? active?.runId;
   const isCurrentRun = !selectedRun || selectedRun === request?.runId || selectedRun === active?.runId;
+  const recordedRequest = runId && request?.runId !== runId ? await readRecordedSimulationRequest(runId) : request;
   const [status, work] = runId ? await Promise.all([readObject<Status>(simulationPath(runId)), readSimulationWork(runId)]) : [null, null];
   const allocation = isCurrentRun ? active : work ? await readComputeAllocationById(work.allocationId) : null;
   if (!isCurrentRun && allocation && allocation.runId !== runId) throw new Error("Saved allocation belongs to another run.");
@@ -69,7 +70,7 @@ export async function simulationSnapshot(selectedRun?: string) {
     ...sourceEvents(work?.preparationEvents ?? preparing?.events, work ? "Protected preparation record" : "Preparation service report"),
     ...sourceEvents(status?.events, "Worker report · inspect the supporting evidence"),
   ];
-  return { simulation: isCurrentRun ? request : work || status ? { runId, createdAt: work?.createdAt ?? status?.createdAt ?? status?.updatedAt } : null,
+  return { simulation: recordedRequest ?? (work || status ? { runId, createdAt: work?.createdAt ?? status?.createdAt ?? status?.updatedAt } : null),
     simulationStatus: status, simulationWork: work, allocation, state, vm, evidence: replay, agentRoster, events,
     activity: runId ? await verifiedActivity(status, runId, work?.taskId) : [], isCurrentRun,
     observedAt: new Date().toISOString() };
