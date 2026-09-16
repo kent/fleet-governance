@@ -41,6 +41,8 @@ for proposal_id in proposal_ids:
 for page in ["/info", "/proposals"]:
     document = check(PUBLIC, page, [200])
     assert b":E{" not in document, "Agora must serve without a streamed server error"
+    if page == "/info":
+        assert b"Only the agent cluster shuts down." in document, "Agora is serving stale infrastructure documentation"
 metrics = json.loads(check(PUBLIC, "/api/common/metrics", [200]))
 assert metrics.get("votableSupply") is not None and metrics.get("totalSupply") is not None, "Agora navigation requires token metrics"
 check(PUBLIC, "/api/common/votableSupply", [200])

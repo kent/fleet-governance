@@ -54,7 +54,7 @@ if canary.exists():
 if manifest.exists():
     data = json.loads(manifest.read_text())
     print('Base Sepolia deployment:', json.dumps({key: data.get(key) for key in ['chainId', 'deploymentBlock', 'addresses']}))
-print(redact(command(['docker', 'ps', '-a', '--format', '{{.Names}}\t{{.Status}}'])))
+print(redact(command(['docker', 'ps', '-a', '--format', '{{.Names}}\t{{.Status}}\t{{.Image}}'])))
 print('Bootstrap ready:', Path('/var/lib/fleet-bootstrap-ready').exists())
 print(redact(command(['df', '-h', '/', '/srv/fleet'])))
 print(redact(command(['docker', 'image', 'ls', '--format', '{{.Repository}}\t{{.Size}}'])))
