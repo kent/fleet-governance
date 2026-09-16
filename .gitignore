@@ -24,3 +24,7 @@ gha-creds-*.json
 *.tfstate
 *.tfstate.*
 *.tfplan
+
+# Operator setup guides and live access evidence stay outside the repository.
+/docs/mcp.md
+/docs/evidence/mcp-*/
