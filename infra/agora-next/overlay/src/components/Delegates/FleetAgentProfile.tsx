@@ -45,7 +45,7 @@ export default async function FleetAgentProfile({ address: supplied }: { address
           <div><strong>{votes.filter(v => v.support === 1).length} / {votes.filter(v => v.support === 0).length} / {votes.filter(v => v.support === 2).length}</strong><p>For / Against / Abstain</p></div>
         </div>
         <p>Goldsky delivers the chain events. DAO Node builds this voting and delegation record. Indexing can lag the chain.</p>
-        <Link className="underline" href="/compute#activity-log">Work, conversations and signed attestations →</Link>
+        <a className="underline" href="/compute#activity-log">Work, conversations and signed attestations →</a>
       </section>
       <section className="space-y-4"><h2 className="text-2xl font-bold">Past votes</h2>
         {votes.length === 0 ? <p>No ballots in the current index.</p> : votes.map(vote =>
