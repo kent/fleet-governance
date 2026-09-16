@@ -2,6 +2,7 @@
 # Grow existing ext4 filesystems after Terraform increases the persistent disks.
 # Never format a disk or run this on the governed agent worker.
 set -euo pipefail
+trap 'echo "History filesystem growth failed at line $LINENO." >&2' ERR
 metadata=http://metadata.google.internal/computeMetadata/v1
 [[ $(curl -fsS -H Metadata-Flavor:Google "$metadata/project/project-id") == fleet-governance ]]
 [[ $(curl -fsS -H Metadata-Flavor:Google "$metadata/instance/name") == fleet-readside ]]
@@ -12,11 +13,12 @@ data_device=/dev/disk/by-id/google-fleet-data
 [[ $(findmnt -n -o FSTYPE /srv/fleet) == ext4 ]]
 [[ $(findmnt -n -o FSTYPE /) == ext4 ]]
 # /dev/root can be a display alias; resolve the kernel device number instead.
-root_device=$(readlink -f "/dev/block/$(findmnt -n -o MAJ:MIN /)")
+root_device=$(readlink -f "/dev/block/$(findmnt -rn -o MAJ:MIN /)")
+printf 'Growing existing filesystems: root=%s data=%s\n' "$root_device" "$(readlink -f "$data_device")"
 root_name=$(basename "$root_device")
 [[ -f "/sys/class/block/$root_name/partition" ]]
 root_partition=$(cat "/sys/class/block/$root_name/partition")
-root_parent=$(lsblk -n -o PKNAME "$root_device")
+root_parent=$(lsblk -rn -o PKNAME "$root_device")
 [[ "$root_partition" =~ ^[0-9]+$ && "$root_parent" =~ ^[a-zA-Z0-9]+$ ]]
 # growpart returns 1 for an already expanded partition; other failures stop CI.
 if output=$(growpart "/dev/$root_parent" "$root_partition" 2>&1); then
