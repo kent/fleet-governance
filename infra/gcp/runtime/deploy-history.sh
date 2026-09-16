@@ -77,6 +77,10 @@ PY
   echo 'History health check failed. Inspect the dedicated host.' >&2
   exit 1
 fi
+# Old image revisions accumulate on the small research host. Docker preserves
+# every image referenced by a container, including stopped containers. This does
+# not prune volumes, containers, bind-mounted releases or experiment evidence.
+docker image prune --all --force
 export DOCKER_CONFIG
 DOCKER_CONFIG=$(mktemp -d)
 trap 'rm -rf "$DOCKER_CONFIG"' EXIT
