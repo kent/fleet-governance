@@ -9,7 +9,7 @@ import type { RunEvent } from "./run-events.js";
 export const agentRoster = JSON.parse(readFileSync("experiments/compute/agent-roster.json", "utf8")) as { agentId: number; name: string; address: string; role: string }[];
 const runPattern = /^run-[0-9a-f-]{36}$/;
 type Status = { runId: string; updatedAt?: string; createdAt?: string; phase?: string; proposalId?: string; activity?: ActivityAttestation[];
-  events?: RunEvent[]; rounds?: { proposalId: string; txHash?: string; phase: string }[]; proposalIds?: string[] };
+  events?: RunEvent[]; rounds?: { proposalId: string; txHash?: string; phase: string; proposalBody?: string; title?: string; proposerAgentId?: number; creditTxHash?: string; checkpoint?: number }[]; proposalIds?: string[] };
 let historyCache: { until: number; runs: Status[] } | undefined;
 async function readSimulationHistory(): Promise<Status[]> {
   if (historyCache && historyCache.until > Date.now()) return historyCache.runs;
@@ -79,6 +79,12 @@ export async function simulationProposal(proposalId: string) {
   const run = (await simulationHistory()).find(run => run.proposalIds?.includes(proposalId));
   if (!run) return null;
   const work = await readSimulationWork(run.runId);
+  if (work?.agentDriven) {
+    const status = await readObject<Status>(simulationPath(run.runId));
+    const proposal = status?.rounds?.find(round => round.proposalId === proposalId && round.txHash);
+    return proposal ? { ...work, ...proposal, proposalTitle: proposal.title, checkpointIndex: proposal.checkpoint,
+      proposalOrigin: "agent", agents: agentRoster } : null;
+  }
   const checkpoint = work?.checkpoints?.find(item => item.proposalId === proposalId);
   return checkpoint ? { ...work, ...checkpoint, checkpointIndex: work!.checkpoints!.indexOf(checkpoint), agents: agentRoster }
     : work?.proposalId === proposalId ? { ...work, agents: agentRoster } : null;

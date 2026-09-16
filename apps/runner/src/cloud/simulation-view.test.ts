@@ -97,3 +97,14 @@ it("resolves a later published checkpoint to its own exact proposal body", async
   expect(await simulationProposal("222")).toMatchObject({ proposalId: "222", proposalBody: "second", checkpointIndex: 1 });
   expect(await simulationProposal("999")).toBeNull();
 });
+
+
+it("resolves an agent-authored proposal from its published round without a prewritten work manifest", async () => {
+  vi.resetModules();
+  const { simulationProposal } = await import("./simulation-view.js");
+  vi.mocked(googleRequest).mockResolvedValue(new Response(JSON.stringify({ items: [{ name: `demo/simulations/${previous}/status.json`, updated: "2026-09-16T01:00:00Z" }] })));
+  vi.mocked(readObject).mockResolvedValue({ runId: previous, rounds: [{ proposalId: "333", phase: "voting", txHash: "0xreceipt", title: "Agent request", proposalBody: "Model-written body", proposerAgentId: 4, creditTxHash: "0xcredit" }, { proposalId: "444", phase: "proposing" }] });
+  vi.mocked(readSimulationWork).mockResolvedValue({ runId: previous, agentDriven: { allowance: 3 }, constitution: "Scope" } as never);
+  expect(await simulationProposal("333")).toMatchObject({ proposalOrigin: "agent", proposalBody: "Model-written body", proposerAgentId: 4, creditTxHash: "0xcredit" });
+  expect(await simulationProposal("444")).toBeNull();
+});

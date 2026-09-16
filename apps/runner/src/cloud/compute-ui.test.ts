@@ -271,3 +271,16 @@ describe("compute evidence display", () => {
     expect(document.getElementById("architecture-map")?.dataset.shutdown).toBe("idle");
   });
 });
+
+
+it("shows an empty decision list and proposal credits before agents choose a proposal", async () => {
+  await load({ allocation: { ...allocation, requiredProposalIds: [], discovery: { creditsPerAgent: 3 }, nativeStopAt: now + 3600 },
+    simulation: { runId: "actual" }, state: { phase: "authorised", observedAt: now, approvedProposalIds: [] }, vm: { status: "RUNNING" },
+    simulationWork: { agentDriven: { allowance: 3 }, goal: "Investigate", taskId: "10" },
+    simulationStatus: { phase: "working", updatedAt: new Date().toISOString(), rounds: [], agents: [{ agentId: 0, phase: "working", creditsRemaining: 3 }] } });
+  expect(document.body.textContent).not.toContain("One allocation. Three fixed decisions.");
+  expect(document.getElementById("expiry")?.textContent).toContain(new Date((now + 3600) * 1000).toLocaleString());
+  click("agent-0");
+  expect(document.getElementById("inspect-content")?.textContent).toContain("3 / 3");
+  expect(document.getElementById("inspect-content")?.textContent).toContain("proposal credit");
+});
