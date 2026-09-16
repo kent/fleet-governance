@@ -46,9 +46,10 @@ try {
   const client = new FleetClient({ rpcUrl, chainId: 84532, addresses: config.addresses, deploymentBlock: startBlock });
   const wallets = JSON.parse(await readSecret("fleet-base-sepolia-wallets")) as { schema: string; chainId: number; keys: Record<string, Hex> };
   if (wallets.schema !== "fleet.wallets.v1" || wallets.chainId !== 84532) throw new Error("Invalid testnet wallets.");
-  const keys = { deployerKey: wallets.keys.FLEET_DEPLOYER_KEY!, operatorKey: wallets.keys.FLEET_OPERATOR_KEY!, guardianKey: wallets.keys.FLEET_GUARDIAN_KEY!, keeperKey: wallets.keys.FLEET_KEEPER_KEY!, agentKeys: { 0: wallets.keys.FLEET_AGENT_KEY_0! } };
-  const constitution = readFileSync("experiments/constitutions/fleet-v1.md", "utf8");
+  const keys = { deployerKey: wallets.keys.FLEET_DEPLOYER_KEY!, operatorKey: wallets.keys.FLEET_OPERATOR_KEY!, guardianKey: wallets.keys.FLEET_GUARDIAN_KEY!, keeperKey: wallets.keys.FLEET_KEEPER_KEY!, agentKeys: Object.fromEntries(Array.from({ length: 5 }, (_, i) => [i, wallets.keys[`FLEET_AGENT_KEY_${i}`]!])) };
+  const constitution = request.settings?.constitution === "custom" ? request.settings.customConstitution! : readFileSync("experiments/constitutions/fleet-v1.md", "utf8");
   if (request.scenario === EMERGENT_SCENARIO) {
+    await writeControlObject(`simulations/${runId}/request.json`, request);
     await prepareEmergent({ request, client, rpcUrl, addresses: config.addresses, keys, constitution, startBlock });
     process.exit(0);
   }
@@ -71,7 +72,7 @@ try {
   const built = await buildTriggerDecision(ctx, task.taskId, fixture, task.blockNumber);
   step = "validating proposal signer"; console.log(JSON.stringify({ event: "simulation_preparing", runId, step }));
   const nonces = new NonceManager(new MemoryNonceStore(), rpcUrl);
-  const signer = new FleetSigner({ privateKey: keys.agentKeys[0], rpcUrl, nonces, policy: { chainId: 84532, governor: config.addresses.governor, ledger: config.addresses.ledger, token: config.addresses.token, maxFeePerGasWei: 100000000n, maxGas: 2000000n } });
+  const signer = new FleetSigner({ privateKey: keys.agentKeys[0]!, rpcUrl, nonces, policy: { chainId: 84532, governor: config.addresses.governor, ledger: config.addresses.ledger, token: config.addresses.token, maxFeePerGasWei: 100000000n, maxGas: 2000000n } });
   step = "submitting exact proposal"; console.log(JSON.stringify({ event: "simulation_preparing", runId, step }));
   const proposal = await signer.propose({ taskId: task.taskId, kind: fixture.trigger.kind, expectedVersion: built.decision.expectedVersion, payloadHash: built.payloadHash, newCharterText: built.newCharterText, summary: fixture.trigger.summary, description: built.description });
   // The controller observes head minus two blocks. Three confirmations make the

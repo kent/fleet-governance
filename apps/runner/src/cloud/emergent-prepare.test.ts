@@ -17,7 +17,7 @@ vi.mock("../pipeline/task.js", () => ({ openTask: vi.fn() }));
 const address = (n: string) => `0x${n.repeat(40)}` as const;
 const runId = "run-00000000-0000-4000-8000-000000000001";
 const input = () => ({ request: { runId } as never, client: { publicClient: {
-  waitForTransactionReceipt: vi.fn(async () => ({ status: "success", blockNumber: 110n })), getBytecode: vi.fn(async () => "0x1234"),
+  readContract: vi.fn(async (i) => i.args[0]), waitForTransactionReceipt: vi.fn(async () => ({ status: "success", blockNumber: 110n })), getBytecode: vi.fn(async () => "0x1234"),
 } } as unknown as FleetClient, rpcUrl: "https://rpc.invalid", addresses: { governor: address("1"), token: address("2"), hook: address("3") } as never,
 keys: { operatorKey: `0x${"11".repeat(32)}` } as never, constitution: "Respect scope and shutdown.", startBlock: 100n });
 beforeEach(() => {
@@ -33,7 +33,7 @@ it("registers the budget and task with no proposals, bodies, future decisions or
   const prepared = await prepareEmergent(input());
   expect(armComputeAllocation).toHaveBeenCalledWith(expect.objectContaining({ requiredProposalIds: [], discovery: expect.objectContaining({ taskId: "10", creditsPerAgent: 3 }) }));
   expect(mocks.writeContract).toHaveBeenCalledTimes(1);
-  expect(mocks.writeContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: "registerRun", args: [10n, expect.any(String), 3, expect.any(BigInt)] }));
+  expect(mocks.writeContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: "registerRunPolicy", args: [10n, expect.any(String), 3, expect.any(BigInt), 1, 2n * 10n ** 18n] }));
   expect(prepared.proposalId).toBeUndefined(); expect(prepared.checkpoints).toBeUndefined(); expect(prepared.proposalBody).toBeUndefined();
   expect(prepared.preparationEvents?.at(-1)?.evidence).toMatchObject({ proposals: [], costPerProposal: 1 });
   expect(writeControlObject).toHaveBeenCalledWith(`simulations/${runId}/work.json`, prepared);

@@ -3,6 +3,7 @@ const mocks = vi.hoisted(() => ({ control: vi.fn(), blocked: vi.fn(), allocation
 vi.mock("./compute-store.js", () => ({ COMPUTE_BUCKET: "protected", readComputeObject: mocks.control, readComputeAllocation: mocks.allocation, isComputeRunBlocked: mocks.blocked }));
 vi.mock("./google.js", () => ({ googleRequest: mocks.request, readObject: mocks.read, writeObject: mocks.write }));
 vi.mock("./control.js", () => ({ ACTIVE: "demo/active.json", runPath: (id: string) => `demo/runs/${id}/status.json` }));
+import { experimentDefaults } from "./experiment-settings.js";
 import { queueSimulation } from "./simulation.js";
 const runId = "run-00000000-0000-4000-8000-000000000001";
 beforeEach(() => { vi.resetAllMocks(); mocks.blocked.mockResolvedValue(false); mocks.control.mockResolvedValue(null); mocks.allocation.mockResolvedValue(null); mocks.read.mockResolvedValue(null); mocks.request.mockResolvedValue({ json: async () => ({ status: "RUNNING", state: "ENABLED", terminalCondition: { state: "CONDITION_SUCCEEDED" } }) }); });
@@ -25,7 +26,7 @@ describe("real simulation request", () => {
     expect(mocks.request).not.toHaveBeenCalled();
   });
   it("never repeats the job for a retried request or permits another request to replace it", async () => {
-    mocks.control.mockResolvedValue({ runId, createdAt: new Date().toISOString(), requestedBy: "operator2@example.com", schema: "fleet.simulation-request.v1" });
+    mocks.control.mockResolvedValue({ runId, settings: experimentDefaults(), createdAt: new Date().toISOString(), requestedBy: "operator2@example.com", schema: "fleet.simulation-request.v1" });
     await queueSimulation(runId);
     expect(mocks.request).not.toHaveBeenCalled();
     await expect(queueSimulation("run-00000000-0000-4000-8000-000000000002")).rejects.toThrow("recovery");

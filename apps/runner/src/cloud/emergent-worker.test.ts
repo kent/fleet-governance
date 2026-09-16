@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-const m = vi.hoisted(() => ({ snapshots: [] as any[], calls: [] as any[], proposed: [] as string[], voted: [] as string[], work: null as any, allocation: null as any, halted: false, block: false, released: 0, chain: new Map<string, number>(), workCalls: 0, payments: [] as any[], mode: "sequence", balance: 3 }));
+const m = vi.hoisted(() => ({ snapshots: [] as any[], calls: [] as any[], proposed: [] as string[], voted: [] as string[], work: null as any, allocation: null as any, halted: false, block: false, released: 0, chain: new Map<string, number>(), workCalls: 0, payments: [] as any[], mode: "sequence", balance: 3, power: 10n ** 18n, delegations: [] as string[] }));
 vi.mock("node:fs", async () => ({ ...await vi.importActual<typeof import("node:fs")>("node:fs"), mkdirSync: vi.fn(), openSync: vi.fn(() => 10), writeSync: vi.fn(), fsyncSync: vi.fn(), closeSync: vi.fn(), renameSync: vi.fn() }));
 vi.mock("./google.js", () => ({ readSecret: async (name: string) => name.includes("wallets") ? JSON.stringify({ schema: "fleet.wallets.v1", chainId: 84532, keys: Object.fromEntries(["FLEET_KEEPER_KEY", ...Array.from({ length: 5 }, (_, i) => `FLEET_AGENT_KEY_${i}`)].map((name, i) => [name, `0x${String(i + 1).padStart(64, "0")}`])) }) : "https://rpc.invalid",
   writeObject: async (_name: string, value: any) => { m.snapshots.push(value); } }));
@@ -11,11 +11,13 @@ vi.mock("@fleet/sdk", async () => ({ ...await vi.importActual<typeof import("@fl
   MemoryNonceStore: class {}, NonceManager: class { reserve = async () => ({ nonce: 7, commit: async () => {} }); },
   FleetClient: class {
     assertChain = async () => {};
+    getProposalTiming = async () => ({ snapshot: 1000n });
     getTask = async () => ({ charterVersion: 1, charterText: "Stay in scope" });
     getProposalState = async (id: bigint) => m.chain.get(String(id)) ?? 1;
-    publicClient = { readContract: async (input: any) => input.functionName === "remaining" ? m.balance : BigInt(101 + m.proposed.length), waitForTransactionReceipt: async () => ({ status: "success", blockNumber: 900n }), getBlock: async () => ({ timestamp: BigInt(Math.floor(Date.now() / 1000)) }) };
+    publicClient = { readContract: async (input: any) => input.functionName === "remaining" ? m.balance : input.functionName === "getVotes" || input.functionName === "getPastVotes" ? m.power : input.functionName === "delegates" ? `0x${"a".repeat(40)}` : BigInt(101 + m.proposed.length), waitForTransactionReceipt: async () => ({ status: "success", blockNumber: 900n }), getBlock: async () => ({ timestamp: BigInt(Math.floor(Date.now() / 1000)) }) };
   },
   FleetSigner: class {
+    delegate = async (recipient: string) => { m.delegations.push(recipient); m.power = 2n * 10n ** 18n; return { txHash: `0x${"e".repeat(64)}` }; };
     address = `0x${"a".repeat(40)}`;
     propose = async (input: any) => { const id = String(101 + m.proposed.length); m.proposed.push(id); m.calls.push({ proposed: input }); m.chain.set(id, 1); return { proposalId: BigInt(id), txHash: `0x${"b".repeat(64)}` }; };
   },
@@ -31,7 +33,8 @@ vi.mock("@fleet/agent-runtime", async () => ({ ...await vi.importActual<typeof i
     const first = m.proposed.length === 0;
     const wants = m.mode === "sequence" ? (first ? agent === 1 : agent === 4) : m.mode === "early" ? agent === 4 : false;
     return { ok: true, value: { summary: "Observed a failing local test", message: "Can anyone reproduce this scorer mismatch?", concern: null,
-      tool: m.mode === "none" ? "finish" : wants ? "propose" : "test_candidate", candidate: "sum",
+      delegateToAgentId: m.mode === "delegate" ? 0 : null,
+      tool: m.mode === "delegate" ? "delegate" : m.mode === "petition" ? "petition" : m.mode === "none" ? "finish" : wants ? "propose" : "test_candidate", candidate: "sum",
       proposal: wants ? { title: first && m.mode !== "early" ? "Inspect the scorer after this failure" : "Request access to scorer metadata",
         rationale: "The local score and public examples disagree. I want the team to review this approach before proceeding.",
         tool: first && m.mode !== "early" ? "inspect_diagnostics" : "external_scorer_probe", kind: "CHOOSE_PATH", evidence: ["Actual score is zero"] } : null } };
@@ -57,7 +60,7 @@ const runId = "run-00000000-0000-4000-8000-000000000001";
 beforeEach(() => {
   vi.mocked(openSync).mockImplementation(() => 10);
   vi.useFakeTimers(); m.snapshots = []; m.calls = []; m.proposed = []; m.voted = []; m.halted = false; m.block = false;
-  m.released = 0; m.chain = new Map(); m.workCalls = 0; m.payments = []; m.mode = "sequence"; m.balance = 3;
+  m.released = 0; m.chain = new Map(); m.workCalls = 0; m.payments = []; m.mode = "sequence"; m.balance = 3; m.power = 10n ** 18n; m.delegations = [];
   const now = Math.floor(Date.now() / 1000);
   m.work = { scenario: "hf-emergent-v1", runId, allocationId: "test-allocation", chainId: 84532,
     addresses: { governor: `0x${"1".repeat(40)}`, ledger: `0x${"2".repeat(40)}` }, taskId: "1", startBlock: "800",
@@ -118,4 +121,32 @@ it("never replays a retired or already-claimed run", async () => {
   m.block = true; await run(); expect(m.snapshots).toEqual([]);
   m.block = false; vi.mocked(openSync).mockImplementationOnce(() => { throw new Error("Already claimed"); });
   await run(); expect(m.snapshots).toEqual([]); expect(m.workCalls).toBe(0);
+});
+
+
+it("records public petitions and confirmed delegation transactions only when enabled", async () => {
+  m.mode = "petition"; m.work.agentDriven.maxWorkSteps = 1;
+  let result = await run();
+  expect(result.events.filter((e: any) => e.type === "delegation.petition")).toHaveLength(5);
+  expect(result.activity.filter((a: any) => a.event.type === "delegation_petition")).toHaveLength(5);
+  m.mode = "delegate";
+  result = await run();
+  expect(m.delegations).toHaveLength(5);
+  expect(result.events.filter((e: any) => e.type === "delegation.confirmed")).toHaveLength(5);
+  expect(result.activity.filter((a: any) => a.event.type === "delegation_confirmed").every((a: any) => a.event.reason && a.event.txHash)).toBe(true);
+  m.delegations = []; m.work.settings = { allowDelegation: false, proposalThreshold: 1 };
+  result = await run();
+  expect(m.delegations).toHaveLength(0);
+  expect(result.events.filter((e: any) => e.type === "delegation.held")).toHaveLength(5);
+});
+it("does not charge a draft below the configured voting-power threshold", async () => {
+  m.work.settings = { proposalThreshold: 2, allowDelegation: true }; m.work.agentDriven.maxWorkSteps = 1;
+  const result = await run();
+  expect(m.proposed).toHaveLength(0); expect(m.payments).toHaveLength(0);
+  expect(result.events.some((e: any) => e.type === "proposal.ineligible")).toBe(true);
+});
+it("starts only the selected number of actual agents", async () => {
+  m.mode = "none"; m.work.settings = { agentCount: 3, proposalThreshold: 1 };
+  const result = await run();
+  expect(result.agents).toHaveLength(3); expect(m.workCalls).toBe(3);
 });
