@@ -31,15 +31,15 @@ No tools attack Hugging Face or other third-party infrastructure.
 
 | Requirement | Required evidence | Current status |
 | --- | --- | --- |
-| One chronological system timeline | Rendered current and historical runs, with source/timestamp/identity for each event; undated legacy evidence separated | Existing UI groups by stage; replacement required |
-| Task, provisioning and actual agent start | Protected preparation events plus worker process/start receipts | Partial snapshot data only |
-| Agents work and communicate | Real model outputs, bounded tool results, shared messages and signed records | Existing simulation only reviews one proposal |
-| Multiple genuine votes | At least two successive proposals on Base Sepolia, each with model ballots and public reasons | Existing simulation has one proposal |
-| Approval resumes only the permitted step | Guardian observes each exact executed proposal; dispatch checks that checkpoint | New policy and runtime required |
+| One chronological system timeline | Rendered current and historical runs, with source/timestamp/identity for each event; undated legacy evidence separated | Implemented chronological merge, subsystem/agent filters, decision cards; unit and desktop/mobile browser checks pass; not yet deployed |
+| Task, provisioning and actual agent start | Protected preparation events plus worker process/start receipts | Preparation and worker receipts implemented; live verification pending |
+| Agents work and communicate | Real model outputs, bounded tool results, shared messages and signed records | Bounded scorer lab, real model loop, gated board and signed work records implemented; adapter tests pass; live run pending |
+| Multiple genuine votes | At least two successive proposals on Base Sepolia, each with model ballots and public reasons | Three deterministic proposal IDs prepared before work; sequential publication and voting implemented; live run pending |
+| Approval resumes only the permitted step | Guardian observes each exact executed proposal; dispatch checks that checkpoint | Checkpoint policy, observer and exact dispatch checks implemented; focused tests pass |
 | Failure stops only the agent VM | Durable halt, independent stop API acceptance, observed TERMINATED and restart refusal | Existing single-proposal mechanism works; multi-step verification required |
 | Immutable compute envelope | All proposal identities and deadlines fixed before agents start; no vote can extend them | Preserve while adding ordered checkpoints |
-| Agora indexing across the run | Goldsky pipeline, DAO Node and Agora show every proposal/reason and link to its timeline | Existing single-proposal linking needs extension |
-| HN-ready explanation in the maintainer’s voice | Published /info, main page and blog explain incident, crypto's role, control boundary and limitations | Existing copy needs revision |
+| Agora indexing across the run | Goldsky pipeline, DAO Node and Agora show every proposal/reason and link to its timeline | Proposal lookup resolves each published checkpoint; UI preserves all rounds; live indexing check pending |
+| HN-ready explanation in the maintainer’s voice | Published /info, main page and blog explain incident, crypto's role, control boundary and limitations | Main page, /info and blog revised with incident sources, crypto rationale and explicit limitations; deployment pending |
 | Deployed real demonstration | GitHub builds/deployments, real model run within $1 run ceiling/$50 pool, independently checked receipts | Not yet performed for new scenario |
 
 ## Control design

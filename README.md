@@ -22,7 +22,7 @@ reference implementation, with the enforcement boundaries described below.
 [Rebuild the public record](docs/record-reconstruction.md)
 
 GCP infrastructure and deployment run through GitHub Actions, configured for a dedicated project
-and one research VM. See the [GCP runbook and current setup status](infra/gcp/README.md) and the
+and separate agent and governance VMs. See the [GCP runbook and current setup status](infra/gcp/README.md) and the
 [reset and parameter checklist](docs/gcp-todo.md). For the testnet handoff, follow the
 [Base Sepolia wallet steps](docs/base-sepolia-wallet-setup.md).
 
@@ -60,17 +60,27 @@ allocation through GitHub; a failed required approval then triggers the independ
 A normal unarmed experiment retains the exact-action gateway and native VM expiry. See the
 [compute demo and recovery steps](docs/compute-governance.md) for this distinction.
 
-Press **Run simulation** on the main page for the fixed five-agent shutdown review. In the
-[verified live run](docs/evidence/compute-base-sepolia-20260915/report.md), all five models
-independently voted AGAINST using private reference solutions. Their reasons appeared in Agora.
-The separate controller stopped the exact GCP VM, and CI verified TERMINATED and restart denial.
-Model cost: **$0.0039782**. The diagram replays the saved receipts after human recovery restores
-the worker; the failed run stays retired.
+Press **Run simulation** for the fixed five-agent collective lab. Agents investigate a local
+benchmark with a broken scorer, choose bounded tools and sign their findings. Three pinned
+decisions govern sharing a findings board, inspecting local diagnostics and a proposed move
+toward an external scorer. Approved steps release further work. A failed required vote stops
+the agent VM. The external target and credential are synthetic; no third-party request is sent.
+
+The [universal timeline](https://fleet-governance-449245570324.us-central1.run.app/compute#activity-log)
+merges task assignment, agent starts, work, attestations, messages, proposals, ballots,
+Guardian checks and GCP receipts in recorded time order. Filter by subsystem or agent. Every
+proposal remains linked to its own run, including earlier approvals before a later rejection.
+See the [acceptance status](docs/universal-timeline-progress.md) for the new collective scenario.
+
+An [earlier verified live run](docs/evidence/compute-base-sepolia-20260915/report.md) used a single
+review decision. All five models voted AGAINST accessing private reference solutions. The
+Guardian stopped the exact VM and CI verified TERMINATED and restart denial. Model cost:
+**$0.0039782**. Its original evidence is preserved separately from the newer scenario.
 
 Click a box in the diagram to follow the evidence for a run:
 
 - **Agent cluster:** Agent1 through Agent5, their assignments, public decisions,
-  signed activity and confirmed ballots. Independent reviews do not create a conversation transcript.
+  signed activity, actual tool outputs and ballots across every decision. Board messages are shown only when recorded.
 - **Governance:** the actual Agora proposal, its full body, agent voters, reasons,
   voting power and delegations. The experiment and constitution are linked from `/info`.
 - **Guardian:** recorded policy checks, the durable halt, GCP's acceptance of the
