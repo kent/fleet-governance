@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refresh CPLS after deliveries; rebuild DAO Node after a confirmed reorg.
+"""Reconcile DAO Node and CPLS after durable Goldsky deliveries.
 
 Runs on fleet-readside only. No GCP compute credentials or API calls are used.
 """
@@ -22,11 +22,13 @@ def main():
     old = json.loads(cursor.read_text()) if cursor.exists() else {'deliveries':-1,'reorgs':0}
     if current.get('events',0) == 0 or current.get('deliveries',0) == old['deliveries']:
         return
-    if current.get('reorgs',0) != old['reorgs']:
-        subprocess.run(['docker','compose','-f',str(root / 'infra/gcp/docker-compose.yml'),
-            '-f',str(root / 'infra/gcp/history-compose.yml'),'--project-directory',str(root / 'infra'),
-            'restart','dao-node'], check=True, stdout=subprocess.DEVNULL)
-        time.sleep(5)
+    # Goldsky can deliver events older than DAO Node's polling lookback. Rebuild
+    # this small pilot projection from the local store so delayed batches and
+    # reorgs cannot leave the archive permanently missing a proposal or ballot.
+    subprocess.run(['docker','compose','-f',str(root / 'infra/gcp/docker-compose.yml'),
+        '-f',str(root / 'infra/gcp/history-compose.yml'),'--project-directory',str(root / 'infra'),
+        'restart','dao-node'], check=True, stdout=subprocess.DEVNULL)
+    time.sleep(5)
     # DAO Node must have consumed the latest stored events before CPLS snapshots it.
     progress = request('8000/v1/progress')
     if int(progress.get('block',0)) < current['latest_event_block']:

@@ -39,8 +39,9 @@ Fleet token and Governor from block 46,858,912. There is no subgraph in this rea
 4. The receiver decodes `VoteCast` into CPLS's existing `fleet.votes` table. DAO Node owns
    the governance projection. CPLS combines that projection with the ballot rows and
    writes the private archive that Agora reads.
-5. A host timer checks for new deliveries every 15 seconds and requests an archive refresh.
-   DAO Node polls the local event store every three seconds. CPLS's minute scheduler also
+5. A host timer checks for new deliveries every 15 seconds, rebuilds this small pilot's
+   DAO Node projection from the local store, and requests an archive refresh. This also
+   catches delayed deliveries outside DAO Node's polling window. CPLS's minute scheduler
    updates proposal state as voting deadlines pass.
 
 The independent archive uses `fleet-governance-history-449245570324`. The agent runtime
