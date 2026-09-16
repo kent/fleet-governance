@@ -19,6 +19,80 @@ const click = (id: string) => document.getElementById(id)!.click();
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); document.documentElement.innerHTML = ""; });
 describe("compute evidence display", () => {
+  it("explains the incident counterfactual and separates ballot evidence, stop intent, API acceptance and shutdown", async () => {
+    const hash = `0x${"a".repeat(64)}`;
+    await load({ allocation, simulation: { runId: "actual", createdAt: new Date((now - 400) * 1000).toISOString() },
+      simulationWork: { proposalId: "123", goal: "Review access to private reference solutions", createdAt: new Date((now - 300) * 1000).toISOString(), proposeTxHash: hash },
+      simulationStatus: { terminal: true, agents: [{ agentId: 0, task: "Review scope" }, { agentId: 1, phase: "submitting", task: "Review network access" }], votes: [
+        { agentId: 0, directive: "AGAINST", reason: { rationale: "<img src=x onerror=alert(1)> is outside scope" }, txHash: hash, blockNumber: "987" },
+      ] }, state: { ...controller, stopAcceptedAt: now - 3, stopOperationId: "operation-123", stoppedAt: now }, vm: { status: "TERMINATED" } });
+    const log = document.getElementById("run-log-events")!;
+    const titles = [...log.querySelectorAll("h4")].map(el => el.textContent);
+    expect(titles).toEqual(["Run request recorded", "Compute allocation fixed", "Proposed shortcut recorded for review", "Agent1 voted AGAINST", "Agent2 · no confirmed ballot in this record", "Required vote failed · durable halt saved", "Send kill signal · stop intent saved", "GCP accepted the kill signal", "Agent cluster stopped · GCP confirmed TERMINATED"]);
+    expect(log.querySelectorAll("img")).toHaveLength(0);
+    expect(log.textContent).toContain("<img src=x onerror=alert(1)>");
+    const ballot = [...log.querySelectorAll("li")].find(el => el.textContent?.includes("Agent1 voted"))!;
+    expect(ballot.querySelector("time")?.textContent).toBe("Time not recorded");
+    expect(ballot.querySelector("time")?.hasAttribute("datetime")).toBe(false);
+    expect(ballot.textContent).toContain("block 987");
+    expect(ballot.querySelector('a[href*="basescan"]')?.getAttribute("href")).toBe(`https://sepolia.basescan.org/tx/${hash}`);
+    (ballot.querySelector("button") as HTMLButtonElement).click();
+    expect(document.getElementById("inspect-title")?.textContent).toContain("Agent1");
+    const stop = [...log.querySelectorAll("li")].at(-1)!;
+    (stop.querySelector("button") as HTMLButtonElement).click();
+    expect(document.getElementById("inspect-content")?.textContent).toContain("COMPUTE STOPPED");
+    expect(document.querySelector(".scenario-context")?.textContent).toContain("An exclusive tool gate would need to hold the exact action before execution");
+    expect(document.querySelector(".scenario-context")?.textContent).toContain("not an attempted intrusion stopped by a tool gate");
+    expect(vi.mocked(fetch).mock.calls.every(([, options]) => !options?.method || options.method === "GET")).toBe(true);
+  });
+  it("filters the activity log without losing agent votes, fabricating checks or inventing acceptance receipts", async () => {
+    await load({ allocation, simulation: { runId: "actual" }, simulationStatus: { terminal: true, votes: [
+      { agentId: 0, directive: "AGAINST", reason: { rationale: "Outside allowlist" } },
+    ] }, state: controller, vm: { status: "RUNNING" } });
+    const filter = (name: string) => (document.querySelector(`[data-log-filter="${name}"]`) as HTMLButtonElement).click();
+    filter("agents");
+    expect(document.getElementById("run-log-events")?.textContent).toContain("Agent1 voted AGAINST");
+    expect(document.getElementById("run-log-events")?.textContent).not.toContain("durable halt saved");
+    filter("guardian");
+    const log = document.getElementById("run-log-events")!;
+    expect(log.textContent).toContain("durable halt saved");
+    expect(log.textContent).toContain("stop intent saved");
+    expect(log.textContent).not.toContain("Guardian checks passed");
+    expect(log.textContent).not.toContain("GCP accepted");
+    expect(log.textContent).not.toContain("GCP confirmed TERMINATED");
+    expect(document.getElementById("run-log-gaps")?.textContent).toContain("A separate GCP stop acceptance receipt is not recorded");
+    expect(document.getElementById("run-log-gaps")?.textContent).toContain("No agent-to-agent conversation is recorded");
+    const row = log.querySelector("li");
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(log.querySelector("li")).toBe(row);
+    expect(document.querySelector('[data-log-filter="guardian"]')?.getAttribute("aria-pressed")).toBe("true");
+  });
+  it("shows signed review claims and real Guardian checks without treating a pending vote as permission", async () => {
+    const at = new Date((now - 20) * 1000).toISOString();
+    await load({ allocation, simulation: { runId: "actual" }, simulationStatus: { agents: [{ agentId: 0, phase: "reviewing" }], votes: [] },
+      activity: [{ agentId: 0, at, signatureVerified: true, sequence: 0, event: { type: "review_started", task: "Check scope" } },
+        { agentId: 1, at, signatureVerified: false, event: { type: "review_decision", decision: { support: "FOR", rationale: "Unverified review" } } }],
+      state: { phase: "voting", observedAt: now, observations: [{ at: now, phase: "voting", blockNumber: "222", vmStatus: "RUNNING", proposals: [{ proposalId: "123", state: 1 }], checks: [{ name: "Fixed agent VM", status: "pass", detail: "Pinned VM" }, { name: "Required approval", status: "pending", detail: "Wait for settled approval" }] }] }, vm: { status: "RUNNING" } });
+    const log = document.getElementById("run-log-events")!;
+    expect(log.textContent).toContain("Agent1 started its review");
+    expect(log.textContent).toContain("Signed agent claim · signature verified");
+    expect(log.textContent).toContain("Agent claim · signature not verified");
+    expect(log.textContent).toContain("Guardian checked · approval still pending");
+    expect(log.textContent).not.toContain("Guardian checks passed");
+    expect(log.querySelector("time[datetime]")?.getAttribute("datetime")).toBe(new Date(allocation.issuedAt * 1000).toISOString());
+    expect(log.querySelector(".event-checks .pending")?.textContent).toContain("Wait for settled approval");
+    expect(log.querySelectorAll('a[href*="basescan"]')).toHaveLength(0);
+    expect(document.getElementById("run-log-status")?.textContent).toContain("0 ballot receipts");
+  });
+  it("labels replay as a complete saved log and does not mix its shutdown with a live allocation", async () => {
+    await load({ allocation: null, state: null, vm: { status: "RUNNING" }, evidence });
+    expect(document.getElementById("run-log-events")?.textContent).not.toContain("GCP confirmed TERMINATED");
+    click("replay-tab");
+    expect(document.getElementById("run-log-context")?.textContent).toContain("including events after the selected playback step");
+    expect(document.getElementById("run-log-events")?.textContent).toContain("GCP confirmed TERMINATED");
+    click("live-tab");
+    expect(document.getElementById("run-log-events")?.textContent).not.toContain("GCP confirmed TERMINATED");
+  });
   it("opens cluster, agent and Guardian evidence, then returns to the stopped cluster without sending commands", async () => {
     await load({ allocation, state: { ...controller, stopAcceptedAt: now - 3, stopOperationId: "operation-123", stoppedAt: now,
       observations: [{ at: now - 5, phase: "halted", blockNumber: "123", vmStatus: "RUNNING", proposals: [{ proposalId: "123", state: 3 }], checks: [{ name: "Required approval", status: "fail", detail: "Required proposal failed" }] }] },

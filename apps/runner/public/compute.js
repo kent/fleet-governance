@@ -8,6 +8,7 @@ const clock = value => value ? new Date(typeof value === "number" ? value * 1000
 const requestedRun = new URLSearchParams(location.search).get("runId");
 let selectedRun = /^run-[0-9a-f-]{36}$/.test(requestedRun || "") ? requestedRun : "";
 let data = null, mode = "live", stage = 0, playback = null, inspected = null, submitting = false, inspectorKey = "";
+let logFilter = "all", logKey = "";
 const agentName = id => `Agent${Number(id) + 1}`;
 const roleNames = ["planner", "engineer", "critic", "budget-reviewer", "safety-reviewer"];
 const proposalStates = ["Pending", "Active", "Canceled", "Defeated", "Succeeded", "Queued", "Expired", "Executed"];
@@ -263,10 +264,133 @@ function render() {
   $("evidence-link").hidden = !/^\d+$/.test(evidence?.workflowRun || "");
   if (!$("evidence-link").hidden) $("evidence-link").href = `https://github.com/kent/fleet-governance/actions/runs/${evidence.workflowRun}`;
   renderGuardianCard(state, replay);
+  renderRunLog();
   $("run-context").textContent = data.isCurrentRun === false ? "Saved run. VM state is the recorded state for this allocation." : "Current run. VM state is read directly from GCP.";
   if (inspected) renderInspector();
   $("updated").textContent = data.isCurrentRun === false && !replay ? `Saved run evidence. Last recorded GCP check: ${date(state?.checkedAt || state?.observedAt)}. This is not a live VM observation.` : replay ? `Replaying evidence recorded ${date(evidence?.observedAt)}. Playback compresses elapsed time; timestamps are the recorded observations.` : `Last direct GCP observation: ${date(data.observedAt)}. Guardian state last checked: ${date(state?.observedAt)}.`;
 }
+
+function renderRunLog() {
+  const replay = mode === "replay";
+  const saved = replay ? data?.evidence : null;
+  const sim = replay ? saved : data?.simulationStatus;
+  const allocation = replay ? saved?.allocation : data?.allocation;
+  const state = replay ? saved?.controller : data?.state;
+  const work = replay ? saved : data?.simulationWork;
+  const request = replay ? null : data?.simulation;
+  const activity = replay ? saved?.activity || [] : data?.activity || [];
+  const votes = confirmedAgentVotes(sim);
+  const key = JSON.stringify([logFilter, replay, data?.isCurrentRun, request, work, sim, allocation, state, activity]);
+  if (key === logKey) return;
+  logKey = key;
+  const root = $("run-log-events");
+  const expanded = new Set([...root.querySelectorAll("details[open][data-disclosure]")].map(el => el.dataset.disclosure));
+  root.replaceChildren();
+  const halted = state?.phase === "halted";
+  const groups = [
+    { title: "01 · The shortcut is put up for review", detail: "The operator defines the challenge and the exact proposal. An agent has not independently attempted the shortcut.", rows: [] },
+    { title: "02 · Agents explain and vote", detail: "Independent reviews, public reasons and ballot receipts. An objection is not yet a shutdown.", rows: [] },
+    { title: "03 · The Guardian checks authority", detail: "The Guardian verifies the required proposal, then saves a durable halt if authority fails. A single AGAINST ballot is not a failed proposal.", rows: [] },
+    { title: "04 · The stop reaches the agent cluster", detail: "A stop request and a stopped VM are separate observations. Governance and its records stay online.", rows: [] },
+  ];
+  const add = (group, component, title, detail, options = {}) => groups[group].rows.push({ component, title, detail, ...options });
+  const tx = hash => /^0x[0-9a-fA-F]{64}$/.test(hash || "") ? `https://sepolia.basescan.org/tx/${hash}` : null;
+  const proposalId = work?.proposalId || allocation?.requiredProposalIds?.[0];
+  const proposalHref = /^\d+$/.test(proposalId || "") ? `/proposals/${proposalId}` : null;
+  const reason = value => typeof value === "string" ? value : value?.rationale || value?.reason || "No public reason captured in this record.";
+  const stamp = at => { const value = typeof at === "number" ? at * 1000 : Date.parse(at); return Number.isFinite(value) ? value : null; };
+  const signature = record => record.signatureVerified ? "Signed agent claim · signature verified" : "Agent claim · signature not verified";
+
+  if (request?.createdAt) add(0, "compute", "Run request recorded", "The operator requested a governed run. This record alone does not confirm a VM start.", { at: request.createdAt, source: "Protected request record", target: "worker" });
+  if (allocation) add(0, "compute", "Compute allocation fixed", `Only ${allocation.instance || "fleet-research"} is governed by this allocation. Approval deadline: ${date(allocation.approvalDeadline)}. Hard stop: ${date(allocation.stopAt)}. Votes cannot extend it.`, { at: allocation.issuedAt, source: "Protected allocation", target: "worker" });
+  if (work) add(0, "governance", "Proposed shortcut recorded for review", work.goal || "The exact required proposal is ready for review.", { at: work.createdAt, source: "Preparation record · not the transaction timestamp", href: proposalHref, txHref: tx(work.proposeTxHash), body: work.proposalBody, target: "worker" });
+  if (sim && ["preparation-failed", "failed", "recovered"].includes(sim.phase)) add(0, "compute", `Worker reported: ${sim.phase.replaceAll("-", " ")}`, sim.message || "Preparation did not complete. No approval is implied.", { at: sim.updatedAt, source: "Worker status report", tone: "blocked", target: "worker" });
+
+  for (const record of activity) {
+    const event = record.event || {}, who = agentName(record.agentId);
+    const titles = { review_started: `${who} started its review`, review_decision: `${who} published a review decision`, ballot_confirmed: `${who} signed a ballot report`, review_finished: `${who} finished its review`, agent_failed: `${who} reported a failed review` };
+    const detail = event.task || event.message || (event.decision || event.vote ? `${event.decision?.support || event.vote?.support || "Decision"}: ${reason(event.decision || event.vote)}` : "This is a signed activity claim, not an independent execution receipt.");
+    add(1, "agents", titles[event.type] || `${who} recorded activity`, detail, { at: record.at, source: signature(record), target: `agent-${record.agentId}`, tone: event.type === "agent_failed" || event.decision?.support === "AGAINST" || event.vote?.support === "AGAINST" ? "blocked" : "working", receipt: record });
+  }
+  for (const vote of votes) {
+    const agent = sim?.agents?.find(a => a.agentId === vote.agentId);
+    add(1, "governance", `${agentName(vote.agentId)} voted ${vote.directive}`, reason(vote.reason), {
+      source: `Saved Base Sepolia ballot receipt${vote.blockNumber ? ` · block ${vote.blockNumber}` : ""}`,
+      target: `agent-${vote.agentId}`, tone: vote.directive === "AGAINST" ? "blocked" : "working",
+      txHref: tx(vote.txHash), href: proposalHref, assignment: agent?.task,
+    });
+  }
+  for (const agent of sim?.agents || []) {
+    if (votes.some(v => v.agentId === agent.agentId)) continue;
+    const latestClaim = activity.some(record => record.agentId === agent.agentId);
+    // A latest-status snapshot is not a timestamped history of what the agent did.
+    if (!latestClaim || sim.terminal || halted) add(1, "agents", `${agentName(agent.agentId)} · no confirmed ballot in this record`, `${agent.task || "Independent review"} Last reported phase: ${agent.phase || "unknown"}. Missing evidence is not approval.`, { source: "Latest worker snapshot · activity time not recorded", target: `agent-${agent.agentId}`, tone: "idle" });
+  }
+  for (const message of sim?.communication?.messages || []) add(1, "agents", `${agentName(message.agentId)} posted a message`, message.text, { at: message.at, source: "Recorded conversation · agent claim", target: `agent-${message.agentId}` });
+
+  for (const observation of state?.observations || []) {
+    const checks = observation.checks || [], failed = checks.filter(check => check.status === "fail");
+    const pending = checks.filter(check => check.status === "pending"), unknown = checks.filter(check => check.status === "unknown");
+    const states = (observation.proposals || []).map(p => `${p.proposalId === proposalId ? "Required proposal" : `Proposal ${p.proposalId}`}: ${proposalStates[p.state] || "unknown"}`).join(". ");
+    const label = failed.length ? "Guardian found a failing check" : pending.length ? "Guardian checked · approval still pending" : unknown.length || !checks.length ? "Guardian could not verify every check" : "Guardian checks passed";
+    add(2, "guardian", label, `${states || "No verifiable proposal state recorded."} ${failed.length ? failed.map(c => c.detail).join(" ") : "Task execution still requires settled approval."}`, { at: observation.at, source: `Guardian observation${observation.blockNumber ? ` · block ${observation.blockNumber}` : ""}`, target: "controller", tone: failed.length ? "blocked" : pending.length || unknown.length || !checks.length ? "idle" : "working", checks });
+  }
+  if (halted) add(2, "guardian", state.reason === "vote_failed" ? "Required vote failed · durable halt saved" : "Compute authority closed · durable halt saved", state.reason === "vote_failed" ? "The Guardian recorded a failed required proposal. It locked this allocation before requesting shutdown. Another vote cannot clear that lock." : `Recorded reason: ${String(state.reason || "halted").replaceAll("_", " ")}. Only human recovery can retire this allocation.`, { at: state.haltedAt, source: "Protected Guardian halt record", target: "controller", tone: "blocked", href: proposalHref });
+  if (state?.stopRequestedAt) add(3, "guardian", "Send kill signal · stop intent saved", "The Guardian persisted its intent to call GCP's stop API for the fixed agent VM. This is not yet an API acceptance or a shutdown confirmation.", { at: state.stopRequestedAt, source: "Protected Guardian stop intent", target: "shutdown", tone: "blocked" });
+  if (state?.stopAcceptedAt) add(3, "compute", "GCP accepted the kill signal", `Compute Engine accepted the stop call.${state.stopOperationId ? ` Operation: ${state.stopOperationId}.` : ""} The VM may still be stopping.`, { at: state.stopAcceptedAt, source: "GCP API response saved by Guardian", target: "shutdown", tone: "blocked" });
+  if (state?.stoppedAt) add(3, "compute", "Agent cluster stopped · GCP confirmed TERMINATED", `The Guardian observed the fixed VM off.${halted ? " Its durable restart lock remains set." : ""} Click through to inspect the stopped cluster.`, { at: state.stoppedAt, source: "GCP VM observation saved by Guardian", target: "worker", tone: "blocked" });
+
+  const total = groups.reduce((count, group) => count + group.rows.length, 0);
+  $("run-log-status").textContent = `${replay ? "Recorded replay evidence" : data?.isCurrentRun === false ? "Saved run" : "Current run"}${sim?.scripted === true ? " · scripted diagnostic ballots" : ""} · ${votes.length} ballot receipt${votes.length === 1 ? "" : "s"}${halted ? " · durable halt saved" : ""}${state?.stoppedAt ? " · shutdown confirmed" : state?.stopRequestedAt ? " · shutdown not yet confirmed" : ""}`;
+  $("run-log-context").textContent = `${replay ? "Complete saved run log, including events after the selected playback step. " : ""}Grouped by control step, then recorded time. Receipts without a timestamp follow the timed entries in each step; their relative order is unknown. All log times are UTC.`;
+  let visible = 0;
+  for (const group of groups) {
+    // An agent's ballot belongs in both the Agents and Governance filters.
+    const rows = group.rows.filter(row => logFilter === "all" || row.component === logFilter || logFilter === "agents" && row.target?.startsWith("agent-"));
+    if (!rows.length) continue;
+    rows.sort((a, b) => (stamp(a.at) ?? Infinity) - (stamp(b.at) ?? Infinity));
+    const section = node("section", "", "log-group");
+    section.append(node("h3", group.title), node("p", group.detail, "caption"));
+    const list = node("ol", "", "event-list");
+    for (const entry of rows) {
+      visible++;
+      const row = node("li", "", `log-event ${entry.tone || "idle"}`); row.dataset.component = entry.component;
+      const at = stamp(entry.at), meta = node("div", "", "event-meta");
+      const time = node("time", at == null ? "Time not recorded" : new Date(at).toISOString().replace("T", " · ").replace(/\.\d{3}Z$/, " UTC"));
+      if (at != null) time.dateTime = new Date(at).toISOString();
+      meta.append(node("span", { agents: "Agent cluster", governance: "Governance", guardian: "Guardian", compute: "GCP compute" }[entry.component], "event-component"), time);
+      const body = node("div", "", "event-body");
+      body.append(node("h4", entry.title), node("p", entry.detail));
+      if (entry.assignment) body.append(node("p", `Assignment: ${entry.assignment}`, "event-assignment"));
+      body.append(node("small", entry.source || "Saved run record", "event-source"));
+      if (entry.checks?.length) {
+        const checks = node("details", "", "event-checks"); checks.dataset.disclosure = `checks:${entry.at}:${entry.title}`; checks.open = expanded.has(checks.dataset.disclosure); checks.append(node("summary", `Inspect ${entry.checks.length} checks`));
+        for (const check of entry.checks) checks.append(checkRow(check)); body.append(checks);
+      }
+      if (entry.body || entry.receipt) {
+        const details = node("details", "", "evidence-json"); details.dataset.disclosure = `evidence:${entry.at}:${entry.title}`; details.open = expanded.has(details.dataset.disclosure); details.append(node("summary", entry.body ? "Exact proposal body" : "Inspect signed activity record"), node("pre", entry.body || JSON.stringify(entry.receipt, null, 2))); body.append(details);
+      }
+      const actions = node("div", "", "event-actions");
+      if (entry.target) { const button = node("button", `Inspect ${entry.target.startsWith("agent-") ? agentName(entry.target.slice(6)) : entry.target === "worker" ? "agent cluster" : "Guardian"} →`); button.addEventListener("click", () => inspect(entry.target)); actions.append(button); }
+      for (const [label, href] of [["Open proposal in Agora ↗", entry.href], ["Verify transaction ↗", entry.txHref]]) {
+        if (!href) continue;
+        const link = node("a", label); link.href = href;
+        if (href.startsWith("https://")) { link.target = "_blank"; link.rel = "noreferrer"; } actions.append(link);
+      }
+      body.append(actions); row.append(meta, body); list.append(row);
+    }
+    section.append(list); root.append(section);
+  }
+  if (!visible) root.append(node("p", total ? "No recorded activity for this component yet." : "No run evidence yet. The log will fill as preparation, reviews, votes and Guardian observations are saved.", "log-empty"));
+  const gaps = [];
+  if (sim && !activity.length) gaps.push("No separate signed activity records are available in this run record.");
+  if (sim && !(sim.communication?.messages || []).length) gaps.push("No agent-to-agent conversation is recorded; these are independent reviews.");
+  if (state && !state.observations?.length) gaps.push("Individual Guardian check history is not available for this run.");
+  if (state?.stopRequestedAt && !state.stopAcceptedAt) gaps.push("A separate GCP stop acceptance receipt is not recorded.");
+  $("run-log-gaps").textContent = gaps.length ? `Evidence gaps: ${gaps.join(" ")}` : "Signed activity identifies the wallet making a claim. Votes, Guardian decisions and GCP observations are distinct evidence.";
+  for (const button of document.querySelectorAll("[data-log-filter]")) button.setAttribute("aria-pressed", String(button.dataset.logFilter === logFilter));
+}
+for (const button of document.querySelectorAll("[data-log-filter]")) button.addEventListener("click", () => { logFilter = button.dataset.logFilter; renderRunLog(); });
 
 function inspect(target) { inspected = target; inspectorKey = ""; history.replaceState(null, "", `${location.pathname}${location.search}#${target}`); $("inspector").hidden = false; renderInspector(); $("inspector").scrollIntoView?.({ behavior: "smooth", block: "nearest" }); }
 function guardianRows(state, replay = false) {
@@ -459,6 +583,8 @@ async function refresh() {
   } catch (error) {
     $("error").textContent = `${error.message} The last display may be stale; it does not authorise execution.`;
     $("source").textContent = "OBSERVATION UNAVAILABLE";
+    logKey = "";
+    $("run-log-status").textContent = "Observation unavailable · showing the last loaded records. New activity cannot be verified.";
     $("architecture-map").dataset.observation = "unavailable";
     $("activity-summary").dataset.busy = "false";
     $("activity-summary").dataset.phase = "idle";
