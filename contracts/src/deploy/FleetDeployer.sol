@@ -8,6 +8,8 @@ import {FleetVotes} from "../FleetVotes.sol";
 import {TaskLedger} from "../TaskLedger.sol";
 import {FleetHook} from "../FleetHook.sol";
 import {FleetBudgetHook} from "../FleetBudgetHook.sol";
+import {FleetBondHook} from "../FleetBondHook.sol";
+import {FleetBondVotes} from "../FleetBondVotes.sol";
 import {HookMiner} from "./HookMiner.sol";
 import {FleetMembership} from "../libraries/FleetMembership.sol";
 import {FleetExecutor} from "../FleetExecutor.sol";
@@ -56,16 +58,21 @@ library FleetDeployer {
     uint160 internal constant HOOK_PERMISSION_MASK = 0x22C0;
 
     function deploy(FleetDeployParams memory p) internal returns (FleetAddresses memory a) {
-        return _deploy(p, false);
+        return _deploy(p, 0);
     }
 
     function deployWithProposalBudget(FleetDeployParams memory p) internal returns (FleetAddresses memory a) {
-        return _deploy(p, true);
+        return _deploy(p, 1);
     }
 
-    function _deploy(FleetDeployParams memory p, bool tokenProposals) private returns (FleetAddresses memory a) {
+    function deployWithProposalBonds(FleetDeployParams memory p) internal returns (FleetAddresses memory a) {
+        return _deploy(p, 2);
+    }
+
+    function _deploy(FleetDeployParams memory p, uint8 economics) private returns (FleetAddresses memory a) {
         FleetRegistry registry = deployRegistry(p.members, p.agentManifests, p.fleetManifest);
-        FleetVotes token = new FleetVotes(p.tokenName, p.tokenSymbol, registry);
+        FleetVotes token = economics == 2 ? FleetVotes(address(new FleetBondVotes(p.tokenName, p.tokenSymbol, registry)))
+            : new FleetVotes(p.tokenName, p.tokenSymbol, registry);
         _initializeToken(token, p.members.length);
 
         address[] memory none = new address[](0);
@@ -75,11 +82,11 @@ library FleetDeployer {
         (address predictedHook, bytes32 salt) = HookMiner.find(
             p.create2Deployer,
             HOOK_PERMISSION_MASK,
-            tokenProposals ? type(FleetBudgetHook).creationCode : type(FleetHook).creationCode,
+            economics == 2 ? type(FleetBondHook).creationCode : economics == 1 ? type(FleetBudgetHook).creationCode : type(FleetHook).creationCode,
             abi.encode(registry, ledger, p.deployer)
         );
-        FleetHook hook = tokenProposals
-            ? FleetHook(address(new FleetBudgetHook{salt: salt}(registry, ledger, p.deployer)))
+        FleetHook hook = economics == 2 ? FleetHook(address(new FleetBondHook{salt: salt}(registry, ledger, p.deployer)))
+            : economics == 1 ? FleetHook(address(new FleetBudgetHook{salt: salt}(registry, ledger, p.deployer)))
             : new FleetHook{salt: salt}(registry, ledger, p.deployer);
         if (address(hook) != predictedHook) revert HookAddressMismatch(predictedHook, address(hook));
 
@@ -93,6 +100,7 @@ library FleetDeployer {
             address(hook)
         );
         hook.initialize(governor);
+        if (economics == 2) FleetBondVotes(address(token)).bindBondController(address(FleetBondHook(address(hook)).proposalBonds()));
 
         timelock.grantRole(timelock.PROPOSER_ROLE(), governor);
         timelock.grantRole(timelock.EXECUTOR_ROLE(), governor);

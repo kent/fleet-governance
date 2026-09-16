@@ -69,7 +69,8 @@ abstract contract FleetFixture is Test {
         p.create2Deployer = address(this);
         p.deployer = address(this);
 
-        addrs = useProposalBudget() ? FleetDeployer.deployWithProposalBudget(p) : FleetDeployer.deploy(p);
+        addrs = useProposalBonds() ? FleetDeployer.deployWithProposalBonds(p)
+            : useProposalBudget() ? FleetDeployer.deployWithProposalBudget(p) : FleetDeployer.deploy(p);
         registry = FleetRegistry(addrs.registry);
         token = FleetVotes(addrs.token);
         timelock = TimelockController(payable(addrs.timelock));
@@ -80,6 +81,7 @@ abstract contract FleetFixture is Test {
     }
 
     function useProposalBudget() internal pure virtual returns (bool) { return false; }
+    function useProposalBonds() internal pure virtual returns (bool) { return false; }
 
     function openTask() internal returns (uint256 taskId) {
         vm.prank(operator);
