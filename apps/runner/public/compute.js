@@ -505,8 +505,9 @@ function renderInspector() {
     add("Last reported activity", agent?.phase || "No activity recorded");
     add("Model", sim?.model || "Not recorded for this run");
     if (work?.agentDriven) {
-      add("Recorded proposal credits", `${agent?.creditsRemaining ?? "Unknown"} / ${work.agentDriven.allowance}`);
-      add("Proposal cost", `${work.settings?.proposalCost || 1} non-refundable credit(s) per submitted request. Spending does not burn FleetGov.`);
+      add(work.agentDriven.proposalToken ? "ERC-20 FPROP balance" : "Recorded proposal credits", `${agent?.creditsRemaining ?? "Unknown"} / ${work.agentDriven.allowance}`);
+      add("Proposal cost", `${work.settings?.proposalCost || 1} ${work.agentDriven.proposalToken ? "FPROP burned atomically onchain" : "non-refundable credit(s)"} per submitted request. Voting rights remain unchanged.`);
+      if (/^0x[0-9a-fA-F]{40}$/.test(work.agentDriven.proposalToken || "")) link("Inspect the ERC-20 FPROP contract ↗", `https://sepolia.basescan.org/token/${work.agentDriven.proposalToken}`);
       add("Voting power recorded", agent?.votingPower ? `${Number(BigInt(agent.votingPower)) / 1e18} FleetGov` : "Not yet observed");
       add("Delegated to", agent?.delegatee || "Not yet observed");
       add("Required to propose", `${work.settings?.proposalThreshold || 1} voting unit(s)`);

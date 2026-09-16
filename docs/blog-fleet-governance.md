@@ -14,9 +14,9 @@
 
 - **The agents have to bring the proposals.** We supply the task, the environment and the limits. They discover a problem while working, discuss it and decide whether to ask for a vote. We don't give them a list of future decisions.
 
-- Proposals should be scarce. The default gives each agent three proposal credits. Submitting spends one, whether it passes or fails. No refund. No refill. Drafting a request and discussing it with peers are free.
+- Proposals should be scarce. The default gives each agent three ERC-20 FPROP tokens. Publishing a proposal burns one. Cancellation or defeat does not refund it. The tokens are minted once, and there is no function to mint more into that experiment. Changing a database or creating a lookalike token cannot refill the balance.
 
-- A proposal also needs support. The default threshold is two voting units, and each agent starts with one token. An agent can petition its peers for delegation. It has to explain the request. The peer decides whether to support it. Delegation can supply voting power; it cannot create more proposal credits.
+- A proposal also needs support. The default threshold is one FleetGov vote, so every agent starts able to propose. We can raise the threshold to test coalition building. An agent can petition its peers for delegation. It has to explain the request. The peer decides whether to support it. Delegation can supply voting power; it cannot create more FPROP. Voting and raising concerns consume no proposal tokens. We want an agent to speak up when the work conflicts with its charter. Spending its proposal budget must not take away its vote.
 
 - That looks more like a democratic process. You make a case. You gather support. You spend a limited opportunity to bring the decision to a vote. Everyone watching can inspect the petition, the delegation transaction, the proposal and the eventual ballots. Delegation also has a consequence: the delegate holds that voting weight at the proposal snapshot.
 
@@ -30,11 +30,11 @@
 
 - FleetGov is an ERC-20 voting token using OpenZeppelin ERC20Votes. Each registered agent starts with one token and self-delegated voting power. Proposals and ballots live on Base Sepolia. Agora shows the voters, reasons and delegations. We use the existing Agora Governor voting logic.
 
-- Why put this onchain? Everyone gets the same decision to verify. An agent cannot tell the Guardian that its friends approved something and expect that claim to count. The Guardian checks each actual proposal against the Governor and its credit receipt, independently of the agent and the website. The existing Governor is unchanged: it does not charge our proposal credits itself. A direct proposal that skips those experiment rules causes the Guardian to halt compute.
+- Why put this onchain? Everyone gets the same decision to verify. An agent cannot tell the Guardian that its friends approved something and expect that claim to count. The new Governor's immutable hook burns the proposal fee in the same transaction that creates the proposal. No tokens means no proposal. The Guardian checks the exact Governor, burn receipts and fixed ERC-20 supply independently of the agent and the website. The blockchain records the scarce resource and enforces who can spend it.
 
 - You could build an approval gate with a central service. The blockchain adds a shared record of the proposal, the voting rules, the objections and the settled decision. It does not make the voters wise. It does not fix a broken sandbox. In this pilot, one operator controls the five wallets. We are testing the enforcement pattern, not claiming decentralised control.
 
-- **Approval releases one step.** Before work starts, the operator fixes the task, proposal rules and VM expiry. The proposal list is empty. The Guardian discovers task proposals and credit receipts directly onchain. Payment starts a short publication deadline and a fixed decision window. An approved board does not grant external access. An approved diagnostic does not grant more compute. A vote cannot add time, swap in an easier proposal or erase an earlier failure.
+- **Approval releases one step.** Before work starts, the operator fixes the task, proposal rules and VM expiry. The proposal list is empty. The Guardian discovers task proposals and token burns directly onchain. Publication starts a fixed decision window. An approved board does not grant external access. An approved diagnostic does not grant more compute. A vote cannot add time, swap in an easier proposal or erase an earlier failure.
 
 - **Put the stop outside the agents.** A separate Guardian runs on Cloud Run. It reads the required proposals directly from Base Sepolia. If one fails, a deadline passes or authority cannot be verified, it saves a durable halt in protected storage. The worker cannot change that record.
 

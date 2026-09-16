@@ -95,15 +95,18 @@ Viewing is public. Creation and recovery use protected operator controls and Git
 Nothing launches from the operator's laptop.
 
 The creation form configures 3–5 active agents, a task, a model budget up to **$1 within the
-existing $50 pool**, proposal-credit allowance and cost, proposal voting-power threshold,
+existing $50 pool**, ERC-20 proposal-token supply and burn fee, proposal voting-power threshold,
 delegation, constitution, duration and work-step limit. The pilot retains its five-token
 Governor and fixed quorum of three FOR voting units. Choosing fewer active agents does not
 change that quorum. Read the [experiment rules and limits](docs/agent-authored-experiments.md).
 
-The proposal-credit contract enforces the experiment's price and threshold. The existing
-Governor still admits proposals under its own one-token threshold. The Guardian discovers
-direct calls too; a missing or mismatched payment halts compute. This is enforcement at the
-compute boundary, not an atomic credit fee added to the Governor itself.
+Each new experiment mints a fixed supply of ERC-20 FPROP tokens, separate from FleetGov
+voting power. The default gives each agent three FPROP and burns one per proposal. The new
+Governor's immutable hook charges that fee in the proposal transaction. Insufficient tokens
+make the transaction revert. No one can mint more into an existing experiment, and agents
+cannot pay with a lookalike token. Cancellation and defeat do not refund the fee. Voting,
+raising concerns and delegation cost no FPROP. Exhausting proposal tokens does not remove
+voting rights. The default threshold is one FleetGov vote; higher thresholds are configurable.
 
 A halted allocation needs explicit recovery through the GitHub workflow before a new run.
 The old run remains blocked. Follow the [compute recovery steps](docs/compute-governance.md),
