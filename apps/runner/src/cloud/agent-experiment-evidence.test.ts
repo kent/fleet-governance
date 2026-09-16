@@ -1,11 +1,12 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { encodeFunctionData } from "viem";
+import { encodeFunctionData, encodeEventTopics, encodeAbiParameters } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { ActivityAttestor, type ActivityAttestation } from "../pipeline/activity-attestation.js";
 import { buildAgentDecision } from "./emergent-decision.js";
 import { ExperimentSettings } from "./experiment-settings.js";
 import { verifyAgentExperiment } from "./agent-experiment-evidence.js";
-import { proposalCreditsAbi } from "./proposal-credits.js";
+import { agoraGovernorAbi } from "@fleet/abi";
+import { proposalCreditsAbi, proposalTokenAbi } from "./proposal-credits.js";
 const m = vi.hoisted(() => ({ roster: [] as any[] }));
 vi.mock("node:fs", async original => ({ ...await original<typeof import("node:fs")>(), readFileSync: () => JSON.stringify(m.roster) }));
 const keys = [1,2,3].map(n => `0x${String(n).padStart(64,"0")}` as const);
@@ -32,7 +33,7 @@ it("rejects predetermined proposals, unfinished work, altered attestations and e
   input.progress.inference.budget.chargedCostUsd = 1.1; await expect(verifyAgentExperiment(input)).rejects.toThrow("budget"); input.progress.inference.budget.chargedCostUsd = .01;
   records[0]!.event = { type: "fabricated" }; await expect(verifyAgentExperiment(input)).rejects.toThrow("signature");
 });
-it("binds the actual proposer and fee to the signed draft, with no prescribed ballot count", async () => {
+it.each(["legacy", "erc20"])("binds the actual proposer and %s fee to the signed draft, with no prescribed ballot count", async mode => {
   const draft = { title: "Inspect the local scorer", rationale: "The sum candidate failed despite matching both documented examples.", kind: "CHOOSE_PATH" as const, tool: "inspect_diagnostics" as const, evidence: ["Local result was zero."] };
   const built = buildAgentDecision({ draft, agentId: 0, role: "planner", runId, taskId: "10", charterVersion: 1, proposalNumber: 0 });
   signers[0]!.record({ type: "proposal_selected", proposalId: "77", proposal: draft }); await signers[0]!.flush();
@@ -43,6 +44,18 @@ it("binds the actual proposer and fee to the signed draft, with no prescribed ba
   input.client.publicClient.getTransactionReceipt = vi.fn(async () => ({ status: "success", blockNumber: 89n }));
   input.client.publicClient.getTransaction = vi.fn(async () => ({ from: m.roster[0].address, to: bank, input: encodeFunctionData({ abi: proposalCreditsAbi, functionName: "spend", args: [10n,77n] }) }));
   input.client.publicClient.readContract.mockImplementation(async (call: any) => call.args[1] === m.roster[0].address ? 2 : 3);
+  if (mode === "erc20") {
+    const proposalToken = `0x${"8".repeat(40)}` as const;
+    input.allocation.governor = bank;
+    input.allocation.discovery.proposalToken = { address: proposalToken };
+    input.progress.rounds[0].creditTxHash = "0xproposal";
+    input.client.publicClient.getTransactionReceipt.mockResolvedValue({ status: "success", blockNumber: 90n, logs: [{ address: proposalToken,
+      topics: encodeEventTopics({ abi: proposalTokenAbi, eventName: "Transfer", args: { from: m.roster[0].address, to: "0x0000000000000000000000000000000000000000" } }), data: encodeAbiParameters([{ type: "uint256" }], [1n]) }] });
+    input.client.publicClient.getTransaction.mockResolvedValue({ from: m.roster[0].address, to: bank, input: encodeFunctionData({ abi: agoraGovernorAbi, functionName: "propose", args: [[bank], [0n], ["0x"], built.description] }) });
+    const correct = await input.client.publicClient.getTransactionReceipt();
+    input.client.publicClient.getTransactionReceipt.mockResolvedValueOnce({ ...correct, logs: [] });
+    await expect(verifyAgentExperiment(input)).rejects.toThrow("Atomic ERC-20 proposal burn");
+  }
   expect((await verifyAgentExperiment(input)).verified).toMatchObject({ agentAuthoredProposals: 1, independentlyReadBallots: 1 });
   input.progress.rounds[0].proposalBody = "A different proposal";
   await expect(verifyAgentExperiment(input)).rejects.toThrow("signed agent draft");

@@ -5,7 +5,7 @@ on:
       action:
         description: Infrastructure operation
         type: choice
-        options: [plan, apply, configure-operators, provision-mcp, refresh-worker, provision-readside, inspect-history, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, deploy-token-governance, deploy-proposal-credits, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, verify-agent-experiment, prepare-simulation, launch-simulation, release-preparation, retry-preparation, inspect-simulation, recover-simulation-evidence]
+        options: [plan, apply, configure-operators, provision-mcp, refresh-worker, provision-readside, inspect-history, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, deploy-token-governance, verify-token-governance, deploy-proposal-credits, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, verify-agent-experiment, prepare-simulation, launch-simulation, release-preparation, retry-preparation, inspect-simulation, recover-simulation-evidence]
         default: plan
       image_revision:
         description: 'refresh-worker only: existing main-branch runner image revision (40 hex characters)'
@@ -164,6 +164,21 @@ jobs:
           path: |
             token-governance-deployment.json
             proposal-credits-deployment.json
+          if-no-files-found: error
+      - name: Verify token scarcity and free objections on Base Sepolia
+        if: inputs.action == 'verify-token-governance'
+        env:
+          FLEET_GCP_CLI_AUTH: '1'
+        run: |
+          npm install -g pnpm@11.9.0
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          node apps/runner/dist/cloud/verify-token-governance.js
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: inputs.action == 'verify-token-governance' && success()
+        with:
+          name: token-governance-verification
+          path: token-governance-verification.json
           if-no-files-found: error
       - name: Register the immutable hook's ERC-20 proposal budget
         if: inputs.action == 'deploy-proposal-credits'
