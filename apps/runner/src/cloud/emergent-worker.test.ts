@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-const m = vi.hoisted(() => ({ snapshots: [] as any[], calls: [] as any[], proposed: [] as string[], voted: [] as string[], work: null as any, allocation: null as any, halted: false, block: false, released: 0, chain: new Map<string, number>(), workCalls: 0, payments: [] as any[], mode: "sequence", balance: 3, power: 10n ** 18n, delegations: [] as string[] }));
+const m = vi.hoisted(() => ({ snapshots: [] as any[], calls: [] as any[], proposed: [] as string[], voted: [] as string[], work: null as any, allocation: null as any, halted: false, block: false, released: 0, chain: new Map<string, number>(), workCalls: 0, payments: [] as any[], mode: "sequence", balance: 3, power: 10n ** 18n, delegations: [] as string[], snapshotPower: null as bigint | null, reviewed: [] as string[] }));
 vi.mock("node:fs", async () => ({ ...await vi.importActual<typeof import("node:fs")>("node:fs"), mkdirSync: vi.fn(), openSync: vi.fn(() => 10), writeSync: vi.fn(), fsyncSync: vi.fn(), closeSync: vi.fn(), renameSync: vi.fn() }));
 vi.mock("./google.js", () => ({ readSecret: async (name: string) => name.includes("wallets") ? JSON.stringify({ schema: "fleet.wallets.v1", chainId: 84532, keys: Object.fromEntries(["FLEET_KEEPER_KEY", ...Array.from({ length: 5 }, (_, i) => `FLEET_AGENT_KEY_${i}`)].map((name, i) => [name, `0x${String(i + 1).padStart(64, "0")}`])) }) : "https://rpc.invalid",
   writeObject: async (_name: string, value: any) => { m.snapshots.push(value); } }));
@@ -14,7 +14,7 @@ vi.mock("@fleet/sdk", async () => ({ ...await vi.importActual<typeof import("@fl
     getProposalTiming = async () => ({ snapshot: 1000n });
     getTask = async () => ({ charterVersion: 1, charterText: "Stay in scope" });
     getProposalState = async (id: bigint) => m.chain.get(String(id)) ?? 1;
-    publicClient = { readContract: async (input: any) => input.functionName === "remaining" ? m.balance : input.functionName === "getVotes" || input.functionName === "getPastVotes" ? m.power : input.functionName === "delegates" ? `0x${"a".repeat(40)}` : BigInt(101 + m.proposed.length), waitForTransactionReceipt: async () => ({ status: "success", blockNumber: 900n }), getBlock: async () => ({ timestamp: BigInt(Math.floor(Date.now() / 1000)) }) };
+    publicClient = { readContract: async (input: any) => input.functionName === "remaining" ? m.balance : input.functionName === "getPastVotes" ? (m.snapshotPower ?? m.power) : input.functionName === "getVotes" ? m.power : input.functionName === "delegates" ? `0x${"a".repeat(40)}` : BigInt(101 + m.proposed.length), waitForTransactionReceipt: async () => ({ status: "success", blockNumber: 900n }), getBlock: async () => ({ timestamp: BigInt(Math.floor(Date.now() / 1000)) }) };
   },
   FleetSigner: class {
     delegate = async (recipient: string) => { m.delegations.push(recipient); m.power = 2n * 10n ** 18n; return { txHash: `0x${"e".repeat(64)}` }; };
@@ -44,8 +44,10 @@ vi.mock("@fleet/agent-runtime", async () => ({ ...await vi.importActual<typeof i
     constructor(private options: any) {}
     handleProposal = async (id: bigint) => {
       const result = await this.options.policy.evaluateProposal({});
-      m.voted.push(String(id));
-      if (m.voted.filter(x => x === String(id)).length === 5) m.chain.set(String(id), id === 102n || m.mode === "early" ? 3 : 4);
+      m.reviewed.push(String(id));
+      if (result.kind === "vote") m.voted.push(String(id));
+      if (m.reviewed.filter(x => x === String(id)).length === 5) m.chain.set(String(id), id === 102n || m.mode === "early" ? 3 : 4);
+      if (result.kind === "absent") return { state: "absent" };
       return { state: "voted", vote: result.vote, txHash: `0x${"c".repeat(64)}` };
     };
   },
@@ -60,7 +62,7 @@ const runId = "run-00000000-0000-4000-8000-000000000001";
 beforeEach(() => {
   vi.mocked(openSync).mockImplementation(() => 10);
   vi.useFakeTimers(); m.snapshots = []; m.calls = []; m.proposed = []; m.voted = []; m.halted = false; m.block = false;
-  m.released = 0; m.chain = new Map(); m.workCalls = 0; m.payments = []; m.mode = "sequence"; m.balance = 3; m.power = 10n ** 18n; m.delegations = [];
+  m.released = 0; m.chain = new Map(); m.workCalls = 0; m.payments = []; m.mode = "sequence"; m.balance = 3; m.power = 10n ** 18n; m.delegations = []; m.snapshotPower = null; m.reviewed = [];
   const now = Math.floor(Date.now() / 1000);
   m.work = { scenario: "hf-emergent-v1", runId, allocationId: "test-allocation", chainId: 84532,
     addresses: { governor: `0x${"1".repeat(40)}`, ledger: `0x${"2".repeat(40)}` }, taskId: "1", startBlock: "800",
@@ -91,6 +93,7 @@ it("lets Agent2 and Agent5 author proposals after work, pays for each, continues
     expect(prompt.user).not.toContain("Upcoming decision:");
     expect(prompt.user).not.toContain("checkpoint 1");
     expect(prompt.user).toContain("Proposal credits remaining:");
+    expect(prompt.user).toMatch(/You are Agent[1-5] \(agent id [0-4]\)/);
   }
 });
 it("does not require a warm-up approval or a designated proposer", async () => {
@@ -149,4 +152,14 @@ it("starts only the selected number of actual agents", async () => {
   m.mode = "none"; m.work.settings = { agentCount: 3, proposalThreshold: 1 };
   const result = await run();
   expect(result.agents).toHaveLength(3); expect(m.workCalls).toBe(3);
+});
+
+it("keeps public reviews but sends no ballot when delegation leaves zero snapshot voting power", async () => {
+  m.mode = "early"; m.snapshotPower = 0n;
+  const result = await run();
+  expect(m.proposed).toHaveLength(1); expect(m.voted).toHaveLength(0);
+  expect(result.events.filter((e: any) => e.type === "vote.delegated")).toHaveLength(5);
+  expect(result.events.filter((e: any) => e.type === "vote.missing")).toHaveLength(0);
+  expect(result.activity.filter((a: any) => a.event.type === "review_without_voting_power")).toHaveLength(5);
+  expect(result.agents.every((a: any) => a.phase === "delegated" && a.vote)).toBe(true);
 });

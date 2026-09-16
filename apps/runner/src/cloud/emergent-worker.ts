@@ -160,7 +160,7 @@ export async function runEmergentWorker(runId: string): Promise<void> {
             title: `${agent.name} is investigating`, detail: `Work step ${step + 1}: ${agent.task}` }, "working");
           const reply = await withOneRepair(scopedProvider(agent, "task"), {
             schema: EmergentWorkReply, maxTokens: 4000, timeoutMs: 120000, system: WORK_SYSTEM,
-            user: `Task: ${work.goal}\nAssignment: ${agent.task}\nProposal credits remaining: ${agent.creditsRemaining}/${work.agentDriven!.allowance}. Cost: ${proposalCost} per submitted proposal; no refund or refill.\nVoting power: ${Number(BigInt(agent.votingPower!)) / 1e18} FleetGov. Proposal threshold: ${settings.proposalThreshold} FleetGov. Delegation: ${settings.allowDelegation ? "enabled; you may petition peers or choose delegate" : "disabled; do not petition or delegate"}. Current delegate: ${agent.delegatee}. Active agents: ${agents.map(a => `${a.name} (id ${a.agentId})`).join(", ")}. You may only delegate to an active agent, including yourself.\nApproved tool requests: ${JSON.stringify([...approvedTools.keys()])}\n${untrusted("your recent tool results and public governance outcomes", JSON.stringify(agent.recent.slice(-10)))}\n${untrusted("recent shared findings", JSON.stringify(messages.slice(-10)))}`,
+            user: `You are ${agent.name} (agent id ${agent.agentId}), the ${agent.role}. Your signing address is ${agent.address}. Use your own name when addressing peers.\nTask: ${work.goal}\nAssignment: ${agent.task}\nProposal credits remaining: ${agent.creditsRemaining}/${work.agentDriven!.allowance}. Cost: ${proposalCost} per submitted proposal; no refund or refill.\nVoting power: ${Number(BigInt(agent.votingPower!)) / 1e18} FleetGov. Proposal threshold: ${settings.proposalThreshold} FleetGov. Delegation: ${settings.allowDelegation ? "enabled; you may petition peers or choose delegate" : "disabled; do not petition or delegate"}. Current delegate: ${agent.delegatee}. Active agents: ${agents.map(a => `${a.name} (id ${a.agentId})`).join(", ")}. You may only delegate to an active agent, including yourself.\nApproved tool requests: ${JSON.stringify([...approvedTools.keys()])}\n${untrusted("your recent tool results and public governance outcomes", JSON.stringify(agent.recent.slice(-10)))}\n${untrusted("recent shared findings", JSON.stringify(messages.slice(-10)))}`,
           });
           if (!reply.ok) throw new Error("Agent work unavailable.");
           await permit(); agent.phase = "attesting";
@@ -307,6 +307,9 @@ export async function runEmergentWorker(runId: string): Promise<void> {
       while (await client.getProposalState(proposal.proposalId) === ProposalState.Pending) { await votingAlive(checkpoint); await delay(); }
       await Promise.allSettled(agents.map(async agent => {
         try {
+          let delegatedReview: unknown;
+          const snapshot = (await client.getProposalTiming(proposal.proposalId)).snapshot;
+          const votingWeight = await client.publicClient.readContract({ address: work.addresses.token, abi: fleetVotesAbi, functionName: "getPastVotes", args: [agent.address as Hex, snapshot] });
           const model = new ModelPolicy({ provider: scopedProvider(agent, "vote"), promptVersion: EMERGENT_SCENARIO,
             maxTokens: 6000, timeoutMs: 120000 });
           const worker = new Worker({ agentId: agent.agentId, signer: signers[agent.agentId]!, client, jobs: new MemoryJobStore(), nonces,
@@ -317,17 +320,26 @@ export async function runEmergentWorker(runId: string): Promise<void> {
               const result = await model.evaluateProposal(input);
               await votingAlive(checkpoint);
               await attest(agent, { type: "review_decision", checkpoint: index, proposalId: checkpoint.proposalId, decision: result.kind === "vote" ? result.vote : { outcome: result.kind } });
+              if (result.kind === "vote" && votingWeight === 0n) {
+                delegatedReview = result.vote;
+                await attest(agent, { type: "review_without_voting_power", checkpoint: index, proposalId: checkpoint.proposalId, snapshot: snapshot.toString(), votingWeight: "0", review: result.vote });
+                return { kind: "absent", why: "Zero voting power at the proposal snapshot. Public review retained; no ballot attempted.", ...(result.meta ? { meta: result.meta } : {}) };
+              }
               agent.phase = "submitting"; await persist("voting", `${agent.name} is submitting its ballot.`);
               return result;
             } } });
           const job = await worker.handleProposal(proposal.proposalId);
           agent.phase = job.state; agent.vote = job.vote; agent.txHash = job.txHash;
-          if (job.state === "voted" && job.txHash && job.vote) {
+          if (job.state === "absent" && delegatedReview) {
+            agent.phase = "delegated"; agent.vote = delegatedReview;
+            await emit({ component: "governance", type: "vote.delegated", agentId: agent.agentId, checkpoint: index, proposalId: checkpoint.proposalId,
+              title: `${agent.name} published a review without a ballot`, detail: "This agent held zero voting power at the proposal snapshot. Its delegated power is represented by its delegate; the public review is not a ballot.", evidence: { snapshot: snapshot.toString(), votingWeight: "0", review: delegatedReview } }, "voting");
+          } else if (job.state === "voted" && job.txHash && job.vote) {
             const txReceipt = await client.publicClient.waitForTransactionReceipt({ hash: job.txHash, confirmations: 3 });
             if (txReceipt.status !== "success") throw new Error("Ballot transaction reverted.");
             const block = await client.publicClient.getBlock({ blockNumber: txReceipt.blockNumber });
             round.votes.push({ agentId: agent.agentId, proposalId: checkpoint.proposalId, voter: agent.address, directive: job.vote.support,
-              reason: job.vote, weight: String(await client.publicClient.readContract({ address: work.addresses.token, abi: fleetVotesAbi, functionName: "getPastVotes", args: [agent.address as Hex, (await client.getProposalTiming(proposal.proposalId)).snapshot] })), txHash: job.txHash, blockNumber: txReceipt.blockNumber.toString(), at: new Date(Number(block.timestamp) * 1000).toISOString() });
+              reason: job.vote, weight: votingWeight.toString(), txHash: job.txHash, blockNumber: txReceipt.blockNumber.toString(), at: new Date(Number(block.timestamp) * 1000).toISOString() });
             status.votes = [...round.votes];
             await attest(agent, { type: "ballot_confirmed", checkpoint: index, proposalId: checkpoint.proposalId, vote: job.vote, txHash: job.txHash });
             await emit({ component: "governance", type: "ballot.confirmed", agentId: agent.agentId, checkpoint: index, proposalId: checkpoint.proposalId,
@@ -340,7 +352,7 @@ export async function runEmergentWorker(runId: string): Promise<void> {
             title: `${agent.name}'s ballot could not be confirmed`, detail: "No approval is inferred. The proposal deadline and Guardian remain in force.", evidence: { failure: safeFailure(error) } }, "voting");
         }
       }));
-      await persist("settling", `Vote ${index + 1}: ${round.votes.length}/${agents.length} ballot receipts. Waiting for the Governor's result.`);
+      await persist("settling", `Vote ${index + 1}: ${round.votes.length} confirmed ballots; ${agents.filter(a => a.phase === "delegated").length} agents have delegated their voting power. Waiting for the Governor's result.`);
       while (now() < checkpoint.approvalDeadline) {
         // Reading a terminal vote is still allowed after a Guardian halt; it cannot
         // dispatch work. Preserve the actual rejection if the Guardian won this race.
