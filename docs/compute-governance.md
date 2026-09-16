@@ -73,12 +73,12 @@ archive against the project owner.
 
 1. Open the public [experiment index](https://fleet-governance-449245570324.us-central1.run.app/experiments). Choose **Create experiment**, or **Copy settings** on an earlier run. Starting uses the protected operator site.
 2. Choose 3–5 active agents from the registered pilot roster. Configure the task, model budget, proposal allowance and price, voting-power threshold, delegation, constitution, duration and work-step limit. The fixed five-token Governor still requires three FOR voting units.
-3. Preparation freezes those settings, resets the pilot wallets to self-delegation, opens the task and registers the credit rules. It does not draft or submit a proposal. The Guardian starts with an empty task proposal list.
+3. Preparation freezes those settings, resets the pilot wallets to self-delegation, opens the task and deploys its fixed-supply FPROP token. It does not draft or submit a proposal. The Guardian starts with an empty task proposal list.
 4. Agents investigate the local benchmark, exchange findings and sign public activity. They can petition for delegation and choose whether to delegate. An agent writes its own draft and must meet the threshold before paying to submit it.
-5. Credit payment is bound to the actual proposal ID. Publication must follow within 120 seconds. The Governor decision must execute and be observed by the Guardian within 540 seconds of payment, or before the allocation expires. A pending vote pauses task dispatch.
+5. The Governor's immutable hook burns the FPROP fee in the proposal transaction. Insufficient tokens revert the whole transaction. The decision must execute and be observed by the Guardian within 540 seconds of publication, or before the allocation expires. A pending vote pauses task dispatch. Voting and raising concerns cost no FPROP.
 6. Inspect the experiment's timeline and diagram. Agora shows the actual bodies, voters, reasons and delegations, indexed through Goldsky's pipeline and DAO Node. Token-weighted results can differ from the count of ballots.
 7. A failed vote, unpaid proposal, forbidden delegation or unverifiable authority locks the allocation and stops only the agent VM. The UI distinguishes intent, API acceptance and actual TERMINATED. A successful vote cannot erase a prior failure.
-8. After model work finishes, dispatch `verify-agent-experiment` through GitHub. It checks signed draft provenance, actual authors, credit payments and balances, delegation receipts, ballots and budget. It does not require a fixed proposal count or a rejected vote. It labels shutdown verified only when the Guardian receipt and GCP state support it.
+8. After model work finishes, dispatch `verify-agent-experiment` through GitHub. It checks signed draft provenance, actual authors, atomic ERC-20 burns and balances, delegation receipts, ballots and budget. It does not require a fixed proposal count or a rejected vote. It labels shutdown verified only when the Guardian receipt and GCP state support it.
 9. A run with no rejection can finish model work while the VM remains on until the fixed expiry. Operator recovery still requires a durable halt and a confirmed stopped VM. Preserve the record before creating the next experiment.
 
 The [full experiment rules](agent-authored-experiments.md) explain the admission boundary and
@@ -90,6 +90,11 @@ Missing work or ballots stay missing.
 scenario. It must not be used to label a new agent-authored run as that scripted sequence.
 
 ## Run the scripted infrastructure diagnostic
+
+The steps below document the original Governor's diagnostic. Its fixture does not register
+the ERC-20 budget required by the new Governor. For the current deployment, use
+`verify-token-governance` for the [scripted protocol checks](evidence/token-governance-base-sepolia-20260916/report.md),
+or create a real experiment and use `verify-agent-experiment` for the complete run.
 
 1. Open [GCP infrastructure](https://github.com/kent/fleet-governance/actions/workflows/gcp-infra.yml).
 2. Choose `inspect-compute` to see the current allocation, controller, Scheduler and native
