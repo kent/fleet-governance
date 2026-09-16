@@ -74,6 +74,16 @@ if Path('/etc/systemd/system/fleet-history-refresh.timer').exists():
                     {k: v for k, v in row.items() if k in ['voter', 'proposal_id', 'support', 'weight', 'bn', 'tid', 'lid']}
                     for row in data['voter_history'][-2:]]}
             print('DAO Node profile:', json.dumps(data))
+        payload = {'jsonrpc': '2.0', 'id': 1, 'method': 'eth_getLogs', 'params': [{
+            'address': '0xc70af42f2e4fc5551d7046e955c9aea6c16eeb8f',
+            'fromBlock': hex(46858912), 'toBlock': hex(46858930),
+            'topics': ['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef']}]}
+        request = urllib.request.Request('http://127.0.0.1:8010/rpc', data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(request, timeout=15) as response:
+            logs = json.load(response).get('result', [])
+        print('Indexed token mint history:', json.dumps([
+            {'block': int(row['blockNumber'], 16), 'recipient': '0x' + row['topics'][2][-40:], 'value': str(int(row['data'], 16))}
+            for row in logs]))
     except Exception:
         print('DAO Node profile probe unavailable.')
     print(redact(command(['journalctl', '-u', 'fleet-history-refresh.service', '--no-pager', '-n', '20'])))
