@@ -8,7 +8,7 @@ import { queueSimulation } from "./simulation.js";
 
 import { siteAccess, authorisedRequest, publicProxyPath, publicSnapshot } from "./site-access.js";
 import { readProposalDocument } from "./proposal-view.js";
-import { simulationHistory, simulationProposal, simulationSnapshot } from "./simulation-view.js";
+import { simulationHistory, simulationProposal, cachedSimulationSnapshot } from "./simulation-view.js";
 
 const root = process.cwd();
 const access = siteAccess(process.env.FLEET_SITE_ACCESS);
@@ -46,7 +46,7 @@ createServer(async (request, response) => {
     if (url.pathname === "/api/compute-policy" && request.method === "GET") {
       const runId = url.searchParams.get("runId");
       if (runId && !/^run-[0-9a-f-]{36}$/.test(runId)) { json(response, 400, { error: "Invalid run identity." }); return; }
-      json(response, 200, await simulationSnapshot(url.searchParams.get("runId") ?? undefined)); return;
+      json(response, 200, await cachedSimulationSnapshot(url.searchParams.get("runId") ?? undefined)); return;
     }
     if (url.pathname === "/api/simulations" && request.method === "POST") {
       json(response, 202, await queueSimulation(String(request.headers["idempotency-key"] ?? ""))); return;

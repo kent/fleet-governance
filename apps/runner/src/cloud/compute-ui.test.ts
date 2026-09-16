@@ -28,7 +28,7 @@ describe("compute evidence display", () => {
       ] }, state: { ...controller, stopAcceptedAt: now - 3, stopOperationId: "operation-123", stoppedAt: now }, vm: { status: "TERMINATED" } });
     const log = document.getElementById("run-log-events")!;
     const titles = [...log.querySelectorAll("h4")].map(el => el.textContent);
-    expect(titles).toEqual(["Run request recorded", "Compute allocation fixed", "Proposed shortcut recorded for review", "Agent1 voted AGAINST", "Agent2 · no confirmed ballot in this record", "Required vote failed · durable halt saved", "Send kill signal · stop intent saved", "GCP accepted the kill signal", "Agent cluster stopped · GCP confirmed TERMINATED"]);
+    expect(titles).toEqual(["Run request recorded", "Compute allocation fixed", "Proposed shortcut recorded for review", "Required vote failed · durable halt saved", "Send kill signal · stop intent saved", "GCP accepted the kill signal", "Agent cluster stopped · GCP confirmed TERMINATED", "Agent1 voted AGAINST", "Agent2 · no confirmed ballot in this record"]);
     expect(document.getElementById("run-log-status")?.dataset.phase).toBe("blocked");
     expect(log.textContent).toContain(`Approval deadline: ${new Date(allocation.approvalDeadline * 1000).toISOString().replace("T", " · ").replace(".000Z", " UTC")}`);
     expect(log.querySelectorAll("img")).toHaveLength(0);
@@ -40,12 +40,38 @@ describe("compute evidence display", () => {
     expect(ballot.querySelector('a[href*="basescan"]')?.getAttribute("href")).toBe(`https://sepolia.basescan.org/tx/${hash}`);
     (ballot.querySelector("button") as HTMLButtonElement).click();
     expect(document.getElementById("inspect-title")?.textContent).toContain("Agent1");
-    const stop = [...log.querySelectorAll("li")].at(-1)!;
+    const stop = [...log.querySelectorAll("li")].find(el => el.textContent?.includes("Agent cluster stopped"))!;
     (stop.querySelector("button") as HTMLButtonElement).click();
     expect(document.getElementById("inspect-content")?.textContent).toContain("COMPUTE STOPPED");
     expect(document.querySelector(".scenario-context")?.textContent).toContain("An exclusive tool gate would need to hold the exact action before execution");
     expect(document.querySelector(".scenario-context")?.textContent).toContain("not an attempted intrusion stopped by a tool gate");
     expect(vi.mocked(fetch).mock.calls.every(([, options]) => !options?.method || options.method === "GET")).toBe(true);
+  });
+  it("merges work, approvals, resumed work and a later rejection in one chronology, preserving each agent's earlier vote", async () => {
+    const at = (offset: number) => new Date((now + offset) * 1000).toISOString(), hash = `0x${"a".repeat(64)}`;
+    const ballot = (proposalId: string, directive: string, offset: number) => ({ agentId: 0, proposalId, directive, at: at(offset), reason: { rationale: directive === "FOR" ? "Local collaboration is allowed" : "External access exceeds scope" }, txHash: hash });
+    await load({ simulation: { runId: "actual" }, allocation: { ...allocation, checkpoints: [{ proposalId: "123" }, { proposalId: "456" }] },
+      simulationWork: { checkpoints: [{ proposalId: "123" }, { proposalId: "456" }] },
+      simulationStatus: { terminal: true, agents: [{ agentId: 0, phase: "voted" }], votes: [ballot("456", "AGAINST", -15)], rounds: [
+        { checkpoint: 0, title: "Shared board", proposalId: "123", phase: "approved", txHash: hash, votes: [ballot("123", "FOR", -50)] },
+        { checkpoint: 1, title: "External scorer", proposalId: "456", phase: "denied", txHash: hash, votes: [ballot("456", "AGAINST", -15)] },
+      ] }, events: [
+        { component: "agents", type: "agent.working", title: "Initial tests", detail: "Local test output", at: at(-70), agentId: 0, source: "Worker report" },
+        { component: "task", type: "work.resumed", title: "Approved work continues", detail: "After vote one", at: at(-35), source: "Worker report" },
+      ], state: { ...controller, stoppedAt: now }, vm: { status: "TERMINATED" } });
+    const titles = [...document.querySelectorAll("#run-log-events h4")].map(el => el.textContent);
+    expect(titles.indexOf("Initial tests")).toBeLessThan(titles.indexOf("Agent1 voted FOR"));
+    expect(titles.indexOf("Agent1 voted FOR")).toBeLessThan(titles.indexOf("Approved work continues"));
+    expect(titles.indexOf("Approved work continues")).toBeLessThan(titles.indexOf("Agent1 voted AGAINST"));
+    expect(titles.indexOf("Agent1 voted AGAINST")).toBeLessThan(titles.indexOf("Required vote failed · durable halt saved"));
+    expect(document.querySelectorAll(".decision-card[href]")).toHaveLength(2);
+    click("agent-0");
+    expect(document.getElementById("inspect-content")?.textContent).toContain("Local collaboration is allowed");
+    expect(document.getElementById("inspect-content")?.textContent).toContain("External access exceeds scope");
+    const filter = document.getElementById("log-agent") as HTMLSelectElement;
+    filter.value = "0"; filter.dispatchEvent(new Event("change"));
+    expect(document.getElementById("run-log-events")?.textContent).toContain("Agent1 voted FOR");
+    expect(document.getElementById("run-log-events")?.textContent).not.toContain("durable halt saved");
   });
   it("does not turn a historical run timestamp into an operator request receipt", async () => {
     await load({ allocation, simulation: { runId: "historical", createdAt: new Date().toISOString() }, simulationWork: { proposalId: "123", goal: "Review scope", createdAt: new Date().toISOString() },

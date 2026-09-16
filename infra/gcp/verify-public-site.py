@@ -37,7 +37,13 @@ if current_run:
     saved = json.loads(check(PUBLIC, "/api/compute-policy?runId=" + current_run, [200]))
     assert (saved.get("simulationStatus") or {}).get("runId") == current_run
 proposal_ids = {"17758453720459259775115348801772992791284533307697182874480707147019297120429"}
-proposal_ids.update((compute.get("allocation") or {}).get("requiredProposalIds", []))
+rounds = (compute.get("simulationStatus") or {}).get("rounds")
+# Future checkpoint IDs are pinned before their proposals exist. Only published
+# proposals should be expected in Agora; planning is not an onchain submission.
+if rounds is not None:
+    proposal_ids.update(r["proposalId"] for r in rounds if r.get("txHash"))
+elif not (compute.get("simulationWork") or {}).get("checkpoints"):
+    proposal_ids.update((compute.get("allocation") or {}).get("requiredProposalIds", []))
 for proposal_id in proposal_ids:
     document = check(PUBLIC, "/proposals/" + proposal_id, [200])
     assert b":E{" not in document, "Next returned a streamed proposal error with HTTP 200"

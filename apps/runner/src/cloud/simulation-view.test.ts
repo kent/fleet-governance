@@ -59,3 +59,41 @@ it("only verifies signatures bound to this task, run and registered agent wallet
   vi.mocked(readSimulationWork).mockResolvedValue({ runId: previous, allocationId: "previous", taskId: "5" } as never);
   expect((await simulationSnapshot(previous)).activity).toEqual([expect.objectContaining({ signatureVerified: false })]);
 });
+
+it("keeps the beginning of a long run and never accepts a worker's claimed Guardian source", async () => {
+  const events = [{ runId: previous, id: "e1", at: "2026-09-16T00:00:00Z", component: "compute", type: "claimed.stop", title: "Claim", detail: "Not independent proof", source: "Guardian" }];
+  vi.mocked(readObject).mockResolvedValue({ runId: previous, events, activity: Array.from({ length: 125 }, (_, sequence) => ({ sequence, event: { type: "work_report" } })) });
+  const snapshot = await simulationSnapshot(previous);
+  expect(snapshot.activity).toHaveLength(125);
+  expect(snapshot.activity[0]?.sequence).toBe(0);
+  expect(snapshot.activity.every(record => !record.signatureVerified)).toBe(true);
+  expect(snapshot.events[0]?.source).toBe("Worker report · inspect the supporting evidence");
+});
+
+it("coalesces concurrent public reads, retains observation time and retries failed reads", async () => {
+  const { coalescedReader } = await import("./simulation-view.js");
+  let resolve!: (value: { observedAt: string }) => void;
+  const read = vi.fn(() => new Promise<{ observedAt: string }>(done => { resolve = done; }));
+  const cached = coalescedReader(read, 4000);
+  const first = cached("a"), second = cached("a");
+  await Promise.resolve();
+  expect(read).toHaveBeenCalledTimes(1);
+  resolve({ observedAt: "2026-09-16T00:00:00Z" });
+  expect(await first).toEqual(await second);
+  expect(await cached("a")).toEqual({ observedAt: "2026-09-16T00:00:00Z" });
+  expect(read).toHaveBeenCalledTimes(1);
+  const flaky = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce("fresh");
+  const retry = coalescedReader(flaky, 4000);
+  await expect(retry()).rejects.toThrow("offline");
+  expect(await retry()).toBe("fresh");
+  expect(flaky).toHaveBeenCalledTimes(2);
+});
+
+it("resolves a later published checkpoint to its own exact proposal body", async () => {
+  const { simulationProposal } = await import("./simulation-view.js");
+  vi.mocked(googleRequest).mockResolvedValue(new Response(JSON.stringify({ items: [{ name: `demo/simulations/${previous}/status.json`, updated: "2026-09-16T00:00:00Z" }] })));
+  vi.mocked(readObject).mockResolvedValue({ runId: previous, proposalId: "999", rounds: [{ proposalId: "111", phase: "approved", txHash: "0xreceipt" }, { proposalId: "222", phase: "denied", txHash: "0xreceipt" }, { proposalId: "999", phase: "planned" }] });
+  vi.mocked(readSimulationWork).mockResolvedValue({ runId: previous, proposalId: "111", checkpoints: [{ proposalId: "111", proposalBody: "first" }, { proposalId: "222", proposalBody: "second" }, { proposalId: "999", proposalBody: "unsubmitted" }] } as never);
+  expect(await simulationProposal("222")).toMatchObject({ proposalId: "222", proposalBody: "second", checkpointIndex: 1 });
+  expect(await simulationProposal("999")).toBeNull();
+});
