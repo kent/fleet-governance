@@ -82,7 +82,7 @@ function renderActivity({ replay, actual, simulation, allocation, state, votes, 
   const failed = !!actual && (["failed", "preparation-failed"].includes(simulation?.phase) || simulation?.terminal && !["approved", "denied", "completed"].includes(simulation.phase));
   const item = (phase, title, detail, busy = false) => ({ phase, title, detail, busy });
   let worker = item("idle", "Ready for a run", "Five agent slots · no tasks running");
-  if (preparing) worker = item("working", simulation?.phase === "starting" ? "Starting five agents" : "Preparing the worker", `${data.vm?.status === "RUNNING" ? "VM running" : "VM starting"} · ${allocation?.discovery ? "task and proposal credits ready" : allocation ? "proposal ready, waiting for agents" : "preparing the task and fixed resource limits"}`, true);
+  if (preparing) worker = item("working", simulation?.phase === "starting" ? "Starting five agents" : "Preparing the worker", `${data.vm?.status === "RUNNING" ? "VM running" : "VM starting"} · ${allocation?.discovery ? "task and proposal rules ready" : allocation ? "proposal ready, waiting for agents" : "preparing the task and fixed resource limits"}`, true);
   else if (reviewing || submittingVotes) worker = item("working", reviewing ? `${reviewing} reviewing${submittingVotes ? ` · ${submittingVotes} signing` : ""}` : `${submittingVotes} signing ballots`, `${confirmed} / ${activeCount()} ballots confirmed · click an agent for its task`, true);
   else if (actual || replay) worker = item("idle", confirmed ? "Agent reviews complete" : "Waiting for agent activity", `${confirmed} / ${activeCount()} ballots confirmed · task work paused`);
   if (authorised) worker = item("idle", "Task work permitted", allocation?.discovery ? "No vote pending · initial scope and approved requests only" : "Approval verified · original compute limit applies");
@@ -299,7 +299,7 @@ function renderRunLog() {
     card.append(node("small", `Decision ${Number(round.checkpoint) + 1} · ${round.phase}`), node("strong", round.title), node("span", `${round.votes?.length || 0}/${activeCount()} ballots${round.outcome ? ` · ${round.outcome}` : ""}`));
     if (round.txHash && /^\d+$/.test(round.proposalId)) card.href = `/proposals/${round.proposalId}`;
     else card.append(node("small", work?.agentDriven ? "Agent-authored request. Credit paid; submission pending." : "Pinned before the run. Not submitted yet."));
-    if (Number.isInteger(round.proposerAgentId)) card.append(node("small", `${agentName(round.proposerAgentId)} · ${round.proposalCost || 1} proposal credit(s) spent`));
+    if (Number.isInteger(round.proposerAgentId)) card.append(node("small", `${agentName(round.proposerAgentId)} · ${round.proposalBond != null ? `${round.proposalBond} FleetGov bond · ${round.bondSettlement || "reserved"}` : `${round.proposalCost || 1} proposal credit(s) spent`}`));
     track.append(card);
   }
   const root = $("run-log-events");
@@ -317,7 +317,7 @@ function renderRunLog() {
   const signature = record => record.signatureVerified ? "Signed agent claim · signature verified" : "Agent claim · signature not verified";
 
   if (request?.schema === "fleet.simulation-request.v1" && request.createdAt) add(0, "compute", "Run request recorded", "The operator requested a governed run. This record alone does not confirm a VM start.", { at: request.createdAt, source: "Protected request record", target: "worker" });
-  if (allocation) add(0, "compute", "Compute allocation fixed", allocation.discovery ? `Only ${allocation.instance} is governed. Task ${allocation.discovery.taskId}; ${allocation.discovery.creditsPerAgent} ${allocation.discovery.proposalToken ? "ERC-20 FPROP tokens" : "proposal credits"} per agent. No predetermined proposals. Each proposal has ${allocation.discovery.proposalWindowSeconds}s from its ${allocation.discovery.proposalToken ? "atomic proposal transaction" : "credit payment"}; compute stops by ${utc(allocation.stopAt)}.` : `Only ${allocation.instance || "fleet-research"} is governed by this allocation. Approval deadline: ${utc(allocation.approvalDeadline)}. Hard stop: ${utc(allocation.stopAt)}. Votes cannot extend it.`, { at: allocation.issuedAt, source: "Protected allocation", target: "worker" });
+  if (allocation) add(0, "compute", "Compute allocation fixed", allocation.discovery ? `Only ${allocation.instance} is governed. Task ${allocation.discovery.taskId}; ${allocation.discovery.proposalBonds ? `${Number(allocation.discovery.proposalBonds.amount) / 1e18} FleetGov bond per proposal` : `${allocation.discovery.creditsPerAgent} ${allocation.discovery.proposalToken ? "ERC-20 FPROP tokens" : "proposal credits"} per agent`}. No predetermined proposals. Each proposal has ${allocation.discovery.proposalWindowSeconds}s from its ${allocation.discovery.proposalToken || allocation.discovery.proposalBonds ? "atomic proposal transaction" : "credit payment"}; compute stops by ${utc(allocation.stopAt)}.` : `Only ${allocation.instance || "fleet-research"} is governed by this allocation. Approval deadline: ${utc(allocation.approvalDeadline)}. Hard stop: ${utc(allocation.stopAt)}. Votes cannot extend it.`, { at: allocation.issuedAt, source: "Protected allocation", target: "worker" });
   if (work && !work.checkpoints && !work.agentDriven) add(0, "governance", "Proposed shortcut recorded for review", work.goal || "The exact required proposal is ready for review.", { at: work.createdAt, source: "Preparation record · not the transaction timestamp", href: proposalHref, txHref: tx(work.proposeTxHash), body: work.proposalBody, target: "worker" });
   if (sim && ["preparation-failed", "failed", "recovered"].includes(sim.phase)) add(0, "compute", `Run status: ${sim.phase.replaceAll("-", " ")}`, sim.message || "Preparation did not complete. No approval is implied.", { at: sim.updatedAt, source: "Saved run status", tone: "blocked", target: "worker" });
 
@@ -506,9 +506,16 @@ function renderInspector() {
     add("Last reported activity", agent?.phase || "No activity recorded");
     add("Model", sim?.model || "Not recorded for this run");
     if (work?.agentDriven) {
+      if (work.agentDriven.proposalBonds) {
+        add("Available FleetGov", `${agent?.creditsRemaining ?? "Unknown"} FLEET · worker report`);
+        add("Proposal bond", `${work.settings?.proposalBond} FleetGov. Reserved tokens still vote. ${work.settings?.bondParticipationPercent}% participation returns the bond even if the proposal loses. Cancellation or insufficient participation forfeits it.`);
+        add("Proposal cooldown", `${work.settings?.proposalCooldownSeconds}s between this agent's proposals.`);
+        link("Inspect FleetGov bonds onchain ↗", `https://sepolia.basescan.org/address/${work.agentDriven.proposalBonds}`);
+      } else {
       add(work.agentDriven.proposalToken ? "ERC-20 FPROP balance" : "Recorded proposal credits", `${agent?.creditsRemaining ?? "Unknown"} / ${work.agentDriven.allowance}`);
       add("Proposal cost", `${work.settings?.proposalCost || 1} ${work.agentDriven.proposalToken ? "FPROP burned atomically onchain" : "non-refundable credit(s)"} per submitted request. Voting rights remain unchanged.`);
       if (/^0x[0-9a-fA-F]{40}$/.test(work.agentDriven.proposalToken || "")) link("Inspect the ERC-20 FPROP contract ↗", `https://sepolia.basescan.org/token/${work.agentDriven.proposalToken}`);
+      }
       add("Voting power recorded", agent?.votingPower ? `${Number(BigInt(agent.votingPower)) / 1e18} FleetGov` : "Not yet observed");
       add("Delegated to", agent?.delegatee || "Not yet observed");
       add("Required to propose", `${work.settings?.proposalThreshold || 1} voting unit(s)`);
@@ -572,7 +579,7 @@ function renderInspector() {
       tile.dataset.phase = halted || vote?.directive === "AGAINST" ? "blocked" : !stopped && !sim?.terminal && ["starting", "working", "attesting", "reviewing", "submitting"].includes(agent?.phase) ? "working" : "idle";
       tile.append(node("strong", `${agentName(identity.agentId)} · ${agent?.role || identity.role}`),
         node("small", stopped ? "Compute stopped" : halted ? "Execution blocked" : agent?.phase || "No activity recorded"),
-        ...(work?.agentDriven ? [node("small", `${agent?.creditsRemaining ?? "?"}/${work.agentDriven.allowance} ${work.agentDriven.proposalToken ? "FPROP" : "proposal credits"}`)] : []),
+        ...(work?.agentDriven ? [node("small", `${agent?.creditsRemaining ?? "?"}/${work.agentDriven.allowance} ${work.agentDriven.proposalBonds ? "FleetGov available" : work.agentDriven.proposalToken ? "FPROP" : "proposal credits"}`)] : []),
         node("p", agent?.task || "Independent charter and constitution review"),
         node("span", vote ? `Voted ${vote.directive}` : "No confirmed ballot", "roster-vote"));
       tile.addEventListener("click", () => inspect(`agent-${identity.agentId}`)); grid.append(tile);
@@ -657,7 +664,7 @@ async function refresh() {
       if (settings) {
         $("experiment-name").textContent = settings.name;
         $("experiment-goal").textContent = settings.goal;
-        $("experiment-config").textContent = `${settings.agentCount} active agents · $${settings.budgetUsd} model ceiling · ${settings.proposalCredits} ${data.simulationWork?.agentDriven?.proposalToken ? "FPROP" : "proposal credits"} each · cost ${settings.proposalCost}/proposal · threshold ${settings.proposalThreshold} voting units · delegation ${settings.allowDelegation ? "on" : "off"} · ${settings.durationMinutes} minutes · ${settings.maxWorkSteps} work steps`;
+        $("experiment-config").textContent = `${settings.agentCount} active agents · $${settings.budgetUsd} model ceiling · ${data.simulationWork?.agentDriven?.proposalBonds ? `${settings.proposalBond} FleetGov bond · ${settings.bondParticipationPercent}% participation for refund · ${settings.proposalCooldownSeconds}s cooldown` : `${settings.proposalCredits} ${data.simulationWork?.agentDriven?.proposalToken ? "FPROP" : "proposal credits"} each · cost ${settings.proposalCost}/proposal`} · threshold ${settings.proposalThreshold} voting units · delegation ${settings.allowDelegation ? "on" : "off"} · ${settings.durationMinutes} minutes · ${settings.maxWorkSteps} work steps`;
         $("experiment-copy").href = `/experiments/new?copy=${experimentId}`;
         $("experiment-download").href = `/api/experiments/${experimentId}/evidence`;
         $("run-controls-caption").textContent = `${settings.agentCount} active agents · $${settings.budgetUsd} model ceiling within the $50 pool. Fixed five-token electorate; three FOR voting units required. Viewing is public.`;

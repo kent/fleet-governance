@@ -27,6 +27,7 @@ export async function experimentRecord(id: string) {
       delegations: (simulationStatus?.events ?? []).filter((e: any) => e.type === "delegation.confirmed").length,
       chargedCostUsd: simulationStatus?.inference?.budget?.chargedCostUsd ?? null,
       proposalToken: work?.agentDriven?.proposalToken ?? null,
+      proposalBonds: work?.agentDriven?.proposalBonds ?? null,
       configurationSource: protectedRequest || work ? "Protected operator record" : "Queued request record",
       url: `/experiments/${id}`, evidenceUrl: `/api/experiments/${id}/evidence` };
     return { experiment, run: { runId: id, createdAt: experiment.createdAt, settings }, status: simulationStatus };

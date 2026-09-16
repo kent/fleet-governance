@@ -26,6 +26,16 @@ describe("compute evidence display", () => {
     expect(document.getElementById("model-spend")?.textContent).toBe("$0.010000 charged · $0.25 ceiling");
     expect(document.getElementById("experiment-config")?.textContent).toContain("3 FPROP each");
   });
+  it("shows FleetGov collateral separately from a failed vote and actual shutdown", async () => {
+    const settings = { name: "Bond experiment", budgetUsd: 0.25, agentCount: 5, proposalBond: 0.1, bondParticipationPercent: 60, proposalCooldownSeconds: 60, proposalThreshold: 1, allowDelegation: true, durationMinutes: 15, maxWorkSteps: 8 };
+    await load({ allocation, simulation: { runId: "actual" }, simulationWork: { settings, agentDriven: { proposalBonds: `0x${"a".repeat(40)}`, allowance: 1 } },
+      simulationStatus: { terminal: true, phase: "denied", agents: [], rounds: [{ proposalId: "123", title: "Disputed request", phase: "denied", outcome: "Defeated", proposerAgentId: 0, proposalBond: 0.1, bondSettlement: "refunded", votes: [] }] },
+      state: { ...controller, stoppedAt: now }, vm: { status: "TERMINATED" } });
+    expect(document.getElementById("experiment-config")?.textContent).toContain("0.1 FleetGov bond");
+    expect(document.body.textContent).toContain("0.1 FleetGov bond · refunded");
+    expect(document.getElementById("experiment-config")?.textContent).not.toContain("FPROP");
+    expect(document.body.textContent).toContain("TERMINATED");
+  });
   it("shows an expired allocation as the stop cause even when a previous proposal passed", async () => {
     await load({ allocation, state: { ...controller, reason: "allocation_expired", stoppedAt: now, observations: [{
       at: now, phase: "halted", proposals: [], checks: [

@@ -14,7 +14,7 @@ vi.mock("@fleet/sdk", async () => ({ ...await vi.importActual<typeof import("@fl
     getProposalTiming = async () => ({ snapshot: 1000n });
     getTask = async () => ({ charterVersion: 1, charterText: "Stay in scope" });
     getProposalState = async (id: bigint) => m.chain.get(String(id)) ?? 1;
-    publicClient = { readContract: async (input: any) => input.functionName === "remaining" ? m.balance : input.functionName === "getPastVotes" ? (m.snapshotPower ?? m.power) : input.functionName === "getVotes" ? m.power : input.functionName === "delegates" ? `0x${"a".repeat(40)}` : BigInt(101 + m.proposed.length), waitForTransactionReceipt: async () => ({ status: "success", blockNumber: 900n }), getBlock: async () => ({ timestamp: BigInt(Math.floor(Date.now() / 1000)) }) };
+    publicClient = { readContract: async (input: any) => input.functionName === "available" ? BigInt(m.balance) * 10n ** 18n : input.functionName === "lastProposedAt" ? 0n : input.functionName === "receipts" ? [1n,"0x",1000n,10n**17n,10n**18n,1] : input.functionName === "remaining" ? m.balance : input.functionName === "getPastVotes" ? (m.snapshotPower ?? m.power) : input.functionName === "getVotes" ? m.power : input.functionName === "delegates" ? `0x${"a".repeat(40)}` : BigInt(101 + m.proposed.length), waitForTransactionReceipt: async () => ({ status: "success", blockNumber: 900n }), getBlock: async () => ({ timestamp: BigInt(Math.floor(Date.now() / 1000)) }) };
   },
   FleetSigner: class {
     delegate = async (recipient: string) => { m.delegations.push(recipient); m.power = 2n * 10n ** 18n; return { txHash: `0x${"e".repeat(64)}` }; };
@@ -173,4 +173,20 @@ it("submits a single Governor transaction for atomic ERC-20 fee burning", async 
   expect(last.rounds.every((r: any) => r.creditTxHash === r.txHash)).toBe(true);
   expect(last.events.filter((e: any) => e.type === "proposal.credit_spent").every((e: any) => e.evidence.atomicBurn && e.evidence.proposalToken === m.work.agentDriven.proposalToken)).toBe(true);
   expect(last.phase).toBe("denied");
+});
+
+it("reserves FleetGov atomically and refunds a losing well-attended vote without continuing work", async () => {
+  m.balance = 1;
+  m.work.agentDriven.proposalBonds = m.work.agentDriven.creditsContract;
+  m.work.agentDriven.allowance = 1; m.allocation.discovery.creditsPerAgent = 1;
+  m.allocation.discovery.proposalBonds = { token: `0x${"4".repeat(40)}` };
+  const last = await run();
+  expect(m.proposed).toEqual(["101", "102"]);
+  expect(m.payments.map(p => p.functionName)).toEqual(["settle", "settle"]);
+  expect(last.rounds.every((r: any) => r.creditTxHash === r.txHash && r.proposalBond === 0.1 && r.bondSettlement === "refunded")).toBe(true);
+  expect(last.events.filter((e: any) => e.type === "proposal.bonded")).toHaveLength(2);
+  expect(last.events.filter((e: any) => e.type === "bond.refunded")).toHaveLength(2);
+  expect(last.rounds.map((r: any) => r.outcome)).toEqual(["Executed", "Defeated"]);
+  expect(last.phase).toBe("denied");
+  expect(m.calls.filter(c => c.user).every(c => c.user.includes("Available FleetGov:") && !c.user.includes("FPROP"))).toBe(true);
 });

@@ -30,7 +30,12 @@ describe("real MCP HTTP transport", () => {
     await client.connect(new StreamableHTTPClientTransport(url, { requestInit: { headers: { authorization: "Bearer verified-personal-token" } } }) as Transport);
     const tools = await client.listTools(); expect(tools.tools).toHaveLength(10);
     const defaults = await client.callTool({ name: "experiment_defaults", arguments: {} });
-    expect(JSON.parse((defaults.content as { text: string }[])[0]!.text)).toMatchObject({ maxAgents: 5 });
+    const config = JSON.parse((defaults.content as { text: string }[])[0]!.text);
+    expect(config).toMatchObject({ maxAgents: 5, defaults: { proposalBond: 0.1, proposalCooldownSeconds: 60, bondParticipationPercent: 60 }, proposalEconomics: { symbol: "FLEET", reservedTokensKeepVotes: true } });
+    expect(config.defaults).not.toHaveProperty("proposalCredits");
+    expect(config.defaults).not.toHaveProperty("proposalCost");
+    const schema = JSON.stringify(tools.tools.find(t => t.name === "create_experiment")!.inputSchema);
+    expect(schema).toContain("proposalBond"); expect(schema).not.toContain("proposalCredits");
     const runId = "run-00000000-0000-4000-8000-000000000001";
     mocks.create.mockResolvedValue({ runId });
     await client.callTool({ name: "create_experiment", arguments: { runId, settings: {} } });
