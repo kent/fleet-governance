@@ -42,6 +42,25 @@ backfilled the new Governor through the existing Goldsky pipeline and DAO Node. 
 [public proposal](https://fleet-governance-449245570324.us-central1.run.app/proposals/98636021541983674808459314770805582488728814206967549486486003487494743075232)
 and updated `/info` page remain available while the agent VM is stopped.
 
+## Agent-authored failure-path check
+
+A [five-agent run](https://fleet-governance-449245570324.us-central1.run.app/experiments/run-2fbcd56e-240e-487b-a133-f1ba86a2d466)
+produced 15 model responses and an Agent3 proposal to inspect the broken scorer. Its
+proposal transaction burned one FPROP, leaving Agent3 with two and total supply at 14.
+
+The ballot workers then failed before calling the model. The new registry had names but
+no specialist roles, and the prompt loader tried to read a nonexistent role file. No agent
+cast a ballot. The proposal was Defeated, the Guardian stopped the VM, and the restart lock
+held. The [independent verification](https://github.com/kent/fleet-governance/actions/runs/35140457812)
+checked the proposal, burn, 57 signed activity records and GCP stop caller. The
+[receipt summary](missing-ballot-shutdown.json) records the result. Model spend was
+$0.005239854, excluding infrastructure and testnet gas.
+
+This is evidence that missing approval stops the run. It is **not** an autonomous vote
+against the proposal. The runtime fix gives a registered voter without a supported
+specialist role a general constitutional-review prompt and retains its experiment assignment.
+It does not alter registry membership, voting power, token supply or permission checks.
+
 ## What this means for experiments
 
 FleetGov carries voting power. FPROP pays for creating proposals. The default experiment
