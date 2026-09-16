@@ -5,7 +5,7 @@ on:
       action:
         description: Infrastructure operation
         type: choice
-        options: [plan, apply, provision-readside, inspect-history, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, prepare-simulation, launch-simulation, release-preparation, retry-preparation, inspect-simulation, recover-simulation-evidence]
+        options: [plan, apply, provision-readside, inspect-history, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, deploy-proposal-credits, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, prepare-simulation, launch-simulation, release-preparation, retry-preparation, inspect-simulation, recover-simulation-evidence]
         default: plan
       machine_type:
         description: Pilot VM type
@@ -41,6 +41,9 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: ${{ inputs.action == 'deploy-proposal-credits' && 'recursive' || 'false' }}
+          persist-credentials: false
       - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: fleet-governance
@@ -98,6 +101,23 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm typecheck
           pnpm exec vitest run --project unit apps/runner/src/cloud/compute-policy.test.ts apps/runner/src/cloud/compute-controller.test.ts apps/runner/src/cloud/compute-admin.test.ts apps/runner/src/cloud/compute-task-gate.test.ts
+      - name: Deploy bounded proposal credits without changing the Governor or worker
+        if: inputs.action == 'deploy-proposal-credits'
+        env:
+          FLEET_GCP_CLI_AUTH: '1'
+        run: |
+          npm install -g pnpm@11.9.0
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          pnpm exec vitest run --project unit apps/runner/src/cloud/emergent-policy.test.ts apps/runner/src/cloud/proposal-discovery.test.ts
+          docker run --rm -v "$PWD:/workspace" -w /workspace --entrypoint forge ghcr.io/foundry-rs/foundry:v1.7.1@sha256:8347b728d5d393dac1c018691b36f506d23b9dcd78341d40ea0fcb11c3a19cdd test --root contracts --match-contract FleetProposalCreditsTest
+          node apps/runner/dist/cloud/deploy-proposal-credits.js
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: inputs.action == 'deploy-proposal-credits'
+        with:
+          name: proposal-credits-deployment
+          path: proposal-credits-deployment.json
+          if-no-files-found: error
       - name: Request a new real collective run within the fixed budget
         if: inputs.action == 'launch-simulation'
         env:

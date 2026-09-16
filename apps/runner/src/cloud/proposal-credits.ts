@@ -1,5 +1,7 @@
 import { parseAbi } from "viem";
 
+export const CREDIT_DEPLOYMENT = "contracts/proposal-credits.json";
+
 export const proposalCreditsAbi = parseAbi([
   "constructor(address governor_, address token_, address operator_)",
   "function governor() view returns (address)",
