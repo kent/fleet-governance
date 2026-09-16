@@ -5,7 +5,7 @@ on:
       action:
         description: Infrastructure operation
         type: choice
-        options: [plan, apply, provision-readside, inspect-history, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, prepare-simulation, launch-simulation, release-preparation, retry-preparation, inspect-simulation]
+        options: [plan, apply, provision-readside, inspect-history, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, prepare-simulation, launch-simulation, release-preparation, retry-preparation, inspect-simulation, recover-simulation-evidence]
         default: plan
       machine_type:
         description: Pilot VM type
@@ -92,7 +92,7 @@ jobs:
           pnpm exec vitest run --project unit apps/runner/src/cloud/wallets.test.ts
           node apps/runner/dist/cloud/prepare-wallets.js
       - name: Build and verify compute policy administration
-        if: contains(fromJSON('["arm-compute","inspect-compute","compute-drill","release-compute","verify-simulation","launch-simulation","release-preparation","retry-preparation","inspect-simulation"]'), inputs.action)
+        if: contains(fromJSON('["arm-compute","inspect-compute","compute-drill","release-compute","verify-simulation","launch-simulation","release-preparation","retry-preparation","inspect-simulation","recover-simulation-evidence"]'), inputs.action)
         run: |
           npm install -g pnpm@11.9.0
           pnpm install --frozen-lockfile
@@ -105,6 +105,17 @@ jobs:
         run: |
           node apps/runner/dist/cloud/simulation-launch.js
           echo 'Requested a new five-agent collective lab. The model ceiling is $1 within the existing $50 pool. Existing halt and restart checks remain in force.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Recover the recorded evidence of a failed simulation
+        if: inputs.action == 'recover-simulation-evidence'
+        env:
+          FLEET_GCP_CLI_AUTH: '1'
+          COMPUTE_REQUEST: ${{ inputs.compute_request }}
+        run: node apps/runner/dist/cloud/recover-simulation-evidence.js
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: inputs.action == 'recover-simulation-evidence'
+        with:
+          name: recovered-simulation-evidence
+          path: recovered-simulation-evidence.json
       - name: Check simulation proposal preparation without writes
         if: inputs.action == 'inspect-simulation'
         env:
