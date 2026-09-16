@@ -57,6 +57,10 @@ if manifest.exists():
 print(redact(command(['docker', 'ps', '-a', '--format', '{{.Names}}\t{{.Status}}\t{{.Image}}'])))
 print('Bootstrap ready:', Path('/var/lib/fleet-bootstrap-ready').exists())
 print(redact(command(['df', '-h', '/', '/srv/fleet'])))
+print(command(['free', '-h']))
+print(command(['nproc']))
+print(command(['docker', 'stats', '--no-stream', '--format', '{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}']))
+print(command(['docker', 'system', 'df']))
 print(redact(command(['docker', 'image', 'ls', '--format', '{{.Repository}}\t{{.Size}}'])))
 # Command names only: process arguments may contain credentials.
 print(command(['ps', '-eo', 'pid,etimes,comm']))
