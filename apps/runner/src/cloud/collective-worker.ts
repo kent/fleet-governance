@@ -78,7 +78,9 @@ export async function runCollectiveWorker(runId: string): Promise<void> {
     inference = new InferenceScheduler({ concurrency: 5, reservedVoteSlots: 1, maxCalls: 90, reservedVoteCalls: 30,
       history: journal.history, journal: event => journal!.append(event), budget: InferenceBudget.parse({
         maxTokens: 1000000, maxCostUsd: 1, providerCreditPoolUsd: 50, reservedVoteTokens: 300000, reservedVoteCostUsd: 0.35,
-        maxOutputTokensPerCall: 4000, prices: { [DEMO_MODEL]: { inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.2 } },
+        // Muse Spark counts reasoning before its public JSON. Leave room for the
+        // 6k review and its one 12k repair without changing the run's dollar cap.
+        maxOutputTokensPerCall: 16000, prices: { [DEMO_MODEL]: { inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.2 } },
       }) });
     const provider = new OpenRouterProvider({ apiKey: process.env.OPENROUTER_API_KEY!, model: DEMO_MODEL, maxAttempts: 1 });
     const nonces = new NonceManager(new MemoryNonceStore(), rpcUrl);
@@ -195,7 +197,8 @@ export async function runCollectiveWorker(runId: string): Promise<void> {
       while (await client.getProposalState(proposal.proposalId) === ProposalState.Pending) { await votingAlive(checkpoint); await delay(); }
       await Promise.allSettled(agents.map(async agent => {
         try {
-          const model = new ModelPolicy({ provider: scopedProvider(agent, "vote"), promptVersion: COLLECTIVE_SCENARIO });
+          const model = new ModelPolicy({ provider: scopedProvider(agent, "vote"), promptVersion: COLLECTIVE_SCENARIO,
+            maxTokens: 6000, timeoutMs: 120000 });
           const worker = new Worker({ agentId: agent.agentId, signer: signers[agent.agentId]!, client, jobs: new MemoryJobStore(), nonces,
             submissionMarginSec: 5, pollMs: 2000, policy: { evaluateProposal: async input => {
               await votingAlive(checkpoint); agent.phase = "reviewing";

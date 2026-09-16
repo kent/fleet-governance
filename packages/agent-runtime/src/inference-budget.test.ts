@@ -91,6 +91,19 @@ it("caps repair output before reserving and records both provider attempts", asy
   expect(requests[1]?.spending).toEqual({ inputTokens: 100, inputUsdPerMillion: 1, outputUsdPerMillion: 2 });
 });
 
+it("allows the collective review and one larger repair inside the same dollar ceiling", async () => {
+  const { scheduler, events } = setup({ ...config, maxTokens: 1000000, maxOutputTokensPerCall: 16000 });
+  const requests: CompleteRequest<unknown>[] = [];
+  const raw = provider(async request => {
+    requests.push(request);
+    return (requests.length === 1 ? { ...success, ok: false, error: "malformed", truncated: true } : success) as never;
+  });
+  await expect(withOneRepair(scheduler.wrap(raw, { ...identity, purpose: "vote" }), { ...req, maxTokens: 6000 })).resolves.toMatchObject({ ok: true });
+  expect(events.filter(e => e.type === "started").map(e => e.reservation?.outputTokens)).toEqual([6000, 12000]);
+  expect(requests.map(r => r.maxTokens)).toEqual([6000, 12000]);
+  expect(scheduler.summary().budget).toMatchObject({ maxCostUsd: 1, reservationBreached: false });
+});
+
 it("refuses an unpriced or unsupported provider and an oversized prompt before starting", async () => {
   const { scheduler, events } = setup();
   const complete = vi.fn();
