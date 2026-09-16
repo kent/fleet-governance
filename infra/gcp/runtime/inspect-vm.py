@@ -20,7 +20,7 @@ try:
     env = json.loads(command(['docker', 'inspect', '--format', '{{json .Config.Env}}', 'fleet-runner']))
     for entry in env:
         name, _, value = entry.partition('=')
-        if any(marker in name for marker in ['KEY', 'SECRET', 'PASSWORD', 'RPC']):
+        if any(marker in name for marker in ['KEY', 'SECRET', 'PASSWORD', 'RPC', 'OPERATOR_EMAILS']):
             secrets.append(value)
         if name == 'OPENROUTER_API_KEY':
             model_key = value
@@ -30,7 +30,7 @@ for file in [Path('/opt/fleet/infra/.env'), Path('/run/fleet/runtime.env')]:
     if file.exists():
         for line in file.read_text().splitlines():
             name, _, value = line.partition('=')
-            if any(marker in name for marker in ['KEY', 'SECRET', 'PASSWORD', 'TOKEN', 'RPC', 'ARCHIVE_NODE_HTTP', 'REALTIME_NODE_WS', 'DATABASE_URL']):
+            if any(marker in name for marker in ['KEY', 'SECRET', 'PASSWORD', 'TOKEN', 'RPC', 'ARCHIVE_NODE_HTTP', 'REALTIME_NODE_WS', 'DATABASE_URL', 'OPERATOR_EMAILS']):
                 secrets.append(value.strip("'\""))
             if name == 'OPENROUTER_API_KEY':
                 model_key = value.strip("'\"")
@@ -42,6 +42,7 @@ def redact(value):
             value = value.replace(secret, '[redacted]')
     value = re.sub(r'sk-or-v1-[A-Za-z0-9]+|alch_[A-Za-z0-9_-]+|0x[0-9a-fA-F]{64}', '[redacted]', value)
     value = re.sub(r'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', '[redacted-jwt]', value)
+    value = re.sub(r'[A-Za-z0-9._%+-]+@(?![^\s@]+\.gserviceaccount\.com)[A-Za-z0-9.-]+\.[A-Za-z]{2,}', '[redacted-email]', value)
     return value
 
 

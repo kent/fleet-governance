@@ -7,6 +7,7 @@ set -euo pipefail
 gcloud run deploy fleet-governance-mcp --region=us-central1 --image="$IMAGE_RUNNER" \
   --command=node --args=apps/runner/dist/cloud/mcp-entrypoint.js --port=8080 \
   --service-account=fleet-mcp@fleet-governance.iam.gserviceaccount.com \
+  --update-secrets=FLEET_OPERATOR_EMAILS_JSON=fleet-operator-emails:1 \
   --memory=512Mi --cpu=1 --min=0 --max=2 --concurrency=20 --timeout=60 \
   --no-allow-unauthenticated --no-invoker-iam-check --quiet
 url=https://fleet-governance-mcp-449245570324.us-central1.run.app/mcp

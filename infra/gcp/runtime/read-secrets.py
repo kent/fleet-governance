@@ -24,6 +24,7 @@ def main():
         'OPENROUTER_API_KEY': 'fleet-openrouter-experiment-api-key',
         'POSTGRES_PASSWORD': 'fleet-postgres-password',
         'JWT_SECRET': 'fleet-jwt-secret',
+        'FLEET_OPERATOR_EMAILS_JSON': 'fleet-operator-emails',
     }
     lines = ['NODE_ENV=production', 'NEXT_TELEMETRY_DISABLED=1']
     config_path = Path('/etc/fleet/worker-config.json')

@@ -5,7 +5,7 @@ on:
       action:
         description: Infrastructure operation
         type: choice
-        options: [plan, apply, provision-mcp, refresh-worker, provision-readside, inspect-history, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, deploy-proposal-credits, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, verify-agent-experiment, prepare-simulation, launch-simulation, release-preparation, retry-preparation, inspect-simulation, recover-simulation-evidence]
+        options: [plan, apply, configure-operators, provision-mcp, refresh-worker, provision-readside, inspect-history, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, deploy-proposal-credits, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, verify-agent-experiment, prepare-simulation, launch-simulation, release-preparation, retry-preparation, inspect-simulation, recover-simulation-evidence]
         default: plan
       image_revision:
         description: 'refresh-worker only: existing main-branch runner image revision (40 hex characters)'
@@ -351,10 +351,24 @@ jobs:
           gcloud compute scp infra/gcp/runtime/inspect-vm.py "fleet-research:~/$remote" --zone=us-central1-a --tunnel-through-iap --quiet
           gcloud compute ssh fleet-research --zone=us-central1-a --tunnel-through-iap --quiet --command="sudo python3 \$HOME/$remote"
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
-        if: inputs.action == 'plan' || inputs.action == 'apply' || inputs.action == 'provision-readside' || inputs.action == 'provision-mcp'
+        if: inputs.action == 'plan' || inputs.action == 'apply' || inputs.action == 'provision-readside' || inputs.action == 'provision-mcp' || inputs.action == 'configure-operators'
         with:
           terraform_version: 1.16.2
           terraform_wrapper: false
+      - name: Provision private operator configuration
+        if: inputs.action == 'configure-operators'
+        working-directory: infra/gcp
+        run: |
+          terraform fmt -check
+          terraform init -input=false
+          terraform validate
+          terraform plan -input=false -target=google_secret_manager_secret.operator_allowlist -target=google_secret_manager_secret_iam_member.operator_allowlist_read -out=operators.tfplan
+          terraform apply -input=false operators.tfplan
+      - name: Install private operator identities
+        if: inputs.action == 'configure-operators'
+        env:
+          FLEET_OPERATOR_EMAILS_JSON: ${{ secrets.FLEET_OPERATOR_EMAILS_JSON }}
+        run: python3 -B infra/gcp/configure-operators.py
       - name: Bootstrap the private state bucket
         if: inputs.action == 'plan' || inputs.action == 'apply'
         run: |

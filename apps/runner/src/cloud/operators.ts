@@ -1,9 +1,15 @@
 import { z } from "zod";
 import type { IncomingHttpHeaders } from "node:http";
 
-/** The same human allowlist applies to browser grants, MCP and batch manifests. */
-export const OPERATOR_EMAILS = ["operator1@example.com", "operator2@example.com", "operator3@example.com", "operator4@example.com", "operator5@example.com"] as const;
-export const OperatorEmail = z.enum(OPERATOR_EMAILS);
+/** Identities come from private deployment configuration, never source or defaults.
+ * Read on validation so removing an operator invalidates their next request. */
+export function operatorEmails(): string[] {
+  try {
+    const parsed = z.array(z.string().email()).length(5).safeParse(JSON.parse(process.env.FLEET_OPERATOR_EMAILS_JSON ?? "null"));
+    return parsed.success && new Set(parsed.data).size === 5 ? parsed.data : [];
+  } catch { return []; }
+}
+export const OperatorEmail = z.string().email().refine(email => operatorEmails().includes(email), "An authorised operator is required.");
 export type OperatorEmail = z.infer<typeof OperatorEmail>;
 export function operatorIdentity(headers: IncomingHttpHeaders): OperatorEmail | null {
   const value = headers["x-goog-authenticated-user-email"];

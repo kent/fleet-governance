@@ -4,6 +4,7 @@ set -euo pipefail
 gcloud run jobs deploy fleet-simulation --region=us-central1 --image="$IMAGE_RUNNER" \
   --command=node --args=apps/runner/dist/cloud/simulation-prepare.js \
   --service-account=fleet-simulation@fleet-governance.iam.gserviceaccount.com \
+  --update-secrets=FLEET_OPERATOR_EMAILS_JSON=fleet-operator-emails:1 \
   --memory=512Mi --cpu=1 --tasks=1 --parallelism=1 --max-retries=0 --task-timeout=600s --quiet
 # Invoker has no run.jobs.runWithOverrides permission. The launcher cannot alter
 # the image, identity, arguments, environment, task count or timeout.

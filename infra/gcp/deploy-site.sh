@@ -6,6 +6,7 @@ operator=https://fleet-governance-control-449245570324.us-central1.run.app
 gcloud run deploy fleet-governance-control --region=us-central1 --image="$IMAGE_RUNNER" \
   --command=node --args=apps/runner/dist/cloud/server.js --port=8080 \
   --service-account=fleet-control@fleet-governance.iam.gserviceaccount.com \
+  --update-secrets=FLEET_OPERATOR_EMAILS_JSON=fleet-operator-emails:1 \
   --memory=1Gi --cpu=1 --min=0 --max=2 --concurrency=40 --timeout=60 \
   --network=fleet-research --subnet=fleet-research --network-tags=fleet-control --vpc-egress=private-ranges-only \
   --set-env-vars="FLEET_AGORA_HOST=$FLEET_AGORA_HOST,FLEET_REVISION=$IMAGE_REVISION,FLEET_SITE_ACCESS=operator,FLEET_OPERATOR_URL=$operator" \
@@ -16,15 +17,20 @@ gcloud run services add-iam-policy-binding fleet-governance-control --region=us-
 # retains infrastructure authority through WIF, but cannot impersonate an operator.
 gcloud iap web get-iam-policy --region=us-central1 --resource-type=cloud-run --service=fleet-governance-control --format=json > "$RUNNER_TEMP/fleet-iap-policy.json"
 python3 - "$RUNNER_TEMP/fleet-iap-policy.json" <<'PYTHON'
-import json, sys
+import json, re, subprocess, sys
 path = sys.argv[1]
 policy = json.load(open(path))
 policy['bindings'] = [b for b in policy.get('bindings', []) if b['role'] != 'roles/iap.httpsResourceAccessor']
-policy['bindings'].append({'role': 'roles/iap.httpsResourceAccessor', 'members': ['user:' + email for email in ['operator1@example.com', 'operator2@example.com', 'operator3@example.com', 'operator4@example.com', 'operator5@example.com']]})
+raw = subprocess.check_output(['gcloud', 'secrets', 'versions', 'access', '1', '--secret=fleet-operator-emails'], stderr=subprocess.PIPE)
+emails = json.loads(raw)
+if not isinstance(emails, list) or len(emails) != 5 or any(not isinstance(email, str) or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', email) for email in emails) or len(set(emails)) != 5:
+    raise SystemExit('Invalid private operator configuration')
+policy['bindings'].append({'role': 'roles/iap.httpsResourceAccessor', 'members': ['user:' + email for email in emails]})
 with open(path, 'w') as out:
     json.dump(policy, out)
 PYTHON
-gcloud iap web set-iam-policy "$RUNNER_TEMP/fleet-iap-policy.json" --region=us-central1 --resource-type=cloud-run --service=fleet-governance-control --quiet
+gcloud iap web set-iam-policy "$RUNNER_TEMP/fleet-iap-policy.json" --region=us-central1 --resource-type=cloud-run --service=fleet-governance-control --quiet --format=none >/dev/null
+rm -f "$RUNNER_TEMP/fleet-iap-policy.json"
 # The original shared URL becomes public. Its different service identity cannot
 # mutate resources even if a request manages to evade the read-only HTTP gate.
 gcloud run deploy fleet-governance --region=us-central1 --image="$IMAGE_RUNNER" \

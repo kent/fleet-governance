@@ -4,6 +4,7 @@ export default defineWorkspace([
   {
     test: {
       name: "unit",
+      env: { FLEET_OPERATOR_EMAILS_JSON: JSON.stringify([1, 2, 3, 4, 5].map(i => `operator${i}@example.com`)) },
       include: [
         "packages/*/src/**/*.test.ts",
         "apps/*/src/**/*.test.ts",

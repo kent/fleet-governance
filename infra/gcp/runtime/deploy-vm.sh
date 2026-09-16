@@ -88,7 +88,7 @@ fi
 install -d -m 700 /etc/fleet /usr/local/lib/fleet
 install -m 700 "$script_dir/read-secrets.py" /usr/local/lib/fleet/read-secrets.py
 install -m 600 "$script_dir/worker-config.json" /etc/fleet/worker-config.json
-printf '{"fleet-openrouter-experiment-api-key":"%s","fleet-postgres-password":"1","fleet-jwt-secret":"1"}\n' "$openrouter_version" > /etc/fleet/secret-versions.json
+printf '{"fleet-openrouter-experiment-api-key":"%s","fleet-postgres-password":"1","fleet-jwt-secret":"1","fleet-operator-emails":"1"}\n' "$openrouter_version" > /etc/fleet/secret-versions.json
 # Resolve credentials successfully before stopping an existing UI.
 /usr/local/lib/fleet/read-secrets.py
 systemctl stop fleet-runner.service 2>/dev/null || true

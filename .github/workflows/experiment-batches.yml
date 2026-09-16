@@ -12,6 +12,7 @@ concurrency:
 env:
   CLOUDSDK_CORE_PROJECT: fleet-governance
   FLEET_GCP_CLI_AUTH: '1'
+  FLEET_OPERATOR_EMAILS_JSON: ${{ secrets.FLEET_OPERATOR_EMAILS_JSON }}
 jobs:
   reconcile:
     runs-on: ubuntu-latest
