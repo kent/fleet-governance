@@ -1,7 +1,10 @@
 name: fleet-base-sepolia-events
 resource_size: xs
 sources:
-  fleet_logs:
+  # A new source identity backfills this Governor instead of resuming the old
+  # contract feed's checkpoint. Keep it stable for later routine deployments.
+  # https://docs.goldsky.com/turbo-pipelines/cli-reference#apply-a-pipeline
+  fleet_token_v3_logs:
     type: dataset
     dataset_name: base_sepolia.raw_logs
     version: 1.0.0
@@ -17,7 +20,7 @@ transforms:
     sql: |
       SELECT id, address, block_number, block_hash, transaction_hash,
              transaction_index, log_index, data, topics, block_timestamp, _gs_op
-      FROM fleet_logs
+      FROM fleet_token_v3_logs
       WHERE block_number >= 46907131 AND address IN
         ('0x7d49b367a4c028c886a90ab8648e94e37b57a3d3', '0xde04508b1b46a35c9fd947ccafabdf78ffebf79a')
 sinks:
