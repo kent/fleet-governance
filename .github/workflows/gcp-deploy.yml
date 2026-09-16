@@ -187,6 +187,7 @@ jobs:
             'FLEET_AGORA_IMAGE': os.environ['IMAGE_AGORA'],
           }))
           PYCONFIG
+          cp -a infra/indexer infra/gcp/runtime/indexer
           gcloud compute scp --recurse infra/gcp/runtime fleet-readside:~/fleet-history-runtime \
             --zone=us-central1-a --tunnel-through-iap --quiet
           gcloud compute ssh fleet-readside --zone=us-central1-a --tunnel-through-iap --quiet \

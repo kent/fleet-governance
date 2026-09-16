@@ -30,7 +30,7 @@ for file in [Path('/opt/fleet/infra/.env'), Path('/run/fleet/runtime.env')]:
     if file.exists():
         for line in file.read_text().splitlines():
             name, _, value = line.partition('=')
-            if any(marker in name for marker in ['KEY', 'SECRET', 'PASSWORD', 'RPC', 'ARCHIVE_NODE_HTTP', 'REALTIME_NODE_WS', 'DATABASE_URL']):
+            if any(marker in name for marker in ['KEY', 'SECRET', 'PASSWORD', 'TOKEN', 'RPC', 'ARCHIVE_NODE_HTTP', 'REALTIME_NODE_WS', 'DATABASE_URL']):
                 secrets.append(value.strip("'\""))
             if name == 'OPENROUTER_API_KEY':
                 model_key = value.strip("'\"")
@@ -55,10 +55,12 @@ if manifest.exists():
     data = json.loads(manifest.read_text())
     print('Base Sepolia deployment:', json.dumps({key: data.get(key) for key in ['chainId', 'deploymentBlock', 'addresses']}))
 print(redact(command(['docker', 'ps', '-a', '--format', '{{.Names}}\t{{.Status}}'])))
-for port, path in [(3100, '/'), (3000, '/info'), (3000, '/proposals'), (8000, '/v1/progress'), (8001, '/health')]:
+for port, path in [(3100, '/'), (3000, '/info'), (3000, '/proposals'), (8000, '/v1/progress'), (8001, '/health'), (8010, '/health')]:
     try:
         with urllib.request.urlopen(f'http://127.0.0.1:{port}{path}', timeout=15) as response:
             print(f'{port}{path}: HTTP {response.status}')
+            if port == 8010:
+                print(redact(response.read().decode()))
     except urllib.error.HTTPError as error:
         print(f'{port}{path}: HTTP {error.code}')
     except Exception:

@@ -60,6 +60,9 @@ mkdir -p "$release"
 container=$(docker create "$image")
 docker cp "$container:/opt/fleet/." "$release/"
 docker rm "$container" >/dev/null
+if [[ -d "$script_dir/indexer" ]]; then
+  cp -a "$script_dir/indexer/." "$release/infra/indexer/"
+fi
 python3 "$script_dir/configure-history.py" "$release" "$script_dir/history-config.json"
 ln -sfn "$release" /opt/fleet
 docker compose -f "$release/infra/gcp/docker-compose.yml" -f "$release/infra/gcp/history-compose.yml" \

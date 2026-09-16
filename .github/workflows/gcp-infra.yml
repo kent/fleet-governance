@@ -5,7 +5,7 @@ on:
       action:
         description: Infrastructure operation
         type: choice
-        options: [plan, apply, provision-readside, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, prepare-simulation, release-preparation, retry-preparation, inspect-simulation]
+        options: [plan, apply, provision-readside, inspect-history, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, prepare-simulation, release-preparation, retry-preparation, inspect-simulation]
         default: plan
       machine_type:
         description: Pilot VM type
@@ -74,6 +74,12 @@ jobs:
         run: |
           if [[ "$VM_ACTION" == start ]]; then python3 -B infra/gcp/assert-compute-unarmed.py; fi
           gcloud compute instances "$VM_ACTION" fleet-research --zone=us-central1-a --quiet
+      - name: Inspect independent governance history
+        if: inputs.action == 'inspect-history'
+        run: |
+          gcloud compute instances list --filter='name=(fleet-research fleet-readside)' --format='table(name,status)'
+          gcloud compute scp infra/gcp/runtime/inspect-vm.py fleet-readside:~/fleet-history-inspect.py --zone=us-central1-a --tunnel-through-iap --quiet
+          gcloud compute ssh fleet-readside --zone=us-central1-a --tunnel-through-iap --quiet --command='sudo python3 "$HOME/fleet-history-inspect.py"'
       - name: Prepare and fund five testnet agent wallets
         if: inputs.action == 'prepare-wallets'
         env:
