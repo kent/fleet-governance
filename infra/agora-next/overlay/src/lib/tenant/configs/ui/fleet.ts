@@ -59,7 +59,7 @@ export const fleetTenantUIConfig = new TenantUI({
       route: "delegates",
       title: "Fleet delegates",
       description:
-        "The members of this fleet hold voting power over its proposals. This list and each member's voting power come from DAO Node, read live from the chain, not from a database snapshot.",
+        "The members of this fleet hold voting power over its proposals. Goldsky delivers token events to our durable store. DAO Node builds the voting power and delegation records shown here.",
       meta: {
         title: "Fleet Governance: Delegates",
         description:

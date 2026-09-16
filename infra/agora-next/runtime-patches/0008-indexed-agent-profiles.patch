@@ -1,0 +1,17 @@
+--- a/src/app/delegates/[addressOrENSName]/page.tsx
++++ b/src/app/delegates/[addressOrENSName]/page.tsx
+@@ -1,4 +1,5 @@
+ import { Suspense } from "react";
++import FleetAgentProfile from "@/components/Delegates/FleetAgentProfile";
+ 
+ import { Metadata, ResolvingMetadata } from "next";
+ import DelegateCard from "@/components/Delegates/DelegateCard/DelegateCard";
+@@ -122,6 +123,8 @@
+ 
+   const { ui } = Tenant.current();
+   const address = await ensNameToAddress(addressOrENSName);
++
++  if (Tenant.current().namespace === "fleet") return <FleetAgentProfile address={address} />;
+ 
+   // Check if this is a SCW address
+   const scwConfig = ui.smartAccountConfig;
