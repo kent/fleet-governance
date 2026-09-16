@@ -7,24 +7,27 @@ const historical = '177584537204592597751153488017729927912845333076971828744807
 
 (async () => {
   const snapshot = await (await fetch(base + '/api/compute-policy')).json();
-  const ids = new Set([historical, ...(snapshot.simulationStatus?.rounds || [])
-    .filter(round => round.txHash && round.votes?.length === 5).map(round => round.proposalId)]);
+  // Check incomplete historical rounds honestly too. Full-run acceptance is
+  // independently enforced by verify-simulation, which still requires 15 ballots.
+  const ids = new Map([[historical, 5], ...(snapshot.simulationStatus?.rounds || [])
+    .filter(round => round.txHash && round.votes?.length)
+    .map(round => [round.proposalId, round.votes.length])]);
   const browser = await chromium.launch({ headless: true,
     ...(process.env.FLEET_BROWSER_BIN ? { executablePath: process.env.FLEET_BROWSER_BIN } : {}) });
   const verified = [];
   const reasonsByVoter = new Map();
   try {
-    for (const proposalId of ids) {
+    for (const [proposalId, expectedBallots] of ids) {
       const votes = (await (await fetch(base + '/api/archive/votes/' + proposalId)).json()).data;
-      assert.equal(votes.length, 5, 'Five distinct indexed ballots must be available');
-      assert.equal(new Set(votes.map(vote => vote.voter.toLowerCase())).size, 5);
+      assert.equal(votes.length, expectedBallots, 'Every recorded ballot must be indexed');
+      assert.equal(new Set(votes.map(vote => vote.voter.toLowerCase())).size, expectedBallots);
       for (const vote of votes) {
         let reason = vote.reason;
         try { reason = JSON.parse(reason).rationale || reason; } catch {}
         const address = vote.voter.toLowerCase();
         reasonsByVoter.set(address, [...(reasonsByVoter.get(address) || []), reason]);
       }
-      const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
+      const page = await browser.newPage({ viewport: { width: 1440, height: 1100 }, timezoneId: 'America/Toronto' });
       const errors = [];
       page.on('pageerror', error => errors.push(error.message));
       await page.goto(base + '/proposals/' + proposalId, { waitUntil: 'domcontentloaded' });
@@ -44,7 +47,7 @@ const historical = '177584537204592597751153488017729927912845333076971828744807
         assert.match(content, new RegExp(label + '\\s*-\\s*' + (weight / 10n ** 18n) + '(?![0-9])'));
       }
       assert.deepEqual(errors, [], 'Hydrated proposal must not throw browser errors');
-      verified.push({ proposalId, indexedBallots: 5, visibleReasons: 5,
+      verified.push({ proposalId, indexedBallots: votes.length, visibleReasons: votes.length,
         tallyMatchesIndexedWeights: true, browserErrors: errors });
       await page.close();
     }
@@ -65,5 +68,5 @@ const historical = '177584537204592597751153488017729927912845333076971828744807
   } finally { await browser.close(); }
   fs.writeFileSync('agora-browser-evidence.json', JSON.stringify({ observedAt: new Date().toISOString(), verified,
     verifiedAgentProfiles: [...reasonsByVoter.keys()] }, null, 2));
-  console.log(JSON.stringify({ event: 'agora_browser_verified', proposals: verified.length, ballots: verified.length * 5 }));
+  console.log(JSON.stringify({ event: 'agora_browser_verified', proposals: verified.length, ballots: verified.reduce((sum, row) => sum + row.indexedBallots, 0) }));
 })().catch(error => { console.error(error); process.exitCode = 1; });
