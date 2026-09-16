@@ -149,6 +149,12 @@ armed until the current one is explicitly retired.
 
 ## Recover without reviving the failed run
 
+Website and Guardian updates do not require recovery. In the GitHub deployment workflow,
+use `site_only` for the website, `history_only` for Agora and indexing, or `control_only`
+for the Guardian, preparation job and website. Each leaves the agent VM and its halt intact.
+The next normal deployment after human recovery installs the current agent image, including
+activity attestation recording. Choose only one of these modes per deployment.
+
 1. Inspect the halt and save its allocation UUID.
 2. Choose `release-compute` and enter that exact UUID in `allocation_id`. This is an explicit
    human operation. It checks the halt, pauses Scheduler, retires the controller service,

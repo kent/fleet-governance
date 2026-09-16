@@ -10,6 +10,10 @@ on:
         description: Deploy only the public site and operator controls, without starting or changing the worker
         type: boolean
         default: false
+      control_only:
+        description: Update Guardian, preparation job and website without starting or changing the agent VM
+        type: boolean
+        default: false
       history_only:
         description: Deploy independent Agora, DAO Node and Goldsky ingestion without touching the governed worker
         type: boolean
@@ -45,7 +49,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ inputs.site_only && fromJSON('[{"name":"runner","dockerfile":"infra/gcp/Runner.Dockerfile","target":""}]') || fromJSON('[{"name":"runner","dockerfile":"infra/gcp/Runner.Dockerfile","target":""},{"name":"dao-node","dockerfile":"infra/dao-node/Dockerfile","target":""},{"name":"cpls","dockerfile":"infra/cpls/Dockerfile","target":""},{"name":"agora","dockerfile":"infra/agora-next/Dockerfile","target":"production"}]') }}
+        include: ${{ (inputs.site_only || inputs.control_only) && fromJSON('[{"name":"runner","dockerfile":"infra/gcp/Runner.Dockerfile","target":""}]') || fromJSON('[{"name":"runner","dockerfile":"infra/gcp/Runner.Dockerfile","target":""},{"name":"dao-node","dockerfile":"infra/dao-node/Dockerfile","target":""},{"name":"cpls","dockerfile":"infra/cpls/Dockerfile","target":""},{"name":"agora","dockerfile":"infra/agora-next/Dockerfile","target":"production"}]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -120,7 +124,9 @@ jobs:
       - name: Validate the release revision
         env:
           REQUESTED_REVISION: ${{ inputs.image_revision }}
+          DEPLOY_MODES: ${{ toJSON(inputs) }}
         run: |
+          python3 -c 'import json,os; i=json.loads(os.environ["DEPLOY_MODES"]); assert sum(bool(i[k]) for k in ["site_only","history_only","control_only"]) <= 1, "Choose one deployment mode"'
           revision=${REQUESTED_REVISION:-$GITHUB_SHA}
           [[ "$revision" =~ ^[a-f0-9]{40}$ ]]
           git merge-base --is-ancestor "$revision" "$GITHUB_SHA"
@@ -130,6 +136,7 @@ jobs:
           OPENROUTER_VERSION: ${{ inputs.openrouter_secret_version }}
           SITE_ONLY: ${{ inputs.site_only }}
           HISTORY_ONLY: ${{ inputs.history_only }}
+          CONTROL_ONLY: ${{ inputs.control_only }}
         run: |
           [[ "$OPENROUTER_VERSION" =~ ^[1-9][0-9]*$ ]]
           if [[ "$SITE_ONLY" != true && "$HISTORY_ONLY" != true ]]; then
@@ -141,7 +148,7 @@ jobs:
           done
           fi
           images=(runner)
-          [[ "$SITE_ONLY" == true ]] || images+=(dao-node cpls agora)
+          [[ "$SITE_ONLY" == true || "$CONTROL_ONLY" == true ]] || images+=(dao-node cpls agora)
           for name in "${images[@]}"; do
             digest=$(gcloud artifacts docker images describe "$REGISTRY/$name:$IMAGE_REVISION" --format='value(image_summary.digest)')
             [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
@@ -156,7 +163,7 @@ jobs:
         if: ${{ !inputs.site_only && !inputs.history_only }}
         run: bash infra/gcp/deploy-simulation.sh
       - name: Check and start the fixed worker
-        if: ${{ !inputs.site_only && !inputs.history_only }}
+        if: ${{ !inputs.site_only && !inputs.history_only && !inputs.control_only }}
         run: |
           # A routine deployment must not revive an allocation that governance stopped.
           # This check reads the independent bucket, not the worker's run status.
@@ -218,7 +225,7 @@ jobs:
       - name: Deploy public viewing and protected operator controls
         run: bash infra/gcp/deploy-site.sh
       - name: Prepare worker configuration
-        if: ${{ !inputs.site_only && !inputs.history_only }}
+        if: ${{ !inputs.site_only && !inputs.history_only && !inputs.control_only }}
         run: |
           python3 - <<'PY'
           import json, os
@@ -234,7 +241,7 @@ jobs:
           Path('infra/gcp/runtime/worker-config.json').write_text(json.dumps(config))
           PY
       - name: Deploy worker through IAP and verify containment
-        if: ${{ !inputs.site_only && !inputs.history_only }}
+        if: ${{ !inputs.site_only && !inputs.history_only && !inputs.control_only }}
         env:
           OPENROUTER_VERSION: ${{ inputs.openrouter_secret_version }}
           VERIFY_INFERENCE: ${{ inputs.verify_inference }}
@@ -242,7 +249,7 @@ jobs:
           # RUNNING precedes SSH readiness after a cold VM start. Retry only the
           # read-only connectivity probe, never a partially executed deployment.
           ready=false
-          for attempt in $(seq 1 12); do
+          for _ in $(seq 1 12); do
             if gcloud compute ssh fleet-research --zone=us-central1-a --tunnel-through-iap --quiet \
               --ssh-flag='-oConnectTimeout=10' --ssh-flag='-oConnectionAttempts=1' --command=true; then
               ready=true
