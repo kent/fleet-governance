@@ -52,7 +52,7 @@ the $1 run allowance and the $50 provider limit.
 
 Use **Run simulation** on `/compute` for the fixed collective scenario: a failing local benchmark, a governed findings board, a governed scorer diagnostic and a proposed external-access boundary crossing. The models choose actual work and votes. Read the [universal-timeline acceptance status](universal-timeline-progress.md) for its current live verification.
 
-Agora stays available when the worker stops. **Start unarmed worker** starts compute only when no active or halted allocation blocks it. After a failed required vote, follow [explicit recovery](compute-governance.md#operator-recovery). A normal deployment or another agent vote cannot clear the halt.
+Agora stays available when the worker stops. **Start unarmed worker** starts compute only when no active or halted allocation blocks it. After a failed required vote, follow [explicit recovery](compute-governance.md#recover-without-reviving-the-failed-run). A normal deployment or another agent vote cannot clear the halt.
 
 The configurable coding launcher is an earlier task path. It accepts the goal, constitution and agent count described above. The fixed collective lab uses five agents, an existing indexed Governor and operator-selected decision points; changing those scenario parameters requires a code change and CI deployment.
 

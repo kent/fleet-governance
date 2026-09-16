@@ -2,7 +2,7 @@
 
 Use the browser to run experiments. Use GitHub to change infrastructure or deploy code. Nothing needs to stay running on your computer.
 
-This checklist is updated September 15, 2026. The [GCP runbook](../infra/gcp/README.md) records the deployed resources, identities and secret names. The [demo checklist](turnkey-demo.md) tracks the live pilot's verification.
+This checklist is updated September 16, 2026. The [GCP runbook](../infra/gcp/README.md) records the deployed resources, identities and secret names. The [demo checklist](turnkey-demo.md) tracks the live pilot's verification.
 
 ## One-time setup
 
@@ -18,6 +18,10 @@ This checklist is updated September 15, 2026. The [GCP runbook](../infra/gcp/REA
 - [ ] Set a separate GCP billing budget and alerts if desired. The OpenRouter $50 limit applies to inference credits, not GCP charges. A [GCP budget alert](https://docs.cloud.google.com/billing/docs/how-to/budgets) does not stop compute.
 
 ## Start a run
+
+For the fixed Hugging Face-inspired collective lab, open [the live diagram](https://fleet-governance-449245570324.us-central1.run.app/compute) and use **Run simulation** through the operator interface. It uses five agents, the existing indexed Governor and three fixed decisions. After a required vote fails, [retire that allocation explicitly](compute-governance.md#recover-without-reviving-the-failed-run) before requesting a fresh run.
+
+The earlier configurable coding launcher has these controls:
 
 1. Open the [experiment launcher](https://fleet-governance-449245570324.us-central1.run.app/experiments) without signing in. To start another run, use **Sign in to run** and authenticate as `operator2@example.com`.
 2. Choose the agent count. The demo supports **2 to 25**, with **5** selected by default.
