@@ -3,7 +3,6 @@ import { parseAbi } from "viem";
 export const CREDIT_DEPLOYMENT = "contracts/proposal-budget-v3.json";
 
 export const proposalCreditsAbi = parseAbi([
-  "constructor(address governor_, address token_, address operator_)",
   "function governor() view returns (address)",
   "function token() view returns (address)",
   "function operator() view returns (address)",
@@ -11,6 +10,7 @@ export const proposalCreditsAbi = parseAbi([
   "function runs(uint256) view returns (bytes32 runHash, uint64 expiresAt, uint8 allowance, uint8 proposalCost, uint256 proposalThreshold)",
   "function registerRunPolicy(uint256 taskId, bytes32 runHash, uint8 allowance, uint64 expiresAt, uint8 proposalCost, uint256 proposalThreshold, address[] agents)",
   "function proposalToken(uint256 taskId) view returns (address)",
+  // Historical credit-ledger evidence only. New Governors charge inside their hook.
   "function spend(uint256 taskId, uint256 proposalId)",
   "function remaining(uint256 taskId, address agent) view returns (uint8)",
   "function receipts(uint256) view returns (uint256 taskId, address proposer, uint64 spentAt, uint8 cost, uint256 votingPower)",
