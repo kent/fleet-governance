@@ -32,21 +32,23 @@ async function deploy() {
     votingDelay: 15, votingPeriod: 180, proposalThreshold: "1000000000000000000", quorumNumerator: 6000,
     timelockDelay: 30, maxTaskLifetime: 14400 };
   writeFileSync("deployments/configs/token-governance-ci.json", JSON.stringify(config, null, 2));
-  // A failed or ambiguous broadcast leaves a claim. Retrying must never deploy a
-  // second fleet automatically; the transaction journal can be recovered by CI.
-  const priorSimulation = await readComputeObject("contracts/token-governance-v3-claim.json") as { revision?: string; workflowRun?: string } | null;
-  if (priorSimulation && (priorSimulation.revision !== "5eec5bbd89d30b15338191a4f06729a3f5783a31" || priorSimulation.workflowRun !== "35132518234")) throw new Error("Unreviewed deployment claim; recovery required.");
-  // That reviewed attempt failed in the unforked local simulation before broadcasts.
-  // Keep it intact; the actual chain deployment has its own create-only claim.
-  await writeControlObject("contracts/token-governance-v3-chain-claim.json", { revision: process.env.GITHUB_SHA,
+  // The two reviewed attempts failed in simulation, before broadcasting. Preserve
+  // their claims; require an unchanged pending and confirmed nonce before recovery.
+  const oldChainClaim = await readComputeObject("contracts/token-governance-v3-chain-claim.json") as { workflowRun?: string; deployerNonce?: number } | null;
+  if (oldChainClaim) {
+    const address = account("FLEET_DEPLOYER_KEY");
+    if (oldChainClaim.workflowRun !== "35132882354" || oldChainClaim.deployerNonce !== await reader.getTransactionCount({ address })
+      || oldChainClaim.deployerNonce !== await reader.getTransactionCount({ address, blockTag: "pending" })) throw new Error("Unreconciled chain deployment claim.");
+  }
+  await writeControlObject("contracts/token-governance-v3-broadcast-claim.json", { revision: process.env.GITHUB_SHA,
     workflowRun: process.env.GITHUB_RUN_ID, deployerNonce: await reader.getTransactionCount({ address: account("FLEET_DEPLOYER_KEY") }),
-    ...(priorSimulation ? { supersedesUnbroadcastSimulation: priorSimulation.workflowRun } : {}) });
+    ...(oldChainClaim ? { supersedesUnbroadcastSimulation: oldChainClaim.workflowRun } : {}) });
   const run = spawnSync("docker", ["run", "--rm", "--user", "0:0", "-v", `${process.cwd()}:/workspace`, "-w", "/workspace/contracts",
     ...["FLEET_DEPLOYER_KEY", "ETH_RPC_URL", "FLEET_DEPLOY_CONFIG", "FLEET_TOKEN_PROPOSALS", "FLEET_MANIFEST_OUT"].flatMap(name => ["-e", name]),
     "--entrypoint", "forge", "ghcr.io/foundry-rs/foundry:v1.7.1@sha256:8347b728d5d393dac1c018691b36f506d23b9dcd78341d40ea0fcb11c3a19cdd",
     "script", "script/DeployFleet.s.sol", "--rpc-url", rpcUrl, "--broadcast", "--slow", "--non-interactive", "--gas-price", "10000000"], {
     env: { ...process.env, FLEET_DEPLOYER_KEY: keys.FLEET_DEPLOYER_KEY, ETH_RPC_URL: rpcUrl,
-      FLEET_DEPLOY_CONFIG: "../deployments/configs/token-governance-ci.json", FLEET_TOKEN_PROPOSALS: "true", FLEET_MANIFEST_OUT: "../token-governance-deployment.json" },
+      FLEET_DEPLOY_CONFIG: "../deployments/configs/token-governance-ci.json", FLEET_TOKEN_PROPOSALS: "true", FLEET_MANIFEST_OUT: "../deployments/token-governance-deployment.json" },
     encoding: "utf8", maxBuffer: 32 * 1024 * 1024, timeout: 20 * 60 * 1000,
   });
   if (run.status !== 0) {
@@ -56,7 +58,7 @@ async function deploy() {
     console.error(redacted.slice(-5000));
     throw new Error("Contract deployment did not complete. Inspect the protected claim before retrying.");
   }
-  const manifest = JSON.parse(readFileSync("token-governance-deployment.json", "utf8"));
+  const manifest = JSON.parse(readFileSync("deployments/token-governance-deployment.json", "utf8"));
   if (manifest.chainId !== 84532) throw new Error("Wrong manifest chain.");
   const budget = await recordProposalBudget(manifest);
   const record = { ...manifest, proposalBudget: budget, proposalEconomics: "erc20-burn-atomic", workflowRun: process.env.GITHUB_RUN_ID };
