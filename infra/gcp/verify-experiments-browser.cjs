@@ -16,7 +16,7 @@ const base = 'https://fleet-governance-449245570324.us-central1.run.app';
     await page.waitForFunction(n => document.querySelectorAll('.experiment-row').length === n, index.experiments.length);
     assert.equal(await page.locator('#count').innerText(), String(index.experiments.length));
     await page.evaluate(() => document.fonts.ready);
-    assert.ok(await page.evaluate(() => document.fonts.check('16px Family')), 'Agora Family font must load');
+    assert.ok(await page.evaluate(() => [...document.fonts].some(font => font.family === 'Family' && font.status === 'loaded')), 'Agora Family font must load');
     assert.ok(await page.evaluate(() => document.querySelector('main').getBoundingClientRect().width >= innerWidth - 1), 'Experiment app keeps its full width');
     await page.goto(base + '/experiments/new', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => document.getElementById('name').value.length > 0);
