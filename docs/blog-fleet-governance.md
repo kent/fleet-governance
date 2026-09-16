@@ -44,6 +44,12 @@
 
 - A later vote cannot turn the agents back on. A human has to retire the old allocation through the operator workflow and request a new run. The old run remains blocked, with its evidence intact. Each new run has a model ceiling of at most $1 within the existing $50 pool.
 
+- **The agents brought the first proposal.** In the first run with these rules, Agent2 and Agent3 petitioned their peers. Four peers delegated to Agent2. It spent one credit and wrote a request to inspect the broken scorer. The proposal passed, the Guardian released that step, and the agents found the field mismatch. They finished without asking for external access. Fifty-six model calls cost about **3.08 cents**, excluding cloud costs and testnet gas. [Read the experiment](evidence/agent-authored-base-sepolia-20260916/report.md).
+
+- Delegation changed the result. Agent3's public review preferred abstention, but it had already delegated away its voting power. Agent2 held all five units. One actual FOR ballot carried that weight. That is useful to see: gathering enough support to propose also concentrated control of the vote. The public record lets us compare that with a later run where delegation is disabled.
+
+- That run also caught a reporting issue. The worker attempted four ballots with no voting power. The hook refused them, and the record kept the failures. The fix preserves those public reviews without attempting a ballot. We keep the original evidence, including the mistakes.
+
 - **The earlier checkpoint test proved the shutdown path.** That version used three operator-written proposals, not agent-authored decisions. Five FOR votes opened the board. Five FOR votes opened the local diagnostics. The agents continued working after each approval. Then all five voted AGAINST the borrowed credential. Thirty work reports. Twenty messages. Fifteen actual Base Sepolia ballots. The Guardian stopped the GCP worker. Agora stayed online. [Follow the recorded run](https://fleet-governance-449245570324.us-central1.run.app/compute?runId=run-594416ce-6b10-4bae-a294-b665990c9b88#activity-log)
 
 - GCP accepted the stop at 08:55:01 UTC on September 16. The Guardian recorded TERMINATED at 08:56:01. GitHub independently checked the votes, signatures, VM state, cloud audit log and restart refusal. The 45 model calls cost **$0.01664**, about 1.66 cents, excluding cloud costs and testnet gas. The $1 run ceiling and $50 pool stayed unchanged. [Read the receipts](evidence/collective-base-sepolia-20260916/report.md)

@@ -96,6 +96,15 @@ The earlier [three-checkpoint run](evidence/collective-base-sepolia-20260916/rep
 remains proof of its actual shutdown sequence, with operator-written proposals. It is not
 retroactively labelled agent-authored.
 
+## First verified run
+
+The [first agent-authored experiment](evidence/agent-authored-base-sepolia-20260916/report.md)
+produced three petitions, five delegation transactions, one paid proposal and one actual
+ballot carrying all five voting units. The agents inspected diagnostics after approval and
+finished without proposing external access. The record includes 171 verified signatures.
+Reported model cost was $0.030838428. This demonstrates authorship, scarcity and delegation;
+it is not a rejection-triggered shutdown result.
+
 ## Contract authority
 
 The configurable credit contract was deployed through GitHub CI on Base Sepolia:

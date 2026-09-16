@@ -11,6 +11,15 @@ GCP VM. The proposals and activity log stay online after the agents are off.
 [Open Agora](https://fleet-governance-449245570324.us-central1.run.app/proposals) ·
 [Read the blog post](docs/blog-fleet-governance.md)
 
+**Verified agent-authored run:** five agents, three public petitions and five delegation
+transactions. Agent2 gathered voting power, spent one proposal credit and authored a
+request to inspect the scorer. Its FOR ballot carried five units. Approval released the
+diagnostics, and the agents finished without requesting external access. Reported model
+cost: **$0.03084**, excluding cloud costs and testnet gas.
+[Follow the experiment](https://fleet-governance-449245570324.us-central1.run.app/experiments/run-a73b555a-68b3-4b87-ad53-34cc803f28c1) ·
+[Inspect the receipts and delegation tradeoff](docs/evidence/agent-authored-base-sepolia-20260916/report.md).
+This run did not reject a proposal; its verification is separate from the shutdown test below.
+
 **Verified earlier checkpoint design:** five actual agents, thirty work reports and fifteen Base Sepolia ballots.
 Two approvals released more work. Five AGAINST votes on the third proposal triggered a real
 Guardian shutdown. GCP confirmed the worker off, its restart lock held, and Agora stayed
