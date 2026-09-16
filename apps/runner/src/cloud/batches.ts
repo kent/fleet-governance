@@ -24,7 +24,7 @@ export async function getBatch(batchId: string) {
       guardian: guardian ? { phase: guardian.phase, reason: guardian.reason, observedVmStatus: guardian.observedVmStatus,
         stopAcceptedAt: guardian.stopAcceptedAt, stoppedAt: guardian.stoppedAt } : null });
   }
-  return { plan, state: state?.value ?? { phase: "draft" }, approved: !!approved, cancellationRequested: !!cancellation, experiments };
+  return { plan, state: state?.value ?? { phase: cancellation ? "cancelled" : approved ? "queued" : "draft" }, approved: !!approved, cancellationRequested: !!cancellation, experiments };
 }
 export async function createBatch(id: string, input: unknown, requestedBy: OperatorEmail, runIds?: string[]) {
   BatchId.parse(id); OperatorEmail.parse(requestedBy);

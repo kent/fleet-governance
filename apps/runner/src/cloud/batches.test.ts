@@ -4,7 +4,7 @@ vi.mock("./protected-records.js", () => ({ protectedRecord: m.read, putProtected
 vi.mock("./compute-store.js", () => ({ readComputeAllocation: m.allocation, readComputeState: vi.fn() }));
 vi.mock("./simulation.js", () => ({ readSimulationRequest: m.request, readSimulationWork: vi.fn() }));
 vi.mock("./experiment-records.js", () => ({ experimentRecord: vi.fn() }));
-import { createBatch, startBatch, cancelBatch } from "./batches.js";
+import { createBatch, startBatch, cancelBatch, getBatch } from "./batches.js";
 const batchId = "batch-00000000-0000-4000-8000-000000000001";
 const input = { name: "Research sweep", experiments: [{}], maxBudgetUsd: 1, expiresAt: new Date(Date.now() + 3600_000).toISOString() };
 let store: Map<string, unknown>;
@@ -28,6 +28,14 @@ describe("human batch authorisation", () => {
     await expect(createBatch(batchId, input, "operator5@example.com")).rejects.toThrow("different owner");
     await expect(createBatch(batchId, { ...input, name: "Changed rules" }, "operator4@example.com")).rejects.toThrow("configuration");
     expect(store.has("batches/active.json")).toBe(false);
+  });
+  it("distinguishes a saved draft, approved queued work and cancellation before the first tick", async () => {
+    await createBatch(batchId, input, "operator4@example.com");
+    expect((await getBatch(batchId))?.state).toMatchObject({ phase: "draft" });
+    await startBatch(batchId, "operator4@example.com");
+    expect((await getBatch(batchId))?.state).toMatchObject({ phase: "queued" });
+    await cancelBatch(batchId, "operator4@example.com");
+    expect((await getBatch(batchId))?.state).toMatchObject({ phase: "cancelled" });
   });
   it("approves a finite list once and retries without extending it", async () => {
     const plan = await createBatch(batchId, input, "operator4@example.com");
