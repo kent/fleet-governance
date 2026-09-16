@@ -291,7 +291,7 @@ jobs:
               actions = resource['change']['actions']
               if actions == ['no-op'] or actions == ['read']:
                   continue
-              if not resource['name'].startswith('readside') or 'delete' in actions:
+              if not resource['name'].startswith('readside') or ('delete' in actions and resource['type'] != 'google_storage_bucket_iam_member'):
                   raise SystemExit('Unexpected infrastructure mutation: ' + resource['address'])
               print(resource['address'], actions)
           PY

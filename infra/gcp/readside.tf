@@ -33,9 +33,27 @@ resource "google_secret_manager_secret_iam_member" "readside_secrets" {
 }
 
 resource "google_storage_bucket_iam_member" "readside_archive" {
-  bucket = google_storage_bucket.data["archive"].name
+  bucket = google_storage_bucket.readside_history.name
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.readside.email}"
+}
+
+resource "google_storage_bucket" "readside_history" {
+  name                        = "fleet-governance-history-449245570324"
+  location                    = var.region
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = false
+  labels                      = local.labels
+  versioning { enabled = true }
+  lifecycle_rule {
+    condition {
+      age        = 30
+      with_state = "ARCHIVED"
+    }
+    action { type = "Delete" }
+  }
+  lifecycle { prevent_destroy = true }
 }
 
 resource "google_artifact_registry_repository_iam_member" "readside_images" {
