@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { createPublicClient, http, keccak256, type Address } from "viem";
 import { baseSepolia } from "viem/chains";
+import { logBoundedHttp } from "@fleet/sdk";
 import { z } from "zod";
-import { ComputeAllocation } from "./compute-policy.js";
+import { ComputeAllocation, ProposalDiscovery } from "./compute-policy.js";
+import { discoverTaskProposals } from "./proposal-discovery.js";
 import { COMPUTE_BUCKET, isComputeRunBlocked, readComputeAllocation, readComputeState } from "./compute-store.js";
 import { CloudError, googleRequest, readSecret, writeObject } from "./google.js";
 
@@ -10,10 +12,13 @@ export const COMPUTE_TARGET = "compute/v1/projects/fleet-governance/zones/us-cen
 export const AllocationRequest = z.object({
   runId: z.string().regex(/^run-[0-9a-f-]{36}$/),
   governor: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
-  requiredProposalIds: z.array(z.string().regex(/^(0|[1-9][0-9]*)$/)).min(1).max(64),
+  requiredProposalIds: z.array(z.string().regex(/^(0|[1-9][0-9]*)$/)).max(64),
   checkpoints: z.array(z.object({ proposalId: z.string().regex(/^(0|[1-9][0-9]*)$/), approvalDeadline: z.number().int().nonnegative().safe() }).strict()).min(1).max(8).optional(),
+  discovery: ProposalDiscovery.optional(),
+  stopAt: z.number().int().nonnegative().safe().optional(),
   approvalSeconds: z.number().int().min(60).max(1800).default(600),
-}).strict();
+}).strict().refine(request => request.discovery ? request.requiredProposalIds.length === 0 && !request.checkpoints && !!request.stopAt
+  : request.requiredProposalIds.length > 0 && request.stopAt === undefined, "Discovery requires a fixed expiry and no preselected proposals.");
 
 export type NativeVm = {
   id: string; status: string; lastStartTimestamp: string;
@@ -43,21 +48,30 @@ export async function armComputeAllocation(input: unknown): Promise<ComputeAlloc
   if (await isComputeRunBlocked(request.runId)) throw new Error("This run was permanently retired. A new allocation requires a new run identity.");
   if (await readComputeAllocation()) throw new Error("A compute allocation is already armed. Operator recovery is required.");
   const rpc = await readSecret("fleet-base-sepolia-rpc-url");
-  const client = createPublicClient({ chain: baseSepolia, transport: http(rpc, { timeout: 10000, retryCount: 1 }) });
+  const client = createPublicClient({ chain: baseSepolia, transport: request.discovery
+    ? logBoundedHttp(rpc, BigInt(request.discovery.startBlock)) : http(rpc, { timeout: 10000, retryCount: 1 }) });
   if (await client.getChainId() !== 84532) throw new Error("Compute governance requires Base Sepolia.");
   const code = await client.getCode({ address: request.governor as Address });
   if (!code || code === "0x") throw new Error("Governor has no bytecode.");
   const vm = await (await googleRequest("compute", COMPUTE_TARGET)).json() as NativeVm;
   const now = Math.floor(Date.now() / 1000);
+  const nativeExpiry = nativeStopAt(vm, now);
+  const stopAt = request.stopAt ?? nativeExpiry;
+  if (stopAt > nativeExpiry || stopAt <= now) throw new Error("Allocation expiry exceeds native compute authority.");
   const allocation = ComputeAllocation.parse({
     schema: "fleet.compute-allocation.v1", allocationId: randomUUID(),
     runId: request.runId, project: "fleet-governance", zone: "us-central1-a",
     instance: "fleet-research", instanceId: vm.id, issuedAt: now,
-    approvalDeadline: request.checkpoints?.at(-1)?.approvalDeadline ?? now + request.approvalSeconds, stopAt: nativeStopAt(vm, now),
+    approvalDeadline: request.discovery ? stopAt : request.checkpoints?.at(-1)?.approvalDeadline ?? now + request.approvalSeconds, stopAt, nativeStopAt: nativeExpiry,
     chainId: 84532, governor: request.governor, governorCodeHash: keccak256(code),
-    requiredProposalIds: request.requiredProposalIds, ...(request.checkpoints ? { checkpoints: request.checkpoints } : {}), maxObservationAgeSeconds: 120,
+    requiredProposalIds: request.requiredProposalIds, ...(request.checkpoints ? { checkpoints: request.checkpoints } : {}),
+    ...(request.discovery ? { discovery: request.discovery } : {}), maxObservationAgeSeconds: 120,
   });
-  if (allocation.approvalDeadline > now + 1800) throw new Error("Checkpoint approvals must finish within 30 minutes.");
+  if (!request.discovery && allocation.approvalDeadline > now + 1800) throw new Error("Checkpoint approvals must finish within 30 minutes.");
+  if (request.discovery) {
+    const block = await client.getBlockNumber();
+    if (block < 2n || (await discoverTaskProposals(client, allocation, block - 2n)).length !== 0) throw new Error("A new run must begin without proposals or payments.");
+  }
   await writeControlObject(`allocations/${allocation.allocationId}.json`, allocation);
   await writeControlObject("active.json", { allocationId: allocation.allocationId });
   return allocation;

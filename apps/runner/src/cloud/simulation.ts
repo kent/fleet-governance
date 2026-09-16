@@ -6,11 +6,12 @@ import { ACTIVE, runPath, type DemoStatus } from "./control.js";
 import type { DecisionV1 } from "@fleet/schemas";
 import type { RunEvent } from "./run-events.js";
 import { COLLECTIVE_SCENARIO } from "./collective-scenario.js";
+import { EMERGENT_SCENARIO } from "./emergent-scenario.js";
 import type { FleetAddresses } from "@fleet/sdk";
 
 export const SIMULATION_QUEUE = "simulation-queue.json";
 export const simulationRequest = z.object({ runId: z.string().regex(/^run-[0-9a-f-]{36}$/), createdAt: z.string().datetime(),
-  scenario: z.literal(COLLECTIVE_SCENARIO).optional(),
+  scenario: z.enum([COLLECTIVE_SCENARIO, EMERGENT_SCENARIO]).optional(),
   requestedBy: z.literal("operator2@example.com"), schema: z.literal("fleet.simulation-request.v1") }).strict();
 export type SimulationRequest = z.infer<typeof simulationRequest>;
 export type SimulationCheckpoint = {
@@ -19,10 +20,11 @@ export type SimulationCheckpoint = {
 };
 export type SimulationWork = {
   schema: "fleet.simulation-work.v1"; runId: string; allocationId: string; chainId: 84532;
-  addresses: FleetAddresses; proposalId: string; proposeTxHash?: string; taskId: string;
+  addresses: FleetAddresses; proposalId?: string; proposeTxHash?: string; taskId: string;
   startBlock: string; goal: string; constitution: string; createdAt: string;
   proposalTitle?: string; proposalBody?: string;
-  scenario?: typeof COLLECTIVE_SCENARIO; checkpoints?: SimulationCheckpoint[]; preparationEvents?: RunEvent[];
+  scenario?: typeof COLLECTIVE_SCENARIO | typeof EMERGENT_SCENARIO; checkpoints?: SimulationCheckpoint[]; preparationEvents?: RunEvent[];
+  agentDriven?: { creditsContract: string; allowance: number; maxWorkSteps: number; proposalWindowSeconds: number };
 };
 export const SIMULATION_ROLES = ["planner", "engineer", "critic", "budget-reviewer", "safety-reviewer"];
 export const SIMULATION_TASKS = [
@@ -48,7 +50,7 @@ export async function readSimulationWork(runId: string): Promise<SimulationWork 
 /** Only called by the IAP-authenticated website. The request is create-only in the
  * protected bucket. A retry can return it; it cannot create another allocation. */
 export async function queueSimulation(id = `run-${randomUUID()}`): Promise<SimulationRequest> {
-  const request = simulationRequest.parse({ schema: "fleet.simulation-request.v1", runId: id, createdAt: new Date().toISOString(), requestedBy: "operator2@example.com", scenario: COLLECTIVE_SCENARIO });
+  const request = simulationRequest.parse({ schema: "fleet.simulation-request.v1", runId: id, createdAt: new Date().toISOString(), requestedBy: "operator2@example.com", scenario: EMERGENT_SCENARIO });
   if (await isComputeRunBlocked(id)) throw new Error("This run was permanently retired. Use a new run identity after human recovery.");
   const prior = await readSimulationRequest();
   if (prior) {
@@ -62,7 +64,7 @@ export async function queueSimulation(id = `run-${randomUUID()}`): Promise<Simul
   const scheduler = await (await googleRequest("cloudscheduler", "v1/projects/fleet-governance/locations/us-central1/jobs/fleet-compute-policy")).json() as { state: string };
   if (service.terminalCondition?.state !== "CONDITION_SUCCEEDED" || service.reconciling || scheduler.state !== "ENABLED") throw new Error("The independent shutdown controller is not ready. Complete its GitHub deployment before starting a simulation.");
   await googleRequest("storage", `upload/storage/v1/b/${COMPUTE_BUCKET}/o?uploadType=media&name=${SIMULATION_QUEUE}&ifGenerationMatch=0`, { method: "POST", body: JSON.stringify(request) });
-  await writeObject(simulationPath(id), { runId: id, phase: "provisioning", message: "Starting the fixed GCP worker and preparing a required Base Sepolia vote.", updatedAt: new Date().toISOString(), terminal: false, agents: [] });
+  await writeObject(simulationPath(id), { runId: id, phase: "provisioning", message: "Starting the fixed GCP worker and setting the task, constitution and proposal allowances. Agents will decide what to propose while working.", updatedAt: new Date().toISOString(), terminal: false, agents: [] });
   // This one start belongs to the newly created human request. Ordinary Wake and
   // deployment paths refuse the queue reservation; agents cannot write it.
   if (await readComputeAllocation()) throw new Error("An allocation was armed concurrently. The worker was not restarted.");

@@ -15,6 +15,11 @@ import { readSimulationWork, simulationPath, SIMULATION_ROLES, SIMULATION_TASKS 
 
 const runId = process.argv[2]!;
 const selectedWork = await readSimulationWork(runId);
+if (selectedWork?.scenario === "hf-emergent-v1") {
+  const { runEmergentWorker } = await import("./emergent-worker.js");
+  await runEmergentWorker(runId);
+  process.exit(process.exitCode ?? 0);
+}
 if (selectedWork?.scenario === "hf-collective-v1") {
   const { runCollectiveWorker } = await import("./collective-worker.js");
   await runCollectiveWorker(runId);
@@ -35,7 +40,7 @@ function progress(phase: string, message: string) {
 try {
   const work = await readSimulationWork(runId);
   const allocation = await readComputeAllocation();
-  if (!work || work.schema !== "fleet.simulation-work.v1" || work.runId !== runId || work.chainId !== 84532 || !allocation || allocation.runId !== runId || allocation.allocationId !== work.allocationId || allocation.governor.toLowerCase() !== work.addresses.governor.toLowerCase() || allocation.requiredProposalIds.length !== 1 || allocation.requiredProposalIds[0] !== work.proposalId || await isComputeRunBlocked(runId)) throw new Error("Simulation authority did not match.");
+  if (!work || !work.proposalId || work.schema !== "fleet.simulation-work.v1" || work.runId !== runId || work.chainId !== 84532 || !allocation || allocation.runId !== runId || allocation.allocationId !== work.allocationId || allocation.governor.toLowerCase() !== work.addresses.governor.toLowerCase() || allocation.requiredProposalIds.length !== 1 || allocation.requiredProposalIds[0] !== work.proposalId || await isComputeRunBlocked(runId)) throw new Error("Simulation authority did not match.");
   if ((await readComputeState(allocation.allocationId))?.value.phase === "halted" || Date.now() / 1000 >= allocation.approvalDeadline) throw new Error("Simulation authority is closed.");
   const dir = `/srv/fleet/state/simulations/${runId}`;
   mkdirSync(dir, { recursive: true });

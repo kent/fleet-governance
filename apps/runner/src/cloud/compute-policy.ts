@@ -27,6 +27,7 @@ export const ComputeAllocation = z.object({
   issuedAt: timestamp,
   approvalDeadline: timestamp,
   stopAt: timestamp,
+  nativeStopAt: timestamp.optional(),
   chainId: z.literal(84532),
   governor: address,
   governorCodeHash: hash,
@@ -45,6 +46,9 @@ export const ComputeAllocation = z.object({
   }
   if (value.stopAt - value.issuedAt > 4 * 60 * 60) {
     ctx.addIssue({ code: "custom", message: "A compute allocation cannot exceed four hours." });
+  }
+  if (value.nativeStopAt !== undefined && (value.nativeStopAt < value.stopAt || value.nativeStopAt - value.issuedAt > 14400)) {
+    ctx.addIssue({ code: "custom", message: "Native expiry must bound the fixed allocation within four hours." });
   }
   if (value.checkpoints) {
     if (value.checkpoints.length !== value.requiredProposalIds.length

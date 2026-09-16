@@ -6,7 +6,7 @@ import { discoverTaskProposals } from "./proposal-discovery.js";
 import type { ComputeAllocation, ComputeObservation } from "./compute-policy.js";
 
 /** Independent of the worker, its manifest, Agora and model-generated claims. The
- * human-issued allocation supplies the contract and exact proposal IDs to observe. */
+ * operator allocation pins the task and credit authority, or exact IDs for legacy runs. */
 export async function observeComputeApproval(allocation: ComputeAllocation, rpcUrl: string): Promise<ComputeObservation> {
   const client = createPublicClient({ chain: baseSepolia, transport: allocation.discovery
     ? logBoundedHttp(rpcUrl, BigInt(allocation.discovery.startBlock)) : http(rpcUrl, { timeout: 10_000, retryCount: 1 }) });

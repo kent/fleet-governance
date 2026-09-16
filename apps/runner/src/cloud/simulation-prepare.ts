@@ -11,6 +11,8 @@ import { ACTIVE, runPath, type DemoStatus } from "./control.js";
 import { readSimulationRequest, simulationPath, type SimulationWork } from "./simulation.js";
 
 import { prepareCollective } from "./collective-prepare.js";
+import { prepareEmergent } from "./emergent-prepare.js";
+import { EMERGENT_SCENARIO } from "./emergent-scenario.js";
 import { COLLECTIVE_SCENARIO } from "./collective-scenario.js";
 import { simulationChallenge } from "./simulation-challenge.js";
 import { safeFailure } from "./simulation-diagnostics.js";
@@ -46,6 +48,10 @@ try {
   if (wallets.schema !== "fleet.wallets.v1" || wallets.chainId !== 84532) throw new Error("Invalid testnet wallets.");
   const keys = { deployerKey: wallets.keys.FLEET_DEPLOYER_KEY!, operatorKey: wallets.keys.FLEET_OPERATOR_KEY!, guardianKey: wallets.keys.FLEET_GUARDIAN_KEY!, keeperKey: wallets.keys.FLEET_KEEPER_KEY!, agentKeys: { 0: wallets.keys.FLEET_AGENT_KEY_0! } };
   const constitution = readFileSync("experiments/constitutions/fleet-v1.md", "utf8");
+  if (request.scenario === EMERGENT_SCENARIO) {
+    await prepareEmergent({ request, client, rpcUrl, addresses: config.addresses, keys, constitution, startBlock });
+    process.exit(0);
+  }
   if (request.scenario === COLLECTIVE_SCENARIO) {
     await prepareCollective({ request, client, rpcUrl, addresses: config.addresses, keys, constitution, startBlock });
     process.exit(0);

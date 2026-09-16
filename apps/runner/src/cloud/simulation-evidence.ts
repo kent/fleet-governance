@@ -11,7 +11,7 @@ try {
   const allocation = await readComputeAllocation();
   if (!request || !allocation || request.runId !== allocation.runId) throw new Error("No matching simulation allocation.");
   const work = await readSimulationWork(request.runId);
-  if (!work || work.allocationId !== allocation.allocationId || work.proposalId !== allocation.requiredProposalIds[0]) throw new Error("Wrong simulation work.");
+  if (!work || !work.proposalId || work.allocationId !== allocation.allocationId || work.proposalId !== allocation.requiredProposalIds[0]) throw new Error("Wrong simulation work.");
   const client = new FleetClient({ rpcUrl: await readSecret("fleet-base-sepolia-rpc-url"), chainId: 84532, addresses: work.addresses, deploymentBlock: BigInt(work.startBlock) });
   await client.assertChain();
   const proposalId = BigInt(work.checkpoints?.at(-1)?.proposalId ?? work.proposalId);
