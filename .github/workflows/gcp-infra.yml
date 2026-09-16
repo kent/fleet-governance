@@ -5,7 +5,7 @@ on:
       action:
         description: Infrastructure operation
         type: choice
-        options: [plan, apply, configure-operators, provision-mcp, refresh-worker, provision-readside, inspect-history, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, deploy-token-governance, verify-token-governance, deploy-proposal-credits, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, verify-agent-experiment, prepare-simulation, launch-simulation, release-preparation, retry-preparation, inspect-simulation, recover-simulation-evidence]
+        options: [plan, apply, configure-operators, provision-mcp, refresh-worker, provision-readside, inspect-history, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, deploy-token-governance, deploy-bond-governance, verify-token-governance, deploy-proposal-credits, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, verify-agent-experiment, prepare-simulation, launch-simulation, release-preparation, retry-preparation, inspect-simulation, recover-simulation-evidence]
         default: plan
       image_revision:
         description: 'refresh-worker only: existing main-branch runner image revision (40 hex characters)'
@@ -148,6 +148,24 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm typecheck
           pnpm exec vitest run --project unit apps/runner/src/cloud/compute-policy.test.ts apps/runner/src/cloud/compute-controller.test.ts apps/runner/src/cloud/compute-admin.test.ts apps/runner/src/cloud/compute-task-gate.test.ts
+      - name: Deploy single-token Governor with participation bonds
+        if: inputs.action == 'deploy-bond-governance'
+        env:
+          FLEET_GCP_CLI_AUTH: '1'
+        run: |
+          npm install -g pnpm@11.9.0
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+          docker run --rm --user 0:0 -v "$PWD:/workspace" -w /workspace --entrypoint forge ghcr.io/foundry-rs/foundry:v1.7.1@sha256:8347b728d5d393dac1c018691b36f506d23b9dcd78341d40ea0fcb11c3a19cdd test --root contracts --match-contract ProposalBondsTest
+          node apps/runner/dist/cloud/deploy-bond-governance.js
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: inputs.action == 'deploy-bond-governance' && success()
+        with:
+          name: bond-governance-deployment
+          path: |
+            bond-governance-deployment.json
+            proposal-bonds-deployment.json
+          if-no-files-found: error
       - name: Deploy Governor with atomic ERC-20 proposal fees
         if: inputs.action == 'deploy-token-governance'
         env:
