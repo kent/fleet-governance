@@ -1,0 +1,50 @@
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { privateKeyToAccount } from "viem/accounts";
+import { ActivityAttestor, type ActivityAttestation } from "../pipeline/activity-attestation.js";
+import { agentRoster, simulationSnapshot } from "./simulation-view.js";
+import { googleRequest, readObject } from "./google.js";
+import { readComputeAllocation, readComputeAllocationById, readComputeState } from "./compute-store.js";
+import { readSimulationRequest, readSimulationWork } from "./simulation.js";
+
+vi.mock("./google.js", () => ({ BUCKET: "test-bucket", googleRequest: vi.fn(), readObject: vi.fn() }));
+vi.mock("./compute-store.js", () => ({ readComputeAllocation: vi.fn(), readComputeAllocationById: vi.fn(), readComputeState: vi.fn(), readComputeEvidence: vi.fn(async () => null) }));
+vi.mock("./simulation.js", () => ({ readSimulationRequest: vi.fn(), readSimulationWork: vi.fn(), simulationPath: (run: string) => run }));
+const current = "run-00000000-0000-4000-8000-000000000001";
+const previous = "run-00000000-0000-4000-8000-000000000002";
+const original = agentRoster[0]!.address;
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(readSimulationRequest).mockResolvedValue({ runId: current } as never);
+  vi.mocked(readComputeAllocation).mockResolvedValue({ runId: current, allocationId: "current" } as never);
+  vi.mocked(readComputeAllocationById).mockResolvedValue({ runId: previous, allocationId: "previous" } as never);
+  vi.mocked(readComputeState).mockResolvedValue({ value: { phase: "halted", observedVmStatus: "TERMINATED" } } as never);
+  vi.mocked(readObject).mockResolvedValue({ runId: previous });
+  vi.mocked(readSimulationWork).mockResolvedValue({ runId: previous, allocationId: "previous", taskId: "5" } as never);
+  vi.mocked(googleRequest).mockResolvedValue(new Response(JSON.stringify({ id: "123", status: "RUNNING", machineType: "zones/a/machineTypes/e2-standard-8" })));
+});
+afterEach(() => { agentRoster[0]!.address = original; });
+
+it("uses a historical run's saved allocation and VM observation instead of a later running worker", async () => {
+  const snapshot = await simulationSnapshot(previous);
+  expect(snapshot.isCurrentRun).toBe(false);
+  expect(snapshot.vm.status).toBe("TERMINATED");
+  expect(snapshot.allocation?.runId).toBe(previous);
+  expect(readComputeState).toHaveBeenCalledWith("previous");
+  expect(googleRequest).not.toHaveBeenCalled();
+  expect((await simulationSnapshot()).vm.status).toBe("RUNNING");
+});
+
+it("only verifies signatures bound to this task, run and registered agent wallet", async () => {
+  const key = `0x${"11".repeat(32)}` as const;
+  agentRoster[0]!.address = privateKeyToAccount(key).address;
+  const records: ActivityAttestation[] = [];
+  const signer = new ActivityAttestor({ key, runId: previous, chainId: 84532, taskId: 5n, agentId: 0, record: value => records.push(value) });
+  signer.record({ type: "review_started", task: "Review scope" }); await signer.flush();
+  vi.mocked(readObject).mockResolvedValue({ runId: previous, activity: records });
+  expect((await simulationSnapshot(previous)).activity).toEqual([expect.objectContaining({ signatureVerified: true })]);
+  vi.mocked(readSimulationWork).mockResolvedValue({ runId: previous, allocationId: "previous", taskId: "6" } as never);
+  expect((await simulationSnapshot(previous)).activity).toEqual([expect.objectContaining({ signatureVerified: false })]);
+  records[0]!.event = { type: "fabricated_result" };
+  vi.mocked(readSimulationWork).mockResolvedValue({ runId: previous, allocationId: "previous", taskId: "5" } as never);
+  expect((await simulationSnapshot(previous)).activity).toEqual([expect.objectContaining({ signatureVerified: false })]);
+});

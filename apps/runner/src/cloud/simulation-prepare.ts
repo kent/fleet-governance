@@ -71,7 +71,7 @@ try {
   if (timing.snapshot <= 0n || timing.deadline <= timing.snapshot || timing.deadline <= BigInt(Math.floor(Date.now() / 1000))) throw new Error("Confirmed proposal has no usable voting window.");
   step = "arming immutable compute allocation"; console.log(JSON.stringify({ event: "simulation_preparing", runId, step }));
   const allocation = await armComputeAllocation({ runId, governor: config.addresses.governor, requiredProposalIds: [proposal.proposalId.toString()], approvalSeconds: Math.max(300, Number(timing.deadline) - Math.floor(Date.now() / 1000) + 180) });
-  const work: SimulationWork = { schema: "fleet.simulation-work.v1", runId, allocationId: allocation.allocationId, chainId: 84532, addresses: config.addresses, proposalId: proposal.proposalId.toString(), proposeTxHash: proposal.txHash, taskId: task.taskId.toString(), startBlock: startBlock.toString(), goal, constitution, createdAt: new Date().toISOString() };
+  const work: SimulationWork = { schema: "fleet.simulation-work.v1", runId, allocationId: allocation.allocationId, chainId: 84532, addresses: config.addresses, proposalId: proposal.proposalId.toString(), proposeTxHash: proposal.txHash, taskId: task.taskId.toString(), startBlock: startBlock.toString(), goal, constitution, proposalTitle: fixture.trigger.summary, proposalBody: built.description, createdAt: new Date().toISOString() };
   step = "publishing work for the VM"; console.log(JSON.stringify({ event: "simulation_preparing", runId, step }));
   await writeControlObject(`simulations/${runId}/work.json`, work);
   console.log(JSON.stringify({ event: "simulation_prepared", runId, allocationId: allocation.allocationId, proposalId: work.proposalId }));

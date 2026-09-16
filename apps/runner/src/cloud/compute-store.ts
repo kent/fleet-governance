@@ -2,6 +2,7 @@ import { z } from "zod";
 import { CloudError, googleRequest } from "./google.js";
 import { ComputeAllocation } from "./compute-policy.js";
 import type { ComputeRecord } from "./compute-controller.js";
+import { GuardianObservation } from "./guardian-evidence.js";
 
 export const COMPUTE_BUCKET = "fleet-governance-control-449245570324";
 const uuid = z.string().uuid();
@@ -14,6 +15,9 @@ const recordSchema = z.object({
   blockNumber: z.string().regex(/^[0-9]+$/).optional(), blockHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(),
   stopRequestedAt: z.number().int().nonnegative().optional(), stoppedAt: z.number().int().nonnegative().optional(),
   observedVmStatus: z.string().optional(),
+  checkedAt: z.number().int().nonnegative().optional(),
+  observations: z.array(GuardianObservation).max(64).optional(),
+  stopAcceptedAt: z.number().int().nonnegative().optional(), stopOperationId: z.string().max(200).optional(),
 }).strict().refine(value => value.phase !== "halted" || (value.reason && value.haltedAt !== undefined), "A halt requires a reason and timestamp.");
 
 async function object(name: string): Promise<{ value: unknown; generation: string } | null> {
@@ -44,6 +48,10 @@ export async function readComputeState(allocationId: string): Promise<{ value: C
   // The source is JSON, so optional keys cannot contain JavaScript undefined. Zod's
   // inferred optional types include it; the persisted record type uses absent keys.
   return stored ? { value: recordSchema.parse(stored.value) as ComputeRecord, generation: stored.generation } : null;
+}
+export async function readComputeAllocationById(allocationId: string): Promise<ComputeAllocation | null> {
+  const stored = await object(`allocations/${uuid.parse(allocationId)}.json`);
+  return stored ? ComputeAllocation.parse(stored.value) : null;
 }
 export async function isComputeRunBlocked(runId: string): Promise<boolean> {
   if (!/^run-[0-9a-f-]{36}$/.test(runId)) throw new Error("Invalid compute run identity.");

@@ -28,15 +28,16 @@ function fixture() {
     }),
     observe: vi.fn(async () => observation),
     readVm: vi.fn(async () => ({ id: "123", status: "RUNNING" })),
-    stopVm: vi.fn(async () => { order.push("stop"); }), now: () => 1100,
+    stopVm: vi.fn(async () => { order.push("stop"); return { operationId: "operation-test" }; }), now: () => 1100,
   };
   return { deps, order, observation };
 }
 it("persists a failed vote before requesting a GCP stop and verifies TERMINATED separately", async () => {
   const { deps, order } = fixture();
   const pending = await reconcileComputeAllocation(policy, deps);
-  expect(order).toEqual(["save:halted", "stop"]);
-  expect(pending).toMatchObject({ reason: "vote_failed", stopRequestedAt: 1100 });
+  expect(order).toEqual(["save:halted", "stop", "save:halted"]);
+  expect(pending).toMatchObject({ reason: "vote_failed", stopRequestedAt: 1100, stopAcceptedAt: 1100, stopOperationId: "operation-test" });
+  expect(pending.observations?.[0]?.checks).toContainEqual(expect.objectContaining({ name: "Required approval", status: "fail" }));
   expect(pending.stoppedAt).toBeUndefined();
   vi.mocked(deps.readVm).mockResolvedValue({ id: "123", status: "STOPPING" });
   expect((await reconcileComputeAllocation(policy, deps)).stoppedAt).toBeUndefined();
@@ -48,10 +49,16 @@ it("keeps the halt after a stop API failure, and retries without needing a healt
   const { deps } = fixture();
   vi.mocked(deps.stopVm).mockRejectedValueOnce(new Error("Compute temporarily unavailable"));
   await expect(reconcileComputeAllocation(policy, deps)).rejects.toThrow("temporarily");
+  const failed = (await deps.readState())!.value;
+  expect(failed.phase).toBe("halted");
+  expect(failed.stopRequestedAt).toBe(1100);
+  expect(failed.stopAcceptedAt).toBeUndefined();
+  expect(failed.stoppedAt).toBeUndefined();
   vi.mocked(deps.observe).mockRejectedValue(new Error("RPC offline"));
   expect((await reconcileComputeAllocation(policy, deps)).phase).toBe("halted");
   expect(deps.observe).toHaveBeenCalledTimes(1);
   expect(deps.stopVm).toHaveBeenCalledTimes(2);
+  expect((await deps.readState())!.value.observations).toHaveLength(1);
 });
 it("stops a restarted worker without clearing the earlier failure", async () => {
   const { deps, observation } = fixture();

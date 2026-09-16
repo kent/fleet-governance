@@ -1,5 +1,4 @@
 import { closeSync, fsyncSync, mkdirSync, openSync, writeSync } from "node:fs";
-import pg from "pg";
 import { createWalletClient, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
@@ -8,18 +7,18 @@ import { FleetClient, FleetSigner, Keeper, MemoryNonceStore, NonceManager, Propo
 import { InferenceScheduler, MemoryJobStore, ModelPolicy, OpenRouterProvider, Worker } from "@fleet/agent-runtime";
 import { openInferenceJournal } from "../pipeline/inference-journal.js";
 import { withRunConstitution } from "../pipeline/constitution.js";
-import { insertVoteRow, triggerCplsJob } from "../pipeline/cpls-sync.js";
+import { ActivityAttestor, type ActivityAttestation } from "../pipeline/activity-attestation.js";
 import { DEMO_MODEL } from "../lib/demo-config.js";
 import { isComputeRunBlocked, readComputeAllocation, readComputeState } from "./compute-store.js";
 import { readSecret, writeObject } from "./google.js";
 import { readSimulationWork, simulationPath, SIMULATION_ROLES, SIMULATION_TASKS } from "./simulation.js";
 
 const runId = process.argv[2]!;
-const agents = SIMULATION_ROLES.map((role, agentId) => ({ agentId, role, task: SIMULATION_TASKS[agentId], phase: "waiting", address: "", vote: null as unknown, txHash: null as string | null }));
+const agents = SIMULATION_ROLES.map((role, agentId) => ({ agentId, name: `Agent${agentId + 1}`, role, task: SIMULATION_TASKS[agentId], phase: "waiting", address: "", vote: null as unknown, txHash: null as string | null }));
 let journal: ReturnType<typeof openInferenceJournal> | undefined;
 let inference: InferenceScheduler | undefined;
-let pool: pg.Pool | undefined;
-let status: Record<string, unknown> = { runId, scripted: false, model: DEMO_MODEL, agents, votes: [], terminal: false };
+const activity: ActivityAttestation[] = [];
+let status: Record<string, unknown> = { runId, scripted: false, model: DEMO_MODEL, agents, votes: [], activity, communication: { mode: "independent-reviews", messages: [] }, terminal: false };
 let writes = Promise.resolve();
 function progress(phase: string, message: string) {
   status = { ...status, phase, message, updatedAt: new Date().toISOString() };
@@ -50,7 +49,11 @@ try {
   const provider = new OpenRouterProvider({ apiKey: process.env.OPENROUTER_API_KEY!, model: DEMO_MODEL, maxAttempts: 1 });
   const proposalId = BigInt(work.proposalId);
   while (await client.getProposalState(proposalId) === ProposalState.Pending) await new Promise(resolve => setTimeout(resolve, 2000));
-  await Promise.all(agents.map(async agent => {
+  await Promise.allSettled(agents.map(async agent => {
+    const attestor = new ActivityAttestor({ key: bundle.keys[`FLEET_AGENT_KEY_${agent.agentId}`]!, runId, chainId: 84532,
+      taskId: BigInt(work.taskId), agentId: agent.agentId, record: value => { activity.push(value); } });
+    const attest = async (event: unknown) => { attestor.record(event); await attestor.flush(); };
+    try {
     const nonces = new NonceManager(new MemoryNonceStore(), rpcUrl);
     const signer = new FleetSigner({ privateKey: bundle.keys[`FLEET_AGENT_KEY_${agent.agentId}`]!, rpcUrl, nonces, policy: { chainId: 84532, governor: work.addresses.governor, ledger: work.addresses.ledger, token: work.addresses.token, maxFeePerGasWei: 100000000n, maxGas: 2000000n } });
     agent.address = signer.address;
@@ -58,24 +61,32 @@ try {
     const model = new ModelPolicy({ provider: inference!.wrap(scoped, { agentId: agent.agentId, model: DEMO_MODEL, purpose: "vote" }), promptVersion: "1" });
     const worker = new Worker({ agentId: agent.agentId, signer, client, jobs: new MemoryJobStore(), nonces, submissionMarginSec: 5, pollMs: 2000, policy: { evaluateProposal: async input => {
       if ((await readComputeState(work.allocationId))?.value.phase === "halted" || Date.now() / 1000 >= allocation.approvalDeadline) throw new Error("Compute authority closed before inference.");
-      agent.phase = "reviewing"; await progress("reviewing", "Agents are independently reviewing the charter, constitution and exact proposed action.");
+      agent.phase = "reviewing";
+      await attest({ type: "review_started", proposalId: work.proposalId, task: agent.task });
+      await progress("reviewing", "Agents are independently reviewing the charter, constitution and exact proposed action.");
       const result = await model.evaluateProposal(input);
+      await attest({ type: "review_decision", proposalId: work.proposalId, decision: result });
       agent.phase = "submitting"; await progress("voting", "Agents are submitting their own ballots and reasons to Base Sepolia.");
       return result;
     } } });
     const job = await worker.handleProposal(proposalId);
     agent.phase = job.state; agent.vote = job.vote; agent.txHash = job.txHash;
+    await attest({ type: job.state === "voted" ? "ballot_confirmed" : "review_finished", proposalId: work.proposalId,
+      state: job.state, vote: job.vote, txHash: job.txHash });
     status.inference = inference!.summary();
     await progress("voting", "Confirmed agent ballots are being collected from Base Sepolia.");
+    } catch {
+      agent.phase = "failed";
+      await attest({ type: "agent_failed", proposalId: work.proposalId, message: "This review could not finish. No approval is inferred." });
+      await progress("voting", "One review could not finish. Other agents continue independently; missing votes are not approval.");
+    }
   }));
   const votes = await client.listVotes(proposalId);
   status.votes = votes.map(vote => { const agent = agents.find(a => a.address.toLowerCase() === vote.voter.toLowerCase()); return { agentId: agent?.agentId, voter: vote.voter, directive: ["AGAINST", "FOR", "ABSTAIN"][vote.support], reason: vote.parsedReason, txHash: vote.txHash, blockNumber: vote.blockNumber.toString() }; });
   status.inference = inference.summary();
   await progress("voting", `${votes.length} actual ballots are confirmed. Waiting for the voting deadline and independent controller.`);
-  pool = new pg.Pool({ host: "127.0.0.1", port: 55432, user: "agora", password: process.env.POSTGRES_PASSWORD, database: "agora_web3" });
-  for (const vote of votes) await insertVoteRow(pool, { proposalId: work.proposalId, transactionHash: vote.txHash, blockNumber: vote.blockNumber, chainId: 84532, voter: vote.voter, support: vote.support, weight: vote.weight, reason: vote.reason, contract: work.addresses.governor });
-  await triggerCplsJob(fetch, "http://127.0.0.1:8001", { governor: work.addresses.governor, chainId: 84532 }, { timeoutMs: 120000 });
-  status.indexedVotes = votes.length;
+  // Goldsky and the independent governance VM index these receipts. Agent work
+  // never needs a local governance database to stay alive after a failed vote.
   const keeper = new Keeper({ client, addresses: work.addresses, wallet: createWalletClient({ account: privateKeyToAccount(bundle.keys.FLEET_KEEPER_KEY!), chain: baseSepolia, transport: http(rpcUrl) }), feeLimits: { maxFeePerGasWei: 100000000n, maxGas: 2000000n } });
   while (Date.now() / 1000 < allocation.approvalDeadline) {
     const state = await client.getProposalState(proposalId);
@@ -90,9 +101,13 @@ try {
     await keeper.reconcileProposal(proposalId);
     await new Promise(resolve => setTimeout(resolve, 3000));
   }
+  if (!status.terminal) {
+    status.terminal = true;
+    await progress("deadline", "The approval deadline closed. No more work is dispatched; the Guardian verifies the final state and enforces shutdown without settled approval.");
+  }
 } catch {
   status.terminal = true;
   await progress("failed", "The real run could not finish. Missing votes are not approval. The independent controller and native deadline remain in force.").catch(() => {});
   console.error("Real simulation worker failed. Private provider diagnostics withheld.");
   process.exitCode = 1;
-} finally { if (inference) await inference.close(); journal?.close(); if (pool) await pool.end(); }
+} finally { if (inference) await inference.close(); journal?.close(); }

@@ -1,9 +1,14 @@
 import { evaluateComputeAllocation, type ComputeAllocation, type ComputeObservation, type ComputeState } from "./compute-policy.js";
+import { guardianObservation, type GuardianObservation } from "./guardian-evidence.js";
 
 export type ComputeRecord = ComputeState & {
   stopRequestedAt?: number;
   stoppedAt?: number;
   observedVmStatus?: string;
+  checkedAt?: number;
+  observations?: GuardianObservation[];
+  stopAcceptedAt?: number;
+  stopOperationId?: string;
 };
 export type ComputeControllerDeps = {
   readState(): Promise<{ value: ComputeRecord; generation: string } | null>;
@@ -11,7 +16,7 @@ export type ComputeControllerDeps = {
   saveState(value: ComputeRecord, generation: string): Promise<boolean>;
   observe(): Promise<ComputeObservation>;
   readVm(): Promise<{ id: string; status: string }>;
-  stopVm(): Promise<void>;
+  stopVm(): Promise<void | { operationId: string }>;
   now(): number;
 };
 
@@ -35,11 +40,14 @@ export async function reconcileComputeAllocation(
     if (vm.id !== allocation.instanceId) {
       // Never apply an old policy to a replacement VM that happens to reuse its name.
       next = { allocationId: allocation.allocationId, phase: "halted", observedAt: now,
-        haltedAt: now, reason: "allocation_mismatch", observedVmStatus: "INSTANCE_REPLACED" };
+        haltedAt: saved?.value.haltedAt ?? now, reason: "allocation_mismatch", observedVmStatus: "INSTANCE_REPLACED", checkedAt: now };
+      next.observations = [...(saved?.value.observations ?? []), guardianObservation(allocation, observation, next, vm, now)].slice(-64);
       if (!await deps.saveState(next, saved?.generation ?? "0")) continue;
       return next;
     }
-    next = { ...next, observedVmStatus: vm.status };
+    next = { ...next, observedVmStatus: vm.status, checkedAt: now,
+      observations: saved?.value.phase === "halted" ? saved.value.observations ?? [] :
+        [...(saved?.value.observations ?? []), guardianObservation(allocation, observation, next, vm, now)].slice(-64) };
     if (next.phase !== "halted") {
       if (!await deps.saveState(next, saved?.generation ?? "0")) continue;
       return next;
@@ -54,7 +62,17 @@ export async function reconcileComputeAllocation(
     delete next.stoppedAt;
     next.stopRequestedAt = saved?.value.stopRequestedAt ?? now;
     if (!await deps.saveState(next, saved?.generation ?? "0")) continue;
-    if (vm.status === "RUNNING") await deps.stopVm();
+    if (vm.status === "RUNNING") {
+      const operation = await deps.stopVm();
+      // API acceptance is separate from intent and from observing TERMINATED.
+      // Never replace a concurrent state write using an outdated generation.
+      const latest = await deps.readState();
+      if (latest?.value.phase === "halted" && latest.value.allocationId === allocation.allocationId) {
+        const accepted = { ...latest.value, stopAcceptedAt: latest.value.stopAcceptedAt ?? deps.now(),
+          ...(operation ? { stopOperationId: operation.operationId } : {}) };
+        if (await deps.saveState(accepted, latest.generation)) next = accepted;
+      }
+    }
     return next;
   }
   throw new Error("Compute state changed concurrently; retry reconciliation.");

@@ -30,7 +30,10 @@ createServer(async (request, response) => {
         return observeComputeApproval(allocation, rpc);
       },
       readVm: async () => await (await googleRequest("compute", target)).json() as { id: string; status: string },
-      stopVm: async () => { await googleRequest("compute", `${target}/stop?noGracefulShutdown=true`, { method: "POST" }); },
+      stopVm: async () => {
+        const operation = await (await googleRequest("compute", `${target}/stop?noGracefulShutdown=true`, { method: "POST" })).json() as { name: string };
+        return { operationId: operation.name };
+      },
     });
     console.log(JSON.stringify({ event: "compute_policy_observed", ...state }));
     reply(200, state);

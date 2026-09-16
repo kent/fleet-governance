@@ -4,12 +4,11 @@ import path from "node:path";
 import { DEMO_DEFAULT_GOAL } from "../lib/demo-config.js";
 import { ACTIVE, RUN_ID, controlDeps, queueDemo, runPath, type DemoRun } from "./control.js";
 import { BUCKET, googleRequest, readObject } from "./google.js";
-import { readComputeAllocation, readComputeState, readComputeEvidence } from "./compute-store.js";
-
-import { queueSimulation, readSimulationRequest, readSimulationWork, simulationPath } from "./simulation.js";
+import { queueSimulation } from "./simulation.js";
 
 import { siteAccess, authorisedRequest, publicProxyPath, publicSnapshot } from "./site-access.js";
 import { readProposalDocument } from "./proposal-view.js";
+import { simulationHistory, simulationProposal, simulationSnapshot } from "./simulation-view.js";
 
 const root = process.cwd();
 const access = siteAccess(process.env.FLEET_SITE_ACCESS);
@@ -38,17 +37,16 @@ createServer(async (request, response) => {
       json(response, 403, { error: "Starting or changing a run requires the operator controls.", operatorUrl }); return;
     }
     if (request.method === "HEAD") request.method = "GET";
+    if (url.pathname === "/api/simulation-runs" && request.method === "GET") { json(response, 200, { runs: await simulationHistory() }); return; }
+    const simulationProposalMatch = /^\/api\/simulation-proposals\/([0-9]{1,78})$/.exec(url.pathname);
+    if (simulationProposalMatch && request.method === "GET") {
+      const context = await simulationProposal(simulationProposalMatch[1]!);
+      json(response, context ? 200 : 404, context ?? { error: "No run context recorded for this proposal." }); return;
+    }
     if (url.pathname === "/api/compute-policy" && request.method === "GET") {
-      const allocation = await readComputeAllocation();
-      const state = allocation ? await readComputeState(allocation.allocationId) : null;
-      const [vm, evidence] = await Promise.all([
-        googleRequest("compute", "compute/v1/projects/fleet-governance/zones/us-central1-a/instances/fleet-research").then(async r => await r.json() as { id: string; status: string; machineType: string }),
-        readComputeEvidence(),
-      ]);
-      const simulation = await readSimulationRequest();
-      const simulationStatus = simulation ? await readObject(simulationPath(simulation.runId)) : null;
-      const simulationWork = simulation ? await readSimulationWork(simulation.runId) : null;
-      json(response, 200, { simulation, simulationStatus, simulationWork, allocation, state: state?.value ?? null, vm: { id: vm.id, status: vm.status, machineType: vm.machineType.split("/").pop() }, evidence, observedAt: new Date().toISOString() }); return;
+      const runId = url.searchParams.get("runId");
+      if (runId && !/^run-[0-9a-f-]{36}$/.test(runId)) { json(response, 400, { error: "Invalid run identity." }); return; }
+      json(response, 200, await simulationSnapshot(url.searchParams.get("runId") ?? undefined)); return;
     }
     if (url.pathname === "/api/simulations" && request.method === "POST") {
       json(response, 202, await queueSimulation(String(request.headers["idempotency-key"] ?? ""))); return;

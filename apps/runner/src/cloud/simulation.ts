@@ -13,6 +13,7 @@ export type SimulationWork = {
   schema: "fleet.simulation-work.v1"; runId: string; allocationId: string; chainId: 84532;
   addresses: FleetAddresses; proposalId: string; proposeTxHash: string; taskId: string;
   startBlock: string; goal: string; constitution: string; createdAt: string;
+  proposalTitle?: string; proposalBody?: string;
 };
 export const SIMULATION_ROLES = ["planner", "engineer", "critic", "budget-reviewer", "safety-reviewer"];
 export const SIMULATION_TASKS = [
