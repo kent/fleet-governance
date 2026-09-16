@@ -18,6 +18,7 @@ it("checks only the fixed live tools and limits, without creating experiments", 
   m.list.mockResolvedValue({ tools: Array(10).fill({}) });
   m.call.mockResolvedValue({ content: [{ text: JSON.stringify({ maxAgents: 5, maxRunBudgetUsd: 1, modelPoolUsd: 50 }) }] });
   expect(await checkMcpConnection("operator1@example.com", { token })).toMatchObject({ connected: true, toolCount: 10, launchedExperiments: 0 });
-  expect(m.call).toHaveBeenCalledExactlyOnceWith({ name: "experiment_defaults", arguments: {} });
+  expect(m.call).toHaveBeenCalledTimes(1);
+  expect(m.call).toHaveBeenCalledWith({ name: "experiment_defaults", arguments: {} });
   expect(m.close).toHaveBeenCalled();
 });
