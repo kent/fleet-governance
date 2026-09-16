@@ -11,7 +11,7 @@ beforeEach(() => {
     previousHash: sequence ? `digest-${sequence - 1}` : `0x${"0".repeat(64)}`, digest: `digest-${sequence}`, event: { type: "work_report", checkpoint: Math.floor(sequence / 2) } })));
   input = { work: { runId: "run-test", taskId: "1", checkpoints: [{ proposalId: "1" }, { proposalId: "2" }, { proposalId: "3" }] },
     allocation: { instanceId: "7" }, state: { reason: "vote_failed", failedProposalId: "3", stopRequestedAt: 100, stopAcceptedAt: 101, stoppedAt: 120 }, vm: { id: "7", status: "TERMINATED" },
-    progress: { runId: "run-test", scripted: false, activity, events: [...Array.from({ length: 2 }, () => ({ type: "checkpoint.released" })), ...Array.from({ length: 3 }, () => ({ type: "work.resumed" }))] },
+    progress: { runId: "run-test", scripted: false, activity, inference: { callsStarted: 45, callsCompleted: 45, budget: { maxCostUsd: 1, chargedCostUsd: 0.02, reservationBreached: false } }, events: [...Array.from({ length: 2 }, () => ({ type: "checkpoint.released" })), ...Array.from({ length: 3 }, () => ({ type: "work.resumed" }))] },
     client: { getProposalCreated: vi.fn(async () => ({ description: undefined, txHash: "0xproposal" })), listVotes: vi.fn(async () => roster.map((agent: any) => ({ voter: agent.address, support: 1, parsedReason: { rationale: "test" }, blockNumber: 1n, txHash: "0xtest" }))),
       getProposalState: vi.fn(async (id: bigint) => id === 3n ? 3 : 7), publicClient: { getBlock: vi.fn(async () => ({ timestamp: 50n })) } },
   } as unknown as Parameters<typeof verifyCollective>[0];

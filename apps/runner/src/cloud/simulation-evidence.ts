@@ -24,7 +24,10 @@ try {
   try { await assertComputeStartAllowed(); } catch { restartDenied = true; }
   if (!restartDenied) throw new Error("Restart was not denied.");
   const members = await client.listMembers();
-  const evidence = { ...progress, ...work, ...(collective ?? {}), proposalId: proposalId.toString(), scripted: false, outcome: "Defeated", allocation, controller: state.value, vm: { id: vm.id, status: vm.status },
+  const finalCheckpoint = work.checkpoints?.at(-1);
+  const evidence = { ...progress, ...work, ...(collective ?? {}),
+    ...(finalCheckpoint ? { proposalTitle: finalCheckpoint.proposalTitle, proposalBody: finalCheckpoint.proposalBody, proposeTxHash: collective?.rounds.at(-1)?.txHash } : {}),
+    proposalId: proposalId.toString(), scripted: false, outcome: "Defeated", allocation, controller: state.value, vm: { id: vm.id, status: vm.status },
     votes: votes.map(vote => ({ agentId: members.find(m => m.account.toLowerCase() === vote.voter.toLowerCase())?.agentId, voter: vote.voter, directive: ["AGAINST", "FOR", "ABSTAIN"][vote.support], txHash: vote.txHash, blockNumber: vote.blockNumber.toString(), reason: vote.parsedReason })),
     restartDenied, workflowRun: process.env.GITHUB_RUN_ID, observedAt: new Date().toISOString() };
   writeFileSync("compute-drill-evidence.json", JSON.stringify(evidence, null, 2));

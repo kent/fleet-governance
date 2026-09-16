@@ -17,6 +17,10 @@ export async function verifyCollective(input: { work: SimulationWork; allocation
     || !state.stopRequestedAt || !state.stopAcceptedAt || !state.stoppedAt || vm.id !== allocation.instanceId || vm.status !== "TERMINATED"
     || state.stopRequestedAt > state.stopAcceptedAt || state.stopAcceptedAt > state.stoppedAt
     || progress.scripted !== false || progress.runId !== work.runId) throw new Error("Incomplete collective shutdown evidence.");
+  const inference = progress.inference as { callsStarted?: number; callsCompleted?: number; budget?: { maxCostUsd?: number; chargedCostUsd?: number; reservationBreached?: boolean } } | undefined;
+  if (!inference || (inference.callsCompleted ?? 0) < 45 || (inference.callsStarted ?? Infinity) > 80
+    || inference.budget?.maxCostUsd !== 1 || !Number.isFinite(inference.budget.chargedCostUsd)
+    || inference.budget.chargedCostUsd! > 1 || inference.budget.reservationBreached !== false) throw new Error("Model accounting acceptance checks failed.");
   const roster = JSON.parse(readFileSync("experiments/compute/agent-roster.json", "utf8")) as { agentId: number; address: string }[];
   const activity = progress.activity as ActivityAttestation[];
   if (!Array.isArray(activity) || !activity.length) throw new Error("No signed agent activity.");
@@ -54,6 +58,7 @@ export async function verifyCollective(input: { work: SimulationWork; allocation
       phase: index < 2 ? "approved" : "denied", outcome: index < 2 ? "Executed" : "Defeated", votes: receipts });
   }
   return { rounds, activity, verified: { actualModelReports: 30, independentlyReadBallots: 15, executedCheckpoints: 2,
-    rejectedCheckpoint: checkpoints[2]!.proposalId, signedActivityRecords: activity.length, stopAcceptedAt: state.stopAcceptedAt,
+    rejectedCheckpoint: checkpoints[2]!.proposalId, signedActivityRecords: activity.length, modelCalls: inference.callsCompleted,
+    chargedCostUsd: inference.budget.chargedCostUsd, stopAcceptedAt: state.stopAcceptedAt,
     stoppedAt: state.stoppedAt, qualification: "Signed activity attributes worker claims. Chain state and GCP state were read independently." } };
 }
