@@ -1,5 +1,6 @@
 # Fleet Governance
 
+
 **Five agents. Public votes. An off switch they don't control.**
 
 Give the agents a task. Watch them work, compare findings and ask for permission. An approved
