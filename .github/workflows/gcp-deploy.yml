@@ -188,10 +188,10 @@ jobs:
           }))
           PYCONFIG
           cp -a infra/indexer infra/gcp/runtime/indexer
-          gcloud compute scp --recurse infra/gcp/runtime fleet-readside:~/fleet-history-runtime \
+          gcloud compute scp --recurse infra/gcp/runtime "fleet-readside:~/fleet-history-runtime-$GITHUB_RUN_ID" \
             --zone=us-central1-a --tunnel-through-iap --quiet
           gcloud compute ssh fleet-readside --zone=us-central1-a --tunnel-through-iap --quiet \
-            --command="sudo bash \$HOME/fleet-history-runtime/deploy-history.sh '$IMAGE_RUNNER' '$IMAGE_REVISION' bootstrap"
+            --command="sudo bash \$HOME/fleet-history-runtime-$GITHUB_RUN_ID/deploy-history.sh '$IMAGE_RUNNER' '$IMAGE_REVISION' bootstrap"
       - name: Deploy authenticated Goldsky transport
         if: inputs.history_only
         run: |
@@ -214,7 +214,7 @@ jobs:
         if: inputs.history_only
         run: |
           gcloud compute ssh fleet-readside --zone=us-central1-a --tunnel-through-iap --quiet \
-            --command="sudo bash \$HOME/fleet-history-runtime/deploy-history.sh '$IMAGE_RUNNER' '$IMAGE_REVISION' serve"
+            --command="sudo bash \$HOME/fleet-history-runtime-$GITHUB_RUN_ID/deploy-history.sh '$IMAGE_RUNNER' '$IMAGE_REVISION' serve"
       - name: Deploy public viewing and protected operator controls
         run: bash infra/gcp/deploy-site.sh
       - name: Prepare worker configuration

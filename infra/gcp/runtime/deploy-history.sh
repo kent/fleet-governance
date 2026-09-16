@@ -7,6 +7,10 @@ stage=${3:-bootstrap}
 [[ "$image" =~ ^us-central1-docker\.pkg\.dev/fleet-governance/fleet/runner@sha256:[a-f0-9]{64}$ ]]
 [[ "$revision" =~ ^[a-f0-9]{40}$ ]]
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+python3 - "$script_dir/history-config.json" "$image" <<'PY'
+import json, sys
+assert json.load(open(sys.argv[1]))['FLEET_RUNNER_IMAGE'] == sys.argv[2], 'Stale history release configuration'
+PY
 exec 9>/run/fleet-history-deployment.lock
 flock -n 9
 # Refuse to install history services on the governed worker.
