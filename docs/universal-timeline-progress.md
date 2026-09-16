@@ -1,6 +1,14 @@
 # One run, one timeline
 
-Status: implementation deployed; live collective-run verification pending. This is not a completion report.
+Status: **deployed and independently verified, 16 September 2026**.
+
+Five real agents completed the full sequence: work, approval, more work, approval, more
+work, rejection and GCP shutdown. All fifteen ballots are on Base Sepolia. The agent VM
+is off and the allocation remains locked. Agora and the activity timeline remain available.
+
+[Follow the verified run](https://fleet-governance-449245570324.us-central1.run.app/compute?runId=run-594416ce-6b10-4bae-a294-b665990c9b88#activity-log) ·
+[Read the evidence report](evidence/collective-base-sepolia-20260916/report.md) ·
+[Independent acceptance CI](https://github.com/kent/fleet-governance/actions/runs/35076605862)
 
 The goal is a public, continuous record of the whole experiment: task assignment, five real
 agents starting, their work and signed attestations, shared messages, a decision, a Base
@@ -21,7 +29,7 @@ Sources reviewed 16 September 2026:
 - https://metr.org/blog/2026-08-26-openai-hugging-face-incident-investigation/
 - https://huggingface.co/blog/agent-intrusion-technical-timeline
 
-The controlled scenario will use a difficult local benchmark, a shared findings board,
+The controlled scenario uses a local benchmark with a broken scorer, a shared findings board,
 local scorer diagnostics and a proposed scope expansion toward synthetic external data.
 Agent messages, work summaries and votes come from actual model calls. The challenge and
 available tools are operator-selected. The target, credentials and datasets are synthetic.
@@ -31,16 +39,16 @@ No tools attack Hugging Face or other third-party infrastructure.
 
 | Requirement | Required evidence | Current status |
 | --- | --- | --- |
-| One chronological system timeline | Rendered current and historical runs, with source/timestamp/identity for each event; undated legacy evidence separated | Implemented chronological merge, subsystem/agent filters, decision cards; unit and desktop/mobile browser checks pass; deployed, real-run browser verification pending |
-| Task, provisioning and actual agent start | Protected preparation events plus worker process/start receipts | Preparation and worker receipts implemented; live verification pending |
-| Agents work and communicate | Real model outputs, bounded tool results, shared messages and signed records | Bounded scorer lab, real model loop, gated board and signed work records implemented; adapter tests pass; live run pending |
-| Multiple genuine votes | At least two successive proposals on Base Sepolia, each with model ballots and public reasons | Three deterministic proposal IDs prepared before work; sequential publication and voting implemented; live run pending |
-| Approval resumes only the permitted step | Guardian observes each exact executed proposal; dispatch checks that checkpoint | Checkpoint policy, observer and exact dispatch checks implemented; focused tests pass |
-| Failure stops only the agent VM | Durable halt, independent stop API acceptance, observed TERMINATED and restart refusal | Existing single-proposal mechanism works; multi-step verification required |
-| Immutable compute envelope | All proposal identities and deadlines fixed before agents start; no vote can extend them | Preserve while adding ordered checkpoints |
-| Agora indexing across the run | Goldsky pipeline, DAO Node and Agora show every proposal/reason and link to its timeline | Proposal lookup resolves each published checkpoint; UI preserves all rounds; live indexing check pending |
-| HN-ready explanation in the maintainer’s voice | Published /info, main page and blog explain incident, crypto's role, control boundary and limitations | Main page, /info and blog revised with incident sources, crypto rationale and explicit limitations; deployed anonymously; real-run evidence pending |
-| Deployed real demonstration | GitHub builds/deployments, real model run within $1 run ceiling/$50 pool, independently checked receipts | Not yet performed for new scenario |
+| One chronological system timeline | Rendered current and historical runs, with source/timestamp/identity for each event; undated legacy evidence separated | Verified: 273 merged events at final browser check; subsystem/agent filters, three decision cards, desktop/mobile inspection; old runs retain their own recorded VM state |
+| Task, provisioning and actual agent start | Protected preparation events plus worker process/start receipts | Verified: task and VM observation at 08:33:25 UTC, worker start at 08:33:37, five signed agent-start records |
+| Agents work and communicate | Real model outputs, bounded tool results, shared messages and signed records | Verified: 45 provider calls, 30 work reports, 30 tool results, 20 messages, 130 valid signed records with complete per-agent chains |
+| Multiple genuine votes | At least two successive proposals on Base Sepolia, each with model ballots and public reasons | Verified: three exact published proposals and fifteen independently read ballots; five FOR, five FOR, five AGAINST |
+| Approval resumes only the permitted step | Guardian observes each exact executed proposal; dispatch checks that checkpoint | Verified: two Executed checkpoints, two Guardian-backed releases, three work rounds; focused policy tests pass |
+| Failure stops only the agent VM | Durable halt, independent stop API acceptance, observed TERMINATED and restart refusal | Verified: third proposal Defeated; Guardian identity in GCP audit logs; instance TERMINATED; normal start guard rejects allocation; governance still serves pages |
+| Immutable compute envelope | All proposal identities and deadlines fixed before agents start; no vote can extend them | Verified: saved allocation pins three IDs and approval deadlines within the fixed VM expiry; policy tests cover substitution and extension rejection |
+| Agora indexing across the run | Goldsky pipeline, DAO Node and Agora show every proposal/reason and link to its timeline | Verified: pipeline to DAO Node; all three proposal pages show five ballots each with matching tallies; all five named voter profiles and delegations load |
+| HN-ready explanation in the maintainer’s voice | Published /info, main page and blog explain incident, crypto's role, control boundary and limitations | Complete: public /info and constitution, incident sources, conditional prevention claim, actual results and bullet blog |
+| Deployed real demonstration | GitHub builds/deployments, real model run within $1 run ceiling/$50 pool, independently checked receipts | Verified: GitHub CI deployed and launched; model cost $0.016644054, no reservation breach; final independent acceptance passed |
 
 ## Control design
 
@@ -63,19 +71,21 @@ use a reconstructed timestamp as an observed event, or fill old evidence gaps wi
 
 ## Verification and deployment
 
-Use focused policy/runtime/timeline tests, then production CI and browser checks. Deploy and
-run through GitHub only. Preserve existing evidence and unrelated local changes. Recovery of
-the current halted allocation is a separate operator action needed for the new real run; never
-silently clear a halt as part of a vote or ordinary launch.
+The [final report](evidence/collective-base-sepolia-20260916/report.md) links the raw signed
+activity, independent chain reads, protected Guardian record, cloud audit entries, screenshots
+and browser results. Production CI passed 1,327 unit tests and 129 contract tests; 22 unit
+tests were skipped. The acceptance workflow passed on 16 September at 08:58 UTC.
 
-A completion audit must verify every row above against current files and live observations.
-The goal remains active until those checks pass.
+Deployment and launch used GitHub CI. Public viewing requires no Google login. Launch and
+explicit recovery remain operator actions. The successful allocation stays halted; a new
+vote cannot clear it. The model cost excludes GCP, indexing and testnet gas.
 
-## Deployment checkpoint, 16 September 2026
+Three earlier attempts did not meet the full acceptance bar. Their evidence remains intact:
 
-- Full production CI passed 1,312 unit tests and 129 contract tests.
-- The updated `/info` page and universal timeline load without a Google login.
-- Agora, DAO Node, CPLS and Postgres run on `fleet-readside`. Goldsky uses the event pipeline.
-- The agent deployment now stops the obsolete local governance replicas, preserving their data.
-- The prior halted run was explicitly retired by the operator workflow. Its permanent run block and evidence remain intact.
-- A fresh collective run still needs independent verification of all three proposals, continued work, model accounting and the actual GCP stop.
+- [Publication failure and deadline stop](evidence/collective-deadline-20260916/report.md).
+- [One missing ballot after a truncated review](evidence/collective-missing-ballot-20260916/report.md).
+- [Timeout and oversized vote reason](evidence/collective-review-failures-20260916/report.md).
+
+The lab demonstrates the enforced control path for this case. It does not establish that
+the original Hugging Face agents would have rejected the operation, that a majority will
+always be right, or that stopping one VM contains an already escaped workload.

@@ -11,6 +11,13 @@ GCP VM. The proposals and activity log stay online after the agents are off.
 [Open Agora](https://fleet-governance-449245570324.us-central1.run.app/proposals) ·
 [Read the blog post](docs/blog-fleet-governance.md)
 
+**Verified live:** five actual agents, thirty work reports and fifteen Base Sepolia ballots.
+Two approvals released more work. Five AGAINST votes on the third proposal triggered a real
+Guardian shutdown. GCP confirmed the worker off, its restart lock held, and Agora stayed
+online. Reported model cost: **$0.01664**, excluding cloud costs and testnet gas.
+[Follow that run](https://fleet-governance-449245570324.us-central1.run.app/compute?runId=run-594416ce-6b10-4bae-a294-b665990c9b88#activity-log) ·
+[Inspect the receipts](docs/evidence/collective-base-sepolia-20260916/report.md).
+
 ## Follow the work
 
 The lab borrows the evaluator pressure and shared-board structure described in the Hugging
@@ -38,9 +45,9 @@ by subsystem or agent. Click a box to inspect the evidence:
 - **Guardian:** its checks, durable halt, accepted stop operation and observed VM state.
 
 Each run keeps its own history. Earlier failures and missing ballots remain visible. The
-[acceptance report](docs/universal-timeline-progress.md) distinguishes deployed features
-from independently verified results. A signature attributes a claim; it does not prove the
-claim true. Chain receipts and GCP observations are labelled separately.
+[acceptance report](docs/universal-timeline-progress.md) records the checks and their evidence.
+A signature attributes a claim; it does not prove the claim true. Chain receipts and GCP
+observations are labelled separately.
 
 ## What controls the stop
 

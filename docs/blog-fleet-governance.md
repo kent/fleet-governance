@@ -8,7 +8,7 @@
 
 - **The vote has to control the machine.**
 
-- The experiment starts with five agents and a small local benchmark. The supplied evaluator is broken: it reads the wrong field, so even a correct answer receives a failing score. The agents have something real to investigate. They choose tools, run bounded tests, compare results and record their findings.
+- The experiment starts with five agents and a small local benchmark. The supplied evaluator is broken: submissions use `answer`, but the scorer reads `result`. Even a correct sum receives a failing score. The agents have something real to investigate. They choose tools, run bounded tests, compare results and record their findings.
 
 - Agent1 coordinates. Agent2 tests candidate implementations. Agent3 checks the evaluator. Agent4 watches the fixed budget. Agent5 checks scope. Each has a signing wallet. They all use Muse Spark through OpenRouter, so different assignments do not make them independent sources of judgement.
 
@@ -38,9 +38,11 @@
 
 - A later vote cannot turn the agents back on. A human has to retire the old allocation through the operator workflow and request a new run. The old run remains blocked, with its evidence intact. Each new run has a $1 model ceiling within the existing $50 pool.
 
-- We already have one live shutdown case: five actual reviewers, five votes AGAINST and a stopped GCP worker. The Guardian recorded the halt 13 seconds after the voting deadline. It saved the TERMINATED observation 121 seconds after its stop request. GitHub checked the chain, cloud audit log and restart refusal. The model calls cost $0.0039782. That proves that particular case. It does not prove every failure mode. [Earlier stop test and receipts](evidence/compute-base-sepolia-20260915/report.md)
+- **We ran the whole sequence.** Five FOR votes opened the board. Five FOR votes opened the local diagnostics. The agents continued working after each approval. Then all five voted AGAINST the borrowed credential. Thirty work reports. Twenty messages. Fifteen actual Base Sepolia ballots. The Guardian stopped the GCP worker. Agora stayed online. [Follow the recorded run](https://fleet-governance-449245570324.us-central1.run.app/compute?runId=run-594416ce-6b10-4bae-a294-b665990c9b88#activity-log)
 
-- The newer collective lab adds the missing middle: work, approval, more work and another decision. Its acceptance check requires two executed proposals, continued agent work, a third defeated proposal and independent shutdown evidence. The latest verification status belongs beside the run, not hidden in a launch claim. [Implementation and acceptance status](universal-timeline-progress.md)
+- GCP accepted the stop at 08:55:01 UTC on September 16. The Guardian recorded TERMINATED at 08:56:01. GitHub independently checked the votes, signatures, VM state, cloud audit log and restart refusal. The 45 model calls cost **$0.01664**, about 1.66 cents, excluding cloud costs and testnet gas. The $1 run ceiling and $50 pool stayed unchanged. [Read the receipts](evidence/collective-base-sepolia-20260916/report.md)
+
+- It took several attempts to get the whole record right. One run lost its publication path and hit a deadline. Another missed a ballot after a truncated response. A third exposed a timeout and an oversized vote reason. Those incomplete runs are still there. We fixed the failures and used a fresh allocation. We didn't fill in the missing votes. [Earlier attempts](evidence/collective-base-sepolia-20260916/report.md#earlier-failures-stay-in-the-record)
 
 - **Could this have stopped the Hugging Face incident?** It could have blocked a disputed operation if every route to that resource required independently enforced approval, and the required vote failed. That's a conditional claim. The controlled lab doesn't establish how the original agents would have voted.
 
