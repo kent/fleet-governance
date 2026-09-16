@@ -5,7 +5,7 @@ on:
       action:
         description: Infrastructure operation
         type: choice
-        options: [plan, apply, provision-readside, inspect-history, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, deploy-proposal-credits, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, verify-agent-experiment, prepare-simulation, launch-simulation, release-preparation, retry-preparation, inspect-simulation, recover-simulation-evidence]
+        options: [plan, apply, provision-mcp, provision-readside, inspect-history, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, deploy-proposal-credits, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, verify-agent-experiment, prepare-simulation, launch-simulation, release-preparation, retry-preparation, inspect-simulation, recover-simulation-evidence]
         default: plan
       machine_type:
         description: Pilot VM type
@@ -320,7 +320,7 @@ jobs:
           gcloud compute scp infra/gcp/runtime/inspect-vm.py "fleet-research:~/$remote" --zone=us-central1-a --tunnel-through-iap --quiet
           gcloud compute ssh fleet-research --zone=us-central1-a --tunnel-through-iap --quiet --command="sudo python3 \$HOME/$remote"
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
-        if: inputs.action == 'plan' || inputs.action == 'apply' || inputs.action == 'provision-readside'
+        if: inputs.action == 'plan' || inputs.action == 'apply' || inputs.action == 'provision-readside' || inputs.action == 'provision-mcp'
         with:
           terraform_version: 1.16.2
           terraform_wrapper: false
@@ -348,6 +348,27 @@ jobs:
           terraform output -json > foundation-outputs.json
           gcloud storage cp foundation-outputs.json gs://fleet-governance-artifacts-449245570324/foundation/outputs.json
           terraform output >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Provision only MCP identities, immutable authorisations and private credentials
+        if: inputs.action == 'provision-mcp'
+        working-directory: infra/gcp
+        run: |
+          terraform fmt -check
+          terraform init -input=false
+          terraform validate
+          terraform plan -input=false -out=mcp.tfplan
+          terraform show -json mcp.tfplan > mcp-plan.json
+          python3 - <<'PY'
+          import json
+          for resource in json.load(open('mcp-plan.json')).get('resource_changes', []):
+              actions = resource['change']['actions']
+              if actions in [['no-op'], ['read']]:
+                  continue
+              if not resource['name'].startswith(('mcp', 'operator_auth', 'operator_batch')) or 'delete' in actions:
+                  raise SystemExit('Unexpected infrastructure mutation: ' + resource['address'])
+              print(resource['address'], actions)
+          PY
+          terraform apply -input=false mcp.tfplan
 
       - name: Provision only the independent history resources
         if: inputs.action == 'provision-readside'

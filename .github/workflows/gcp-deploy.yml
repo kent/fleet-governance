@@ -159,6 +159,9 @@ jobs:
       - name: Deploy independent compute governance controller
         if: ${{ !inputs.site_only && !inputs.history_only }}
         run: bash infra/gcp/deploy-compute-controller.sh
+      - name: Deploy authenticated MCP endpoint
+        if: ${{ !inputs.history_only }}
+        run: bash infra/gcp/deploy-mcp.sh
       - name: Deploy fixed simulation preparation job
         if: ${{ !inputs.site_only && !inputs.history_only }}
         run: bash infra/gcp/deploy-simulation.sh
