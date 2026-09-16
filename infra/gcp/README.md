@@ -61,7 +61,7 @@ A stale heartbeat is shown as stale. It is not treated as success. Review a fail
 
 ## Identity and secrets
 
-`fleet-provisioner` has project Owner access, as requested. GitHub uses Workload Identity Federation, with no service account JSON key. The provider accepts repository ID `1370431845`, owner ID `12737`, `refs/heads/main`, and manual executions of `gcp-infra.yml` or `gcp-deploy.yml`. Fork and pull-request jobs cannot obtain this identity.
+`fleet-provisioner` has project Owner access, as requested. GitHub uses Workload Identity Federation, with no service account JSON key. The provider accepts repository ID `1370431845`, owner ID `12737`, `refs/heads/main`, and manual executions of `gcp-infra.yml` or `gcp-deploy.yml`. It also accepts scheduled or manual executions of the exact `experiment-batches.yml` path on main. That workflow can advance only a protected, finite plan already approved by an allowed human. Fork and pull-request jobs cannot obtain this identity.
 
 `fleet-runtime` can read the experiment's secrets, pull images, write the two data buckets and emit logs and metrics. `fleet-control` can start only the fixed worker and access experiment queue records. Neither runtime identity can provision resources.
 

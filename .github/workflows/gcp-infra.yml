@@ -349,6 +349,10 @@ jobs:
           gcloud storage cp foundation-outputs.json gs://fleet-governance-artifacts-449245570324/foundation/outputs.json
           terraform output >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Allow the pinned batch workflow to use GitHub federation
+        if: inputs.action == 'provision-mcp'
+        run: bash infra/gcp/authorise-batch-workflow.sh
+
       - name: Provision only MCP identities, immutable authorisations and private credentials
         if: inputs.action == 'provision-mcp'
         working-directory: infra/gcp
