@@ -30,8 +30,9 @@ async function refreshProposal() {
         votes.set(agent.agentId, { agentId: agent.agentId, directive: agent.vote.support, reason: agent.vote, txHash: agent.txHash });
       }
     }
-    $("run-phase").textContent = state?.phase === "halted" ? "Compute authority closed" : (record.phase || "Recorded run").replaceAll("-", " ");
-    $("run-message").textContent = state?.phase === "halted" ? "The Guardian saved a durable halt. Another vote cannot restart this allocation." : record.message || "The run's available evidence is preserved here.";
+    const incomplete = record.terminal && !["approved", "denied"].includes(record.phase);
+    $("run-phase").textContent = state?.phase === "halted" ? "Compute authority closed" : incomplete ? "Run ended before completing" : (record.phase || "Recorded run").replaceAll("-", " ");
+    $("run-message").textContent = state?.phase === "halted" ? "The Guardian saved a durable halt. Another vote cannot restart this allocation." : incomplete ? "Confirmed ballots are preserved below. Missing votes are not approval; the Guardian still enforces the allocation." : record.message || "The run's available evidence is preserved here.";
     $("proposal-run").textContent = record.runId || data.simulation?.runId || "Pending";
     $("proposal-worker").textContent = isCurrent ? data.vm?.status || "Unknown" : `${record.vm?.status || "Unknown"} (recorded)`;
     $("proposal-guardian").textContent = state?.reason || state?.phase || "Awaiting first check";

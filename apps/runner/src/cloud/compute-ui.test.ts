@@ -19,6 +19,20 @@ const click = (id: string) => document.getElementById(id)!.click();
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); document.documentElement.innerHTML = ""; });
 describe("compute evidence display", () => {
+  it("preserves partial receipts and never animates finished agents with an old submitting phase", async () => {
+    await load({ allocation, state: { phase: "voting", observedAt: now }, vm: { status: "RUNNING" }, simulation: { runId: "actual" },
+      simulationStatus: { phase: "voting", terminal: true, updatedAt: new Date().toISOString(), agents: [
+        { agentId: 0, phase: "voted", txHash: `0x${"a".repeat(64)}`, vote: { support: "AGAINST", rationale: "Out of scope" } },
+        { agentId: 1, phase: "submitting" },
+      ], votes: [] } });
+    expect(document.getElementById("against-count")?.textContent).toBe("1");
+    expect(document.getElementById("ballots")?.textContent).toContain("Out of scope");
+    expect(document.getElementById("state-label")?.textContent).toBe("RUN NEEDS ATTENTION");
+    expect(document.querySelector(".workers")?.getAttribute("data-busy")).toBe("false");
+    expect(document.querySelectorAll(".agent.running")).toHaveLength(0);
+    expect(document.getElementById("ballot-connector")?.classList.contains("flowing")).toBe(false);
+    expect(document.getElementById("agent-1")?.textContent).toContain("Stopped");
+  });
   it("shows preparation work without pretending the queued agents are reviewing", async () => {
     await load({ allocation: null, state: null, vm: { status: "RUNNING" }, simulation: { runId: "actual" },
       simulationStatus: { phase: "provisioning", updatedAt: new Date().toISOString(), agents: [] } });

@@ -51,17 +51,26 @@ if (typeof ResizeObserver !== "undefined") new ResizeObserver(drawShutdownPath).
 
 const ageInSeconds = value => value ? Math.max(0, (Date.now() - (typeof value === "number" ? value * 1000 : Date.parse(value))) / 1000) : Infinity;
 const ageLabel = seconds => !Number.isFinite(seconds) ? "not yet observed" : seconds < 5 ? "just now" : seconds < 60 ? `${Math.floor(seconds)}s ago` : `${Math.floor(seconds / 60)}m ago`;
+function confirmedAgentVotes(simulation) {
+  const votes = new Map((simulation?.votes || []).map(vote => [vote.agentId, vote]));
+  for (const agent of simulation?.agents || []) {
+    if (!votes.has(agent.agentId) && agent.phase === "voted" && agent.vote && /^0x[0-9a-fA-F]{64}$/.test(agent.txHash || "")) {
+      votes.set(agent.agentId, { agentId: agent.agentId, voter: agent.address, directive: agent.vote.support, reason: agent.vote, txHash: agent.txHash });
+    }
+  }
+  return [...votes.values()];
+}
 function renderActivity({ replay, actual, simulation, allocation, state, votes, halted, stopped, authorised, shutdown }) {
   const liveAgents = actual ? simulation?.agents || [] : [];
-  const reviewing = liveAgents.filter(a => a.phase === "reviewing").length;
-  const submittingVotes = liveAgents.filter(a => a.phase === "submitting").length;
+  const reviewing = simulation?.terminal ? 0 : liveAgents.filter(a => a.phase === "reviewing").length;
+  const submittingVotes = simulation?.terminal ? 0 : liveAgents.filter(a => a.phase === "submitting").length;
   const confirmed = new Set([...votes.map(v => v.agentId), ...liveAgents.filter(a => a.phase === "voted").map(a => a.agentId)]).size;
   const progressAt = Math.max(Date.parse(simulation?.updatedAt || data.simulation?.createdAt || "") || 0, (allocation?.issuedAt || 0) * 1000);
   const progressAge = ageInSeconds(progressAt ? progressAt / 1000 : null);
   const delayed = !!actual && !simulation?.terminal && !halted && progressAge > 120;
   const guardianFresh = !!state && ageInSeconds(state.observedAt) <= (allocation?.maxObservationAgeSeconds || 120);
-  const preparing = !!actual && (!simulation?.phase || ["provisioning", "starting"].includes(simulation.phase));
-  const failed = !!actual && ["failed", "preparation-failed"].includes(simulation?.phase);
+  const preparing = !!actual && !simulation?.terminal && (!simulation?.phase || ["provisioning", "starting"].includes(simulation.phase));
+  const failed = !!actual && (["failed", "preparation-failed"].includes(simulation?.phase) || simulation?.terminal && !["approved", "denied"].includes(simulation.phase));
   const item = (phase, title, detail, busy = false) => ({ phase, title, detail, busy });
   let worker = item("idle", "Ready for a run", "Five agent slots · no tasks running");
   if (preparing) worker = item("working", simulation?.phase === "starting" ? "Starting five agents" : "Preparing the worker", `${data.vm?.status === "RUNNING" ? "VM running" : "VM starting"} · ${allocation ? "proposal ready, waiting for agents" : "preparing the required proposal"}`, true);
@@ -75,7 +84,7 @@ function renderActivity({ replay, actual, simulation, allocation, state, votes, 
 
   let chain = item("idle", "Waiting for a proposal", "Agent ballots will appear here");
   if (allocation) chain = item("idle", "Required proposal ready", "Waiting for agent ballots");
-  if (submittingVotes || (!replay && simulation?.phase === "voting" && confirmed < 5)) chain = item("working", "Recording agent ballots", `${confirmed} / 5 confirmed on Base Sepolia`, !delayed);
+  if (!simulation?.terminal && (submittingVotes || (!replay && simulation?.phase === "voting" && confirmed < 5))) chain = item("working", "Recording agent ballots", `${confirmed} / 5 confirmed on Base Sepolia`, !delayed);
   else if (confirmed) chain = item("idle", `${confirmed} / 5 ballots confirmed`, simulation?.outcome ? `Governor state: ${simulation.outcome}` : "Waiting for the voting deadline");
   if (replay && stage === 1) chain = item("working", `${confirmed} / 5 ballots confirmed`, "Recorded signed transactions and public reasons");
   if (authorised) chain = item("working", "Required proposal executed", "Approval confirmed on Base Sepolia");
@@ -95,7 +104,7 @@ function renderActivity({ replay, actual, simulation, allocation, state, votes, 
   }
   $("task-badge").textContent = stopped ? "Off" : halted ? "Blocked" : failed ? "Failed" : delayed ? "Waiting" : preparing ? "Preparing" : reviewing || submittingVotes ? "Working" : allocation ? authorised ? "Authorised" : "Task work paused" : "Idle";
   $("architecture-map").dataset.progress = delayed ? "delayed" : "current";
-  $("ballot-connector").classList.toggle("flowing", !halted && !stopped && !delayed && (submittingVotes > 0 || (!replay && simulation?.phase === "voting" && confirmed < 5)));
+  $("ballot-connector").classList.toggle("flowing", !halted && !stopped && !delayed && !simulation?.terminal && (submittingVotes > 0 || (!replay && simulation?.phase === "voting" && confirmed < 5)));
   $("guardian-connector").classList.toggle("flowing", guardian.busy && !halted);
   const summary = halted ? guardian : failed || delayed || preparing || reviewing || submittingVotes ? worker : allocation ? guardian : worker;
   $("activity-summary").dataset.busy = String(summary.busy);
@@ -131,7 +140,7 @@ function render() {
   const stopped = replay ? stage === 4 : data.vm?.status === "TERMINATED";
   const authorityFresh = allocation && state && Date.parse(data.observedAt) / 1000 - state.observedAt <= allocation.maxObservationAgeSeconds;
   const authorised = !replay && state?.phase === "authorised" && authorityFresh && data.vm?.status === "RUNNING";
-  const votes = actual ? simulation?.votes || [] : matchingEvidence && (!replay || stage >= 1) ? evidence.votes || [] : [];
+  const votes = actual ? confirmedAgentVotes(simulation) : matchingEvidence && (!replay || stage >= 1) ? evidence.votes || [] : [];
   const showVotes = votes.length > 0;
   let index = replay ? stage : stopped && halted ? 4 : state?.stopRequestedAt ? 3 : halted ? 2 : showVotes ? 1 : 0;
   let [label, headline, explanation] = messages[index];
@@ -153,8 +162,12 @@ function render() {
     label = (simulation?.phase || "provisioning").replaceAll("-", " ").toUpperCase();
     headline = simulation?.phase === "reviewing" ? "Five agents. Five independent reviews." : simulation?.phase === "voting" || simulation?.phase === "settling" ? "The agents are deciding on Base Sepolia." : simulation?.phase === "preparation-failed" ? "Preparation needs attention." : simulation?.phase === "failed" ? "The run could not finish." : simulation?.terminal ? "The run has finished its work." : "Starting a real governed run.";
     explanation = simulation?.message || "A protected request is preparing the worker and exact required proposal.";
+    if (simulation?.terminal && !["approved", "denied"].includes(simulation.phase)) {
+      label = "RUN NEEDS ATTENTION"; headline = "The run ended before completing.";
+      explanation = `${votes.length} / 5 confirmed ballots are preserved below. Missing votes are not approval. The Guardian still enforces the allocation.`;
+    }
   }
-  if (showVotes && index === 1) {
+  if (showVotes && index === 1 && !(actual && simulation?.terminal)) {
     headline = `${votes.filter(v => v.directive === "FOR").length} FOR. ${votes.filter(v => v.directive === "AGAINST").length} AGAINST.`;
     explanation = current?.scripted === false ? "These are confirmed ballots from actual model agents, each with its own public reason. The voting deadline still applies." : explanation;
   }
@@ -182,7 +195,7 @@ function render() {
     const isRunning = !halted && !stopped && !simulation?.terminal && ["reviewing", "submitting"].includes(liveAgent?.phase);
     const blocked = halted || ballot?.directive === "AGAINST" || liveAgent?.vote?.support === "AGAINST";
     const voted = !!ballot || liveAgent?.phase === "voted";
-    const agentLabel = stopped ? "Off" : halted ? "Blocked" : voted ? blocked ? "Against" : ballot?.directive === "ABSTAIN" || liveAgent?.vote?.support === "ABSTAIN" ? "Abstain" : "For" : liveAgent?.phase === "reviewing" ? "Reviewing" : liveAgent?.phase === "submitting" ? "Signing" : liveAgent?.phase === "worker_failed" ? "Failed" : "Waiting";
+    const agentLabel = stopped ? "Off" : halted ? "Blocked" : voted ? blocked ? "Against" : ballot?.directive === "ABSTAIN" || liveAgent?.vote?.support === "ABSTAIN" ? "Abstain" : "For" : simulation?.terminal ? "Stopped" : liveAgent?.phase === "reviewing" ? "Reviewing" : liveAgent?.phase === "submitting" ? "Signing" : liveAgent?.phase === "worker_failed" ? "Failed" : liveAgent?.phase === "absent" ? "No vote" : "Waiting";
     let agent = $("agent-" + i);
     if (!agent) {
       agent = node("button", "", "agent"); agent.id = "agent-" + i;
@@ -228,7 +241,7 @@ function render() {
   $("proposal-link").hidden = !/^[0-9]+$/.test(proposal || "");
   if (!$("proposal-link").hidden) $("proposal-link").href = `/proposals/${proposal}`;
   $("ballots").replaceChildren();
-  const recordedVotes = actual ? simulation?.votes || [] : matchingEvidence ? evidence.votes || [] : [];
+  const recordedVotes = actual ? votes : matchingEvidence ? evidence.votes || [] : [];
   $("model-spend").textContent = current?.inference?.budget ? `$${Number(current.inference.budget.chargedCostUsd).toFixed(6)} charged · $1 ceiling` : current?.scripted === true ? "$0 · scripted infrastructure test" : actual ? "$1 ceiling · usage pending" : "No current model run";
   $("ballot-note").textContent = current?.scripted === true ? "Scripted diagnostic ballots, explicitly supplied by the operator." : "Actual model decisions, signed by five registered agents. The challenge is operator-selected; the ballots are not prescribed.";
   if (!recordedVotes.length) $("ballots").append(node("p", evidence ? "Switch to Replay shutdown to inspect the five recorded ballots." : "Ballots will appear here when confirmed on Base Sepolia.", "caption"));
