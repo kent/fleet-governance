@@ -299,10 +299,11 @@ function renderRunLog() {
   const proposalHref = /^\d+$/.test(proposalId || "") ? `/proposals/${proposalId}` : null;
   const reason = value => typeof value === "string" ? value : value?.rationale || value?.reason || "No public reason captured in this record.";
   const stamp = at => { const value = typeof at === "number" ? at * 1000 : Date.parse(at); return Number.isFinite(value) ? value : null; };
+  const utc = at => { const value = stamp(at); return value == null ? "Time not recorded" : new Date(value).toISOString().replace("T", " · ").replace(/\.\d{3}Z$/, " UTC"); };
   const signature = record => record.signatureVerified ? "Signed agent claim · signature verified" : "Agent claim · signature not verified";
 
   if (request?.createdAt) add(0, "compute", "Run request recorded", "The operator requested a governed run. This record alone does not confirm a VM start.", { at: request.createdAt, source: "Protected request record", target: "worker" });
-  if (allocation) add(0, "compute", "Compute allocation fixed", `Only ${allocation.instance || "fleet-research"} is governed by this allocation. Approval deadline: ${date(allocation.approvalDeadline)}. Hard stop: ${date(allocation.stopAt)}. Votes cannot extend it.`, { at: allocation.issuedAt, source: "Protected allocation", target: "worker" });
+  if (allocation) add(0, "compute", "Compute allocation fixed", `Only ${allocation.instance || "fleet-research"} is governed by this allocation. Approval deadline: ${utc(allocation.approvalDeadline)}. Hard stop: ${utc(allocation.stopAt)}. Votes cannot extend it.`, { at: allocation.issuedAt, source: "Protected allocation", target: "worker" });
   if (work) add(0, "governance", "Proposed shortcut recorded for review", work.goal || "The exact required proposal is ready for review.", { at: work.createdAt, source: "Preparation record · not the transaction timestamp", href: proposalHref, txHref: tx(work.proposeTxHash), body: work.proposalBody, target: "worker" });
   if (sim && ["preparation-failed", "failed", "recovered"].includes(sim.phase)) add(0, "compute", `Worker reported: ${sim.phase.replaceAll("-", " ")}`, sim.message || "Preparation did not complete. No approval is implied.", { at: sim.updatedAt, source: "Worker status report", tone: "blocked", target: "worker" });
 
@@ -341,6 +342,7 @@ function renderRunLog() {
   if (state?.stoppedAt) add(3, "compute", "Agent cluster stopped · GCP confirmed TERMINATED", `The Guardian observed the fixed VM off.${halted ? " Its durable restart lock remains set." : ""} Click through to inspect the stopped cluster.`, { at: state.stoppedAt, source: "GCP VM observation saved by Guardian", target: "worker", tone: "blocked" });
 
   const total = groups.reduce((count, group) => count + group.rows.length, 0);
+  $("run-log-status").dataset.phase = halted ? "blocked" : "idle";
   $("run-log-status").textContent = `${replay ? "Recorded replay evidence" : data?.isCurrentRun === false ? "Saved run" : "Current run"}${sim?.scripted === true ? " · scripted diagnostic ballots" : ""} · ${votes.length} ballot receipt${votes.length === 1 ? "" : "s"}${halted ? " · durable halt saved" : ""}${state?.stoppedAt ? " · shutdown confirmed" : state?.stopRequestedAt ? " · shutdown not yet confirmed" : ""}`;
   $("run-log-context").textContent = `${replay ? "Complete saved run log, including events after the selected playback step. " : ""}Grouped by control step, then recorded time. Receipts without a timestamp follow the timed entries in each step; their relative order is unknown. All log times are UTC.`;
   let visible = 0;
@@ -356,7 +358,7 @@ function renderRunLog() {
       visible++;
       const row = node("li", "", `log-event ${entry.tone || "idle"}`); row.dataset.component = entry.component;
       const at = stamp(entry.at), meta = node("div", "", "event-meta");
-      const time = node("time", at == null ? "Time not recorded" : new Date(at).toISOString().replace("T", " · ").replace(/\.\d{3}Z$/, " UTC"));
+      const time = node("time", utc(entry.at));
       if (at != null) time.dateTime = new Date(at).toISOString();
       meta.append(node("span", { agents: "Agent cluster", governance: "Governance", guardian: "Guardian", compute: "GCP compute" }[entry.component], "event-component"), time);
       const body = node("div", "", "event-body");

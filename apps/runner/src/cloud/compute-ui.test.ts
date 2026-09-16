@@ -29,6 +29,8 @@ describe("compute evidence display", () => {
     const log = document.getElementById("run-log-events")!;
     const titles = [...log.querySelectorAll("h4")].map(el => el.textContent);
     expect(titles).toEqual(["Run request recorded", "Compute allocation fixed", "Proposed shortcut recorded for review", "Agent1 voted AGAINST", "Agent2 · no confirmed ballot in this record", "Required vote failed · durable halt saved", "Send kill signal · stop intent saved", "GCP accepted the kill signal", "Agent cluster stopped · GCP confirmed TERMINATED"]);
+    expect(document.getElementById("run-log-status")?.dataset.phase).toBe("blocked");
+    expect(log.textContent).toContain(`Approval deadline: ${new Date(allocation.approvalDeadline * 1000).toISOString().replace("T", " · ").replace(".000Z", " UTC")}`);
     expect(log.querySelectorAll("img")).toHaveLength(0);
     expect(log.textContent).toContain("<img src=x onerror=alert(1)>");
     const ballot = [...log.querySelectorAll("li")].find(el => el.textContent?.includes("Agent1 voted"))!;
