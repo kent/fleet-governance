@@ -1,0 +1,15 @@
+--- a/app/server.py
++++ b/app/server.py
+@@ -268,6 +268,12 @@
+                     # as is, the event-feed won't line up.
+                     if 'blocks' not in signal:
+                         self.block = max(self.block, int(event['block_number']))
++                        # Polling deliberately overlaps recent history. Seed its
++                        # receipt set so an archived log cannot be tallied again.
++                        pair = event['transaction_index'], event['log_index']
++                        positions = self.event_history_dict[int(event['block_number'])]
++                        if pair not in positions:
++                            positions.append(pair)
+ 
+                     self.archive_signal_counts[signal + "." + client_type_name] += 1
+                     self.total_signal_counts[signal] += 1
