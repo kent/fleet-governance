@@ -6,6 +6,7 @@ import { buildAgentDecision } from "./emergent-decision.js";
 import { ExperimentSettings } from "./experiment-settings.js";
 import { verifyAgentExperiment } from "./agent-experiment-evidence.js";
 import { agoraGovernorAbi } from "@fleet/abi";
+import { proposalBondsAbi } from "./proposal-bonds.js";
 import { proposalCreditsAbi, proposalTokenAbi } from "./proposal-credits.js";
 const m = vi.hoisted(() => ({ roster: [] as any[] }));
 vi.mock("node:fs", async original => ({ ...await original<typeof import("node:fs")>(), readFileSync: () => JSON.stringify(m.roster) }));
@@ -33,7 +34,7 @@ it("rejects predetermined proposals, unfinished work, altered attestations and e
   input.progress.inference.budget.chargedCostUsd = 1.1; await expect(verifyAgentExperiment(input)).rejects.toThrow("budget"); input.progress.inference.budget.chargedCostUsd = .01;
   records[0]!.event = { type: "fabricated" }; await expect(verifyAgentExperiment(input)).rejects.toThrow("signature");
 });
-it.each(["legacy", "erc20"])("binds the actual proposer and %s fee to the signed draft, with no prescribed ballot count", async mode => {
+it.each(["legacy", "erc20", "bonds"])("binds the actual proposer and %s fee to the signed draft, with no prescribed ballot count", async mode => {
   const draft = { title: "Inspect the local scorer", rationale: "The sum candidate failed despite matching both documented examples.", kind: "CHOOSE_PATH" as const, tool: "inspect_diagnostics" as const, evidence: ["Local result was zero."] };
   const built = buildAgentDecision({ draft, agentId: 0, role: "planner", runId, taskId: "10", charterVersion: 1, proposalNumber: 0 });
   signers[0]!.record({ type: "proposal_selected", proposalId: "77", proposal: draft }); await signers[0]!.flush();
@@ -55,6 +56,24 @@ it.each(["legacy", "erc20"])("binds the actual proposer and %s fee to the signed
     const correct = await input.client.publicClient.getTransactionReceipt();
     input.client.publicClient.getTransactionReceipt.mockResolvedValueOnce({ ...correct, logs: [] });
     await expect(verifyAgentExperiment(input)).rejects.toThrow("Atomic ERC-20 proposal burn");
+  }
+  if (mode === "bonds") {
+    const amount = 10n ** 17n;
+    input.allocation.governor = bank;
+    input.allocation.discovery.proposalBonds = { token: bank, totalSupply: "5000000000000000000" };
+    input.progress.rounds[0].creditTxHash = "0xproposal";
+    input.observation.proposals[0].state = 3;
+    input.client.listVotes.mockResolvedValue([{ voter: m.roster[0].address, support: 0, weight: 3n * 10n ** 18n, parsedReason: { rationale: "Reject this request; participation returns the bond." }, blockNumber: 92n, txHash: "0xvote" }]);
+    input.client.publicClient.getTransaction.mockResolvedValue({ from: m.roster[0].address, to: bank, input: encodeFunctionData({ abi: agoraGovernorAbi, functionName: "propose", args: [[bank], [0n], ["0x"], built.description] }) });
+    input.client.publicClient.getTransactionReceipt.mockResolvedValue({ status: "success", blockNumber: 90n, logs: [{ address: bank,
+      topics: encodeEventTopics({ abi: proposalBondsAbi, eventName: "ProposalBonded", args: { taskId: 10n, proposalId: 77n, proposer: m.roster[0].address } }), data: encodeAbiParameters([{ type: "uint256" }], [amount]) }] });
+    input.client.publicClient.readContract.mockImplementation(async (i: any) => i.functionName === "receipts" ? [10n,m.roster[0].address,1000n,amount,10n**18n,1] : ["balanceOf","available"].includes(i.functionName) ? 10n**18n : 0n);
+    expect((await verifyAgentExperiment(input)).rounds[0]).toMatchObject({ bondVerified: true, bondSettlement: "returned", governorState: 3 });
+    const correct = await input.client.publicClient.getTransactionReceipt();
+    input.client.publicClient.getTransactionReceipt.mockResolvedValueOnce({ ...correct, logs: [] });
+    await expect(verifyAgentExperiment(input)).rejects.toThrow("Atomic FleetGov proposal bond");
+    input.client.publicClient.readContract.mockResolvedValueOnce([10n,m.roster[0].address,1000n,amount,10n**18n,2]);
+    await expect(verifyAgentExperiment(input)).rejects.toThrow("differs from the recorded ballots");
   }
   expect((await verifyAgentExperiment(input)).verified).toMatchObject({ agentAuthoredProposals: 1, independentlyReadBallots: 1 });
   input.progress.rounds[0].proposalBody = "A different proposal";

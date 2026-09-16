@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { decodeEventLog, decodeFunctionData, type Hex } from "viem";
+import { decodeEventLog, decodeFunctionData, formatUnits, type Hex } from "viem";
 import { fleetVotesAbi, agoraGovernorAbi } from "@fleet/abi";
 import { parseDecisionDescription, type FleetClient } from "@fleet/sdk";
 import { verifyActivity, type ActivityAttestation } from "../pipeline/activity-attestation.js";
@@ -7,6 +7,7 @@ import { ExperimentSettings } from "./experiment-settings.js";
 import { buildAgentDecision } from "./emergent-decision.js";
 import { AgentProposal } from "./emergent-scenario.js";
 import { proposalCreditsAbi, proposalTokenAbi } from "./proposal-credits.js";
+import { bondUnits, bondVotesAbi, proposalBondsAbi } from "./proposal-bonds.js";
 import type { ComputeAllocation, ComputeObservation } from "./compute-policy.js";
 import type { SimulationWork } from "./simulation.js";
 
@@ -45,7 +46,29 @@ export async function verifyAgentExperiment(input: { work: SimulationWork; alloc
       client.publicClient.getTransactionReceipt({ hash: round.creditTxHash }), client.publicClient.getTransaction({ hash: round.creditTxHash })]);
     if (receipt.status !== "success" || receipt.blockNumber > created.blockNumber || created.proposer.toLowerCase() !== selected.address.toLowerCase()
       || payment.from.toLowerCase() !== created.proposer.toLowerCase()) throw new Error("Proposal payment did not match the actual proposer.");
-    if (allocation.discovery.proposalToken) {
+    let bondEvidence: Record<string, unknown> = {};
+    if (allocation.discovery.proposalBonds) {
+      const decoded = decodeFunctionData({ abi: agoraGovernorAbi, data: payment.input });
+      const bonds = receipt.logs.filter(log => {
+        if (log.address.toLowerCase() !== allocation.discovery!.creditsContract.toLowerCase()) return false;
+        try {
+          const event = decodeEventLog({ abi: proposalBondsAbi, eventName: "ProposalBonded", data: log.data, topics: log.topics });
+          return event.args.taskId === BigInt(work.taskId) && event.args.proposalId === BigInt(observed.proposalId)
+            && event.args.proposer.toLowerCase() === created.proposer.toLowerCase() && event.args.amount === bondUnits(settings.proposalBond);
+        } catch { return false; }
+      });
+      if (payment.to?.toLowerCase() !== allocation.governor.toLowerCase() || decoded.functionName !== "propose"
+        || round.creditTxHash !== created.txHash || receipt.blockNumber !== created.blockNumber || bonds.length !== 1) throw new Error("Atomic FleetGov proposal bond did not match.");
+      const stored = await client.publicClient.readContract({ address: allocation.discovery.creditsContract as Hex, abi: proposalBondsAbi,
+        functionName: "receipts", args: [BigInt(observed.proposalId)], blockNumber: BigInt(observation.blockNumber) });
+      const participation = votes.reduce((sum, v) => sum + v.weight, 0n);
+      const required = (BigInt(allocation.discovery.proposalBonds.totalSupply) * BigInt(settings.bondParticipationPercent) + 99n) / 100n;
+      const expected = observed.state !== 2 && participation >= required ? 1 : 2;
+      if (stored[0] !== BigInt(work.taskId) || stored[1].toLowerCase() !== created.proposer.toLowerCase() || stored[3] !== bondUnits(settings.proposalBond)
+        || stored[5] !== 0 && (observed.state < 2 || stored[5] !== expected)) throw new Error("Bond settlement differs from the recorded ballots.");
+      bondEvidence = { bondVerified: true, proposalBond: settings.proposalBond, bondSettlement: ["reserved", "returned", "forfeited"][stored[5]],
+        participation: participation.toString(), requiredParticipation: required.toString() };
+    } else if (allocation.discovery.proposalToken) {
       const decoded = decodeFunctionData({ abi: agoraGovernorAbi, data: payment.input });
       const burns = receipt.logs.filter(log => {
         if (log.address.toLowerCase() !== allocation.discovery!.proposalToken!.address.toLowerCase()) return false;
@@ -67,7 +90,7 @@ export async function verifyAgentExperiment(input: { work: SimulationWork; alloc
       runId: work.runId, taskId: work.taskId, charterVersion: decision.expectedVersion, proposalNumber: round.checkpoint });
     if (created.description !== built.description || created.description !== round.proposalBody || created.txHash !== round.txHash) throw new Error("Published decision differs from the signed agent draft.");
     if (new Set(votes.map(v => v.voter.toLowerCase())).size !== votes.length || votes.some(v => !v.parsedReason || !roster.some(a => a.address.toLowerCase() === v.voter.toLowerCase()))) throw new Error("Invalid indexed ballot.");
-    rounds.push({ ...round, governorState: observed.state, paymentVerified: true, draftSignatureVerified: true,
+    rounds.push({ ...round, ...bondEvidence, governorState: observed.state, paymentVerified: true, draftSignatureVerified: true,
       votes: votes.map(v => ({ agentId: roster.find(a => a.address.toLowerCase() === v.voter.toLowerCase())!.agentId,
         voter: v.voter, support: v.support, weight: v.weight.toString(), reason: v.parsedReason, txHash: v.txHash, blockNumber: v.blockNumber.toString() })) });
   }
@@ -88,6 +111,21 @@ export async function verifyAgentExperiment(input: { work: SimulationWork; alloc
   }
   const balances = [];
   for (const agent of roster) {
+    if (allocation.discovery.proposalBonds) {
+      const address = allocation.discovery.proposalBonds.token as Hex, args = [agent.address as Hex] as const, blockNumber = BigInt(observation.blockNumber);
+      const [balance, available, bonded, forfeited] = await Promise.all([
+        client.publicClient.readContract({ address, abi: bondVotesAbi, functionName: "balanceOf", args, blockNumber }),
+        client.publicClient.readContract({ address, abi: bondVotesAbi, functionName: "available", args, blockNumber }),
+        client.publicClient.readContract({ address, abi: bondVotesAbi, functionName: "bonded", args, blockNumber }),
+        client.publicClient.readContract({ address, abi: bondVotesAbi, functionName: "forfeited", args, blockNumber }),
+      ]);
+      const own = rounds.filter(r => r.proposerAgentId === agent.agentId);
+      const lost = BigInt(own.filter(r => r.bondSettlement === "forfeited").length) * bondUnits(settings.proposalBond);
+      const locked = BigInt(own.filter(r => r.bondSettlement === "reserved").length) * bondUnits(settings.proposalBond);
+      if (forfeited !== lost || bonded !== locked || balance + forfeited !== 10n ** 18n || available + bonded !== balance) throw new Error("FleetGov collateral accounting did not match.");
+      balances.push({ agentId: agent.agentId, balance: formatUnits(balance, 18), available: formatUnits(available, 18), bonded: formatUnits(bonded, 18), forfeited: formatUnits(forfeited, 18), token: address });
+      continue;
+    }
     const remaining = await client.publicClient.readContract({ address: allocation.discovery.creditsContract as Hex, abi: proposalCreditsAbi,
       functionName: "remaining", args: [BigInt(work.taskId), agent.address as Hex], blockNumber: BigInt(observation.blockNumber) });
     const expected = settings.proposalCredits - rounds.filter(r => r.proposerAgentId === agent.agentId).length * settings.proposalCost;
@@ -98,5 +136,5 @@ export async function verifyAgentExperiment(input: { work: SimulationWork; alloc
     agentAuthoredProposals: rounds.length, independentlyReadBallots: rounds.reduce((sum, r) => sum + r.votes.length, 0),
     confirmedDelegations: delegations.length, publicPetitions: activity.filter(r => (r.event as any).type === "delegation_petition").length,
     providerCallsReported: progress.inference.callsCompleted, chargedCostUsd: budget.chargedCostUsd,
-    qualification: "Signatures bind public agent claims. Proposal authorship, credit payments, delegation transactions and ballots were checked against the chain. No proposal count or rejection was prescribed." } };
+    qualification: "Signatures bind public agent claims. Proposal authorship, proposal payments or bond reservations and settlements, delegation transactions and ballots were checked against the chain. No proposal count or rejection was prescribed." } };
 }

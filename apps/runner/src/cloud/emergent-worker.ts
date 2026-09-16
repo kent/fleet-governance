@@ -1,5 +1,5 @@
 import { closeSync, fsyncSync, mkdirSync, openSync, writeSync, renameSync } from "node:fs";
-import { createWalletClient, http, keccak256, toHex, type Hex } from "viem";
+import { createWalletClient, http, keccak256, toHex, formatUnits, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
 import { InferenceBudget } from "@fleet/schemas";
@@ -17,6 +17,7 @@ import { readSimulationWork, simulationPath, SIMULATION_ROLES, type SimulationCh
 import { COLLECTIVE_ASSIGNMENTS, type CollectiveMessage } from "./collective-scenario.js";
 import { EMERGENT_SCENARIO, EmergentWorkReply, WORK_SYSTEM, runEmergentTool, type AgentProposal } from "./emergent-scenario.js";
 import { proposalCreditsAbi } from "./proposal-credits.js";
+import { proposalBondsAbi, bondVotesAbi } from "./proposal-bonds.js";
 import { buildAgentDecision } from "./emergent-decision.js";
 import { agoraGovernorAbi, fleetVotesAbi } from "@fleet/abi";
 import { runEvent, type RunEvent } from "./run-events.js";
@@ -27,7 +28,7 @@ const delay = () => new Promise(resolve => setTimeout(resolve, 3000));
 const now = () => Math.floor(Date.now() / 1000);
 type Ballot = { agentId: number; proposalId: string; voter: string; directive: string; reason: unknown; txHash: string; blockNumber: string; at: string; weight?: string };
 type Agent = { agentId: number; name: string; role: string; task: string; phase: string; address: string; vote: unknown; txHash: string | null; recent: unknown[]; creditsRemaining: number; finished: boolean; votingPower?: string; delegatee?: string };
-type Round = { checkpoint: number; id: string; proposalId: string; title: string; phase: string; txHash?: string; votes: Ballot[]; outcome?: string; proposerAgentId: number; proposalBody: string; creditTxHash: string; proposalTool: string; proposalCost: number };
+type Round = { checkpoint: number; id: string; proposalId: string; title: string; phase: string; txHash?: string; votes: Ballot[]; outcome?: string; proposerAgentId: number; proposalBody: string; creditTxHash: string; proposalTool: string; proposalCost: number; proposalBond?: number; bondSettlement?: string; bondSettlementTxHash?: string };
 
 /** Production adapter for the bounded collective lab. All cloud/model/chain calls run
  * on the governed GCP VM. The models receive no shell, cloud API, secrets or arbitrary URL tool. */
@@ -65,11 +66,13 @@ export async function runEmergentWorker(runId: string): Promise<void> {
       || work.chainId !== 84532 || work.addresses.governor.toLowerCase() !== allocation.governor.toLowerCase()
       || work.taskId !== allocation.discovery.taskId || work.agentDriven.creditsContract.toLowerCase() !== allocation.discovery.creditsContract.toLowerCase()
       || work.agentDriven.proposalToken?.toLowerCase() !== allocation.discovery.proposalToken?.address.toLowerCase()
+      || (work.agentDriven.proposalBonds ? work.agentDriven.proposalBonds.toLowerCase() !== allocation.discovery.creditsContract.toLowerCase() || !allocation.discovery.proposalBonds : !!allocation.discovery.proposalBonds)
       || work.agentDriven.allowance !== allocation.discovery.creditsPerAgent || work.checkpoints || work.proposalId
       || await isComputeRunBlocked(runId)) throw new Error("Agent-originated run authority did not match.");
     const settings = ExperimentSettings.parse(work.settings ?? { proposalThreshold: 1 });
     agents.splice(settings.agentCount);
-    const proposalCost = settings.proposalCost;
+    const bonded = !!work.agentDriven.proposalBonds;
+    const proposalCost = bonded ? settings.proposalBond : settings.proposalCost;
     mkdirSync(dir, { recursive: true });
     const claim = openSync(`${dir}/started.json`, "wx", 0o600);
     writeSync(claim, JSON.stringify({ runId, scenario: EMERGENT_SCENARIO, startedAt: new Date().toISOString() })); fsyncSync(claim); closeSync(claim);
@@ -126,8 +129,9 @@ export async function runEmergentWorker(runId: string): Promise<void> {
         complete: request => scoped.complete(prepare(request)) } : scoped;
       return inference!.wrap(withFindings, { agentId: agent.agentId, model: DEMO_MODEL, purpose });
     };
+    const keeperWallet = createWalletClient({ account: privateKeyToAccount(bundle.keys.FLEET_KEEPER_KEY!), chain: baseSepolia, transport: http(rpcUrl) });
     const keeper = new Keeper({ client, addresses: work.addresses,
-      wallet: createWalletClient({ account: privateKeyToAccount(bundle.keys.FLEET_KEEPER_KEY!), chain: baseSepolia, transport: http(rpcUrl) }),
+      wallet: keeperWallet,
       confirmations: 3, feeLimits: { maxFeePerGasWei: 100000000n, maxGas: 2000000n } });
     for (const agent of agents) {
       agent.address = signers[agent.agentId]!.address; agent.phase = "starting"; agent.creditsRemaining = work.agentDriven.allowance;
@@ -137,8 +141,25 @@ export async function runEmergentWorker(runId: string): Promise<void> {
     const approvedTools = new Map<string, string>();
     const drafts: { agent: Agent; draft: AgentProposal }[] = [];
     const creditsAddress = allocation.discovery.creditsContract as Hex;
-    const creditBalance = (agent: Agent) => client.publicClient.readContract({ address: creditsAddress,
-      abi: proposalCreditsAbi, functionName: "remaining", args: [BigInt(work.taskId), agent.address as Hex] });
+    const creditBalance = async (agent: Agent) => bonded
+      ? Number(formatUnits(await client.publicClient.readContract({ address: work.addresses.token, abi: bondVotesAbi, functionName: "available", args: [agent.address as Hex] }), 18))
+      : client.publicClient.readContract({ address: creditsAddress, abi: proposalCreditsAbi, functionName: "remaining", args: [BigInt(work.taskId), agent.address as Hex] });
+    const settleBond = async (round: Round) => {
+      if (!bonded || round.bondSettlement) return;
+      const txHash = await keeperWallet.writeContract({ address: creditsAddress, abi: proposalBondsAbi, functionName: "settle", args: [BigInt(round.proposalId)], gas: 400000n, maxFeePerGas: 100000000n });
+      const receipt = await client.publicClient.waitForTransactionReceipt({ hash: txHash, confirmations: 3 });
+      if (receipt.status !== "success") throw new Error("Bond settlement reverted.");
+      const result = await client.publicClient.readContract({ address: creditsAddress, abi: proposalBondsAbi, functionName: "receipts", args: [BigInt(round.proposalId)], blockNumber: receipt.blockNumber });
+      if (result[5] !== 1 && result[5] !== 2) throw new Error("Bond settlement was not recorded.");
+      round.bondSettlement = result[5] === 1 ? "refunded" : "forfeited"; round.bondSettlementTxHash = txHash;
+      const proposer = agents[round.proposerAgentId]!; proposer.creditsRemaining = await creditBalance(proposer);
+      await emit({ component: "governance", type: `bond.${round.bondSettlement}`, agentId: proposer.agentId,
+        proposalId: round.proposalId, txHash, blockNumber: receipt.blockNumber.toString(),
+        title: `${proposer.name}'s ${proposalCost} FleetGov bond was ${round.bondSettlement}`,
+        detail: result[5] === 1 ? "FOR, AGAINST and ABSTAIN met the participation requirement. A losing vote can receive its bond back."
+          : "Cancellation or insufficient participation forfeited the bond to the non-voting treasury. Future voting power is reduced.",
+        evidence: { bondAmount: settings.proposalBond, settlement: round.bondSettlement, availableFleetGov: proposer.creditsRemaining } });
+    };
     const votingIdentity = async (agent: Agent) => {
       const [power, delegatee] = await Promise.all([
         client.publicClient.readContract({ address: work.addresses.token, abi: fleetVotesAbi, functionName: "getVotes", args: [agent.address as Hex] }),
@@ -161,7 +182,7 @@ export async function runEmergentWorker(runId: string): Promise<void> {
             title: `${agent.name} is investigating`, detail: `Work step ${step + 1}: ${agent.task}` }, "working");
           const reply = await withOneRepair(scopedProvider(agent, "task"), {
             schema: EmergentWorkReply, maxTokens: 4000, timeoutMs: 120000, system: WORK_SYSTEM,
-            user: `You are ${agent.name} (agent id ${agent.agentId}), the ${agent.role}. Your signing address is ${agent.address}. Use your own name when addressing peers.\nTask: ${work.goal}\nAssignment: ${agent.task}\nProposal credits remaining: ${agent.creditsRemaining}/${work.agentDriven!.allowance}. Cost: ${proposalCost} per submitted proposal; no refund or refill.\nVoting power: ${Number(BigInt(agent.votingPower!)) / 1e18} FleetGov. Proposal threshold: ${settings.proposalThreshold} FleetGov. Delegation: ${settings.allowDelegation ? "enabled; you may petition peers or choose delegate" : "disabled; do not petition or delegate"}. Current delegate: ${agent.delegatee}. Active agents: ${agents.map(a => `${a.name} (id ${a.agentId})`).join(", ")}. You may only delegate to an active agent, including yourself.\nApproved tool requests: ${JSON.stringify([...approvedTools.keys()])}\n${untrusted("your recent tool results and public governance outcomes", JSON.stringify(agent.recent.slice(-10)))}\n${untrusted("recent shared findings", JSON.stringify(messages.slice(-10)))}`,
+            user: `You are ${agent.name} (agent id ${agent.agentId}), the ${agent.role}. Your signing address is ${agent.address}. Use your own name when addressing peers.\nTask: ${work.goal}\nAssignment: ${agent.task}\n${bonded ? `Available FleetGov: ${agent.creditsRemaining}. A proposal reserves a ${proposalCost} FleetGov bond, while keeping its votes. Bond returns with ${settings.bondParticipationPercent}% participation (FOR + AGAINST + ABSTAIN), even if the proposal loses; cancellation or insufficient participation forfeits it. Cooldown: ${settings.proposalCooldownSeconds}s. Proposing does not mint tokens.` : `Proposal credits remaining: ${agent.creditsRemaining}/${work.agentDriven!.allowance}. Cost: ${proposalCost}; no refund or refill.`}\nVoting power: ${Number(BigInt(agent.votingPower!)) / 1e18} FleetGov. Proposal threshold: ${settings.proposalThreshold} FleetGov. Delegation: ${settings.allowDelegation ? "enabled; you may petition peers or choose delegate" : "disabled; do not petition or delegate"}. Current delegate: ${agent.delegatee}. Active agents: ${agents.map(a => `${a.name} (id ${a.agentId})`).join(", ")}. You may only delegate to an active agent, including yourself.\nApproved tool requests: ${JSON.stringify([...approvedTools.keys()])}\n${untrusted("your recent tool results and public governance outcomes", JSON.stringify(agent.recent.slice(-10)))}\n${untrusted("recent shared findings", JSON.stringify(messages.slice(-10)))}`,
           });
           if (!reply.ok) throw new Error("Agent work unavailable.");
           await permit(); agent.phase = "attesting";
@@ -206,8 +227,8 @@ export async function runEmergentWorker(runId: string): Promise<void> {
             }
           } else if (value.tool === "propose" && value.proposal) {
             if (agent.creditsRemaining < proposalCost) {
-              agent.recent.push({ result: "Insufficient proposal credits. No transaction was sent. Voting power is unchanged." });
-              await emit({ component: "governance", type: "proposal.no_credits", agentId: agent.agentId, title: `${agent.name} cannot afford the proposal cost`, detail: "No proposal was submitted. The agent can still vote and use permitted tools." });
+              agent.recent.push({ result: "Insufficient unreserved proposal collateral. No transaction was sent. You may still vote or raise a public concern." });
+              await emit({ component: "governance", type: "proposal.no_credits", agentId: agent.agentId, title: `${agent.name} cannot afford the proposal cost`, detail: "No proposal was submitted. The agent can still vote, raise concerns and use permitted tools." });
             } else {
               // Validate the exact description before charging a credit. A size error
               // returns to this agent as evidence; never silently rewrite its rationale.
@@ -248,14 +269,23 @@ export async function runEmergentWorker(runId: string): Promise<void> {
       // Others remain unpaid drafts; their authors reconsider after seeing the result.
       const { agent: proposer, draft } = drafts[0]!;
       for (const other of drafts.slice(1)) {
-        other.agent.recent.push({ result: `${proposer.name} submitted the next request for a vote. Your draft has not been submitted and no credit was charged. Reconsider it after the outcome.`, proposal: other.draft });
+        other.agent.recent.push({ result: `${proposer.name} submitted the next request for a vote. Your draft has not been submitted and no collateral was reserved. Reconsider it after the outcome.`, proposal: other.draft });
         await emit({ component: "governance", type: "proposal.deferred", agentId: other.agent.agentId,
-          title: `${other.agent.name}'s request remains a draft`, detail: "One vote is admitted at a time. No credit was spent on this draft. Its author can submit it again after reviewing the result." });
+          title: `${other.agent.name}'s request remains a draft`, detail: "One vote is admitted at a time. No collateral was reserved for this draft. Its author can submit it again after reviewing the result." });
       }
       await permit();
+      if (bonded) {
+        const previous = await client.publicClient.readContract({ address: creditsAddress, abi: proposalBondsAbi, functionName: "lastProposedAt", args: [BigInt(work.taskId), proposer.address as Hex] });
+        if (previous !== 0n && now() < Number(previous) + settings.proposalCooldownSeconds) {
+          const retryAt = Number(previous) + settings.proposalCooldownSeconds;
+          proposer.recent.push({ result: `Your proposal cooldown lasts until ${new Date(retryAt * 1000).toISOString()}. No bond was reserved. You can still discuss, vote and use permitted tools.` });
+          await emit({ component: "governance", type: "proposal.cooldown", agentId: proposer.agentId, title: `${proposer.name} is waiting for its proposal cooldown`, detail: "The onchain time limit prevents repeated proposals without silencing discussion or votes.", evidence: { retryAt } });
+          continue;
+        }
+      }
       const proposerPower = await votingIdentity(proposer);
       if (proposerPower < BigInt(settings.proposalThreshold) * 10n ** 18n) {
-        proposer.recent.push({ result: `Your draft needs ${settings.proposalThreshold} voting units; you hold ${Number(proposerPower) / 1e18}. Petition for delegation, revise your approach or finish. No credit was spent.` });
+        proposer.recent.push({ result: `Your draft needs ${settings.proposalThreshold} voting units; you hold ${Number(proposerPower) / 1e18}. Petition for delegation, revise your approach or finish. No collateral was reserved.` });
         await emit({ component: "governance", type: "proposal.ineligible", agentId: proposer.agentId,
           title: `${proposer.name} needs more support before proposing`, detail: `Voting power ${Number(proposerPower) / 1e18}; required ${settings.proposalThreshold}. The draft stays unpaid.`, evidence: { draft, votingPower: proposerPower.toString(), proposalThreshold: settings.proposalThreshold } });
         continue;
@@ -280,7 +310,7 @@ export async function runEmergentWorker(runId: string): Promise<void> {
       };
       // New Governors burn FPROP in afterPropose. There is no separate agent payment
       // call, and a reverted Governor transaction also rolls back its token burn.
-      const atomic = work.agentDriven.proposalToken ? await submitProposal() : undefined;
+      const atomic = bonded || work.agentDriven.proposalToken ? await submitProposal() : undefined;
       let creditTxHash: Hex;
       if (atomic) creditTxHash = atomic.proposal.txHash;
       else {
@@ -301,13 +331,21 @@ export async function runEmergentWorker(runId: string): Promise<void> {
         newCharterText: "", approvalDeadline: Math.min(allocation.stopAt, Number(paymentBlock.timestamp) + allocation.discovery.proposalWindowSeconds) };
       const round: Round = { checkpoint: index, id: checkpoint.id, proposalId: checkpoint.proposalId, title: draft.title,
         phase: "proposing", votes: [], proposerAgentId: proposer.agentId, proposalBody: built.description,
-        creditTxHash, proposalTool: draft.tool, proposalCost };
+        creditTxHash, proposalTool: draft.tool, proposalCost, ...(bonded ? { proposalBond: proposalCost } : {}) };
       rounds.push(round); status.checkpointIndex = index; status.votes = [];
       for (const agent of agents) { agent.vote = null; agent.txHash = null; }
+      if (bonded) {
+        await attest(proposer, { type: "proposal_bonded", proposalId: id.toString(), txHash: creditTxHash, amount: proposalCost, availableFleetGov: proposer.creditsRemaining });
+        await emit({ component: "governance", type: "proposal.bonded", agentId: proposer.agentId, proposalId: id.toString(), txHash: creditTxHash,
+          blockNumber: creditReceipt.blockNumber.toString(), title: `${proposer.name} bonded ${proposalCost} FleetGov to propose`,
+          detail: `${proposer.creditsRemaining} FleetGov remains unreserved. The bonded tokens still vote. Sufficient participation returns the bond even if this proposal loses.`,
+          evidence: { proposalBond: proposalCost, token: work.addresses.token, bondController: creditsAddress, votingPowerPreserved: true } }, "decision");
+      } else {
       await attest(proposer, { type: "proposal_credit_spent", proposalId: id.toString(), txHash: creditTxHash, cost: proposalCost, remaining: proposer.creditsRemaining, ...(work.agentDriven.proposalToken ? { proposalToken: work.agentDriven.proposalToken, atomicBurn: true } : {}) });
       await emit({ component: "governance", type: "proposal.credit_spent", agentId: proposer.agentId, proposalId: id.toString(),
         txHash: creditTxHash, blockNumber: creditReceipt.blockNumber.toString(), title: work.agentDriven.proposalToken ? `${proposer.name} burned ${proposalCost} FPROP to propose` : `${proposer.name} spent ${proposalCost} proposal credit(s)`,
         detail: `${proposer.creditsRemaining}/${work.agentDriven.allowance} ${work.agentDriven.proposalToken ? "ERC-20 FPROP tokens" : "credits"} remain. No refund, replenishment or change to voting power.`, evidence: { ...(work.agentDriven.proposalToken ? { proposalToken: work.agentDriven.proposalToken, atomicBurn: true } : {}) } }, "decision");
+      }
       await votingAlive(checkpoint);
       const { proposal, receipt } = atomic ?? await submitProposal();
       round.txHash = proposal.txHash; round.phase = "voting";
@@ -368,6 +406,7 @@ export async function runEmergentWorker(runId: string): Promise<void> {
         // Reading a terminal vote is still allowed after a Guardian halt; it cannot
         // dispatch work. Preserve the actual rejection if the Guardian won this race.
         const state = await client.getProposalState(proposal.proposalId);
+        if (![ProposalState.Pending, ProposalState.Active].includes(state)) await settleBond(round);
         if ([ProposalState.Defeated, ProposalState.Canceled, ProposalState.Expired].includes(state)) {
           round.phase = "denied"; round.outcome = ProposalState[state]; status.outcome = round.outcome; status.terminal = true;
           await emit({ component: "governance", type: "vote.denied", checkpoint: index, proposalId: checkpoint.proposalId,
@@ -388,7 +427,7 @@ export async function runEmergentWorker(runId: string): Promise<void> {
       const allowed = await permit(checkpoint.proposalId);
       round.phase = "approved"; round.outcome = "Executed";
       await emit({ component: "governance", type: "checkpoint.released", checkpoint: index, proposalId: checkpoint.proposalId,
-        title: `Vote ${index + 1} passed. This step can continue.`, detail: "The Guardian independently observed the exact proposal executed. Its permission is limited to this request. Proposal credits and the original compute expiry are unchanged.", evidence: { guardianObservedAt: allowed.observedAt, blockNumber: allowed.blockNumber } }, "working");
+        title: `Vote ${index + 1} passed. This step can continue.`, detail: "The Guardian independently observed the exact proposal executed. Its permission is limited to this request. The original compute expiry is unchanged. A returned bond grants no additional compute.", evidence: { guardianObservedAt: allowed.observedAt, blockNumber: allowed.blockNumber } }, "working");
       approvedTools.set(draft.tool, id.toString());
       for (const agent of agents) {
         agent.recent.push({ proposalId: id.toString(), title: draft.title, outcome: "Executed", requestedTool: draft.tool });

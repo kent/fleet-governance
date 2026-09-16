@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { BUCKET, googleRequest, readObject } from "./google.js";
-import { readComputeAllocation, readComputeAllocationById, readComputeState, readComputeEvidence } from "./compute-store.js";
+import { readComputeAllocation, readComputeAllocationById, readComputeState, readComputeEvidence, readComputeObject } from "./compute-store.js";
 import { readRecordedSimulationRequest, readSimulationWork, simulationPath } from "./simulation.js";
 import { verifyActivity, type ActivityAttestation } from "../pipeline/activity-attestation.js";
 import { publicSnapshot } from "./site-access.js";
@@ -64,11 +64,13 @@ export async function simulationSnapshot(selectedRun?: string) {
   } else vm = { status: state?.observedVmStatus ?? "UNKNOWN" };
   const replay = selectedRun && (evidence as { allocationId?: string } | null)?.allocationId !== allocation?.allocationId ? null : evidence;
   const preparing = runId && !work ? await readObject<{ events?: RunEvent[] }>(simulationPath(runId, "preparation.json")) : null;
+  const bondSettlement = runId && work?.agentDriven?.proposalBonds ? await readComputeObject(`simulations/${runId}/bonds.json`) as { events?: RunEvent[] } | null : null;
   const sourceEvents = (values: RunEvent[] | undefined, source: string) => (Array.isArray(values) ? values : [])
     .filter(event => event && event.runId === runId).slice(0, 1000).map(event => ({ ...event, source }));
   const events = [
     ...sourceEvents(work?.preparationEvents ?? preparing?.events, work ? "Protected preparation record" : "Preparation service report"),
     ...sourceEvents(status?.events, "Worker report · inspect the supporting evidence"),
+    ...sourceEvents(bondSettlement?.events, "Protected bond settlement verification"),
   ];
   return { simulation: recordedRequest ?? (work || status ? { runId, createdAt: work?.createdAt ?? status?.createdAt ?? status?.updatedAt } : null),
     simulationStatus: status, simulationWork: work, allocation, state, vm, evidence: replay, agentRoster, events,

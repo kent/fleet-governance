@@ -5,6 +5,7 @@ import { readComputeAllocation, readComputeState, isComputeRunBlocked } from "./
 import { readSimulationRequest, queueSimulation } from "./simulation.js";
 import { COMPUTE_TARGET, releaseComputeAllocation } from "./compute-admin.js";
 import { googleRequest, CloudError } from "./google.js";
+import { retireExperimentBonds } from "./retire-bonds.js";
 
 const CONTROLLER = "v2/projects/fleet-governance/locations/us-central1/services/fleet-compute-controller";
 type Retirement = { batchId: string; runId: string; allocationId: string; image: string; createdAt: string };
@@ -86,6 +87,7 @@ export async function beginBatchRetirement() {
   const record = await readComputeState(allocation.allocationId);
   const vm = await (await googleRequest("compute", COMPUTE_TARGET)).json() as { id: string; status: string };
   if (record?.value.phase !== "halted" || vm.status !== "TERMINATED" || vm.id !== allocation.instanceId) throw new Error("Retirement requires a durable Guardian halt and the same VM verified off.");
+  await retireExperimentBonds(allocation);
   const service = await (await googleRequest("run", CONTROLLER)).json() as { template: { containers: { image: string }[] } };
   const image = service.template.containers[0]?.image ?? "";
   if (!/^us-central1-docker.pkg.dev\/fleet-governance\/fleet\/runner@sha256:[a-f0-9]{64}$/.test(image)) throw new Error("Guardian must use a pinned Fleet image.");

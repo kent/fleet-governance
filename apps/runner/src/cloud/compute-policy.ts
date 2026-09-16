@@ -8,8 +8,10 @@ const timestamp = z.number().int().nonnegative().safe();
 export const ProposalDiscovery = z.object({
   taskId: decimal, hook: address, hookCodeHash: hash,
   creditsContract: address, creditsCodeHash: hash, runHash: hash,
-  // Absent only in historical credit-ledger allocations. New runs pin a real ERC-20.
+  // Historical FPROP allocations and new single-FleetGov bond allocations are distinct.
   proposalToken: z.object({ address, codeHash: hash, initialSupply: z.number().int().min(1).max(40) }).strict().optional(),
+  proposalBonds: z.object({ token: address, tokenCodeHash: hash, totalSupply: decimal,
+    amount: decimal, cooldownSeconds: z.number().int().min(30).max(600), participationBps: z.number().int().min(1000).max(10000) }).strict().optional(),
   startBlock: decimal, creditsPerAgent: z.number().int().min(1).max(8),
   agents: z.array(address).min(3).max(5),
   proposalCost: z.number().int().min(1).max(8).default(1),
@@ -17,7 +19,7 @@ export const ProposalDiscovery = z.object({
   allowDelegation: z.boolean().default(true),
   proposalWindowSeconds: z.number().int().min(450).max(900),
   publicationWindowSeconds: z.number().int().min(60).max(120),
-}).strict().refine(value => new Set(value.agents.map(a => a.toLowerCase())).size === value.agents.length && value.proposalCost <= value.creditsPerAgent && value.proposalThreshold <= value.agents.length, "Distinct agent identities and attainable proposal rules required.");
+}).strict().refine(value => new Set(value.agents.map(a => a.toLowerCase())).size === value.agents.length && value.proposalCost <= value.creditsPerAgent && value.proposalThreshold <= value.agents.length, "Distinct agent identities and attainable proposal rules required.").refine(value => !value.proposalBonds || !value.proposalToken && BigInt(value.proposalBonds.totalSupply) === 5n * 10n ** 18n && BigInt(value.proposalBonds.amount) > 0n && BigInt(value.proposalBonds.amount) <= 10n ** 18n, "Use one fixed-supply FleetGov bond policy.");
 
 /** Written by human-authorised control software, never by the agent worker. A vote may
  * satisfy this allocation, but cannot edit its deadline, worker, or required proposals. */
@@ -135,7 +137,7 @@ export function evaluateComputeAllocation(
       || proposals.get(id)! < (allocation.checkpoints ? -1 : 0) || proposals.get(id)! > 7)) return halt("unverifiable_vote");
   if (allocation.discovery) {
     const policy = allocation.discovery;
-    if (!observation.discoveryVerified || observation.proposals.length > policy.agents.length * policy.creditsPerAgent
+    if (!observation.discoveryVerified || observation.proposals.length > (policy.proposalBonds ? 64 : policy.agents.length * policy.creditsPerAgent)
       || observation.proposals.some(p => !decimal.safeParse(p.proposalId).success || !Number.isInteger(p.state) || p.state < -1 || p.state > 7)) return halt("unverifiable_vote");
     // Discovery is monotonic. A worker cannot drop a rejected proposal from its status
     // file, and a reorg cannot quietly remove a proposal the Guardian already observed.
@@ -148,7 +150,7 @@ export function evaluateComputeAllocation(
       if (!payer || !policy.agents.some(a => a.toLowerCase() === payer)
         || !Number.isSafeInteger(p.paidAt) || p.paidAt! < allocation.issuedAt - 120 || p.paidAt! > observation.blockTimestamp) return halt("unverifiable_vote");
       spent.set(payer, (spent.get(payer) ?? 0) + policy.proposalCost);
-      if (spent.get(payer)! > policy.creditsPerAgent) return halt("unverifiable_vote");
+      if (!policy.proposalBonds && spent.get(payer)! > policy.creditsPerAgent) return halt("unverifiable_vote");
       if ([2, 3, 6].includes(p.state)) return halt("vote_failed", p.proposalId);
       if (p.state === -1 && now >= p.paidAt! + policy.publicationWindowSeconds) return halt("approval_deadline", p.proposalId);
       if (now >= Math.min(allocation.stopAt, p.paidAt! + policy.proposalWindowSeconds)

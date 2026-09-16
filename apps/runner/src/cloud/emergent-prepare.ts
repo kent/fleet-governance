@@ -11,7 +11,7 @@ import { openTask } from "../pipeline/task.js";
 import { armComputeAllocation, COMPUTE_TARGET, nativeStopAt, writeControlObject, type NativeVm } from "./compute-admin.js";
 import { googleRequest, writeObject } from "./google.js";
 import { readComputeObject } from "./compute-store.js";
-import { CREDIT_DEPLOYMENT, proposalCreditsAbi, proposalTokenAbi } from "./proposal-credits.js";
+import { BOND_DEPLOYMENT, proposalBondsAbi, bondVotesAbi, bondUnits } from "./proposal-bonds.js";
 import { EMERGENT_SCENARIO } from "./emergent-scenario.js";
 import { simulationPath, type SimulationRequest, type SimulationWork } from "./simulation.js";
 import { runEvent, type RunEvent } from "./run-events.js";
@@ -28,10 +28,10 @@ export async function prepareEmergent(input: { request: SimulationRequest; clien
     await writeObject(simulationPath(runId), { runId, scenario: EMERGENT_SCENARIO, phase: "provisioning", message: event.title,
       goal, updatedAt: events.at(-1)!.at, terminal: false, agents: [], rounds: [] });
   };
-  const credits = await readComputeObject(CREDIT_DEPLOYMENT) as { schema: string; address: Hex; codeHash: Hex; governor: string; token: string } | null;
-  if (!credits || credits.schema !== "fleet.proposal-budget.v3" || credits.governor.toLowerCase() !== addresses.governor.toLowerCase() || credits.token.toLowerCase() !== addresses.token.toLowerCase()) throw new Error("Deploy the ERC-20 proposal budget through CI first.");
+  const credits = await readComputeObject(BOND_DEPLOYMENT) as { schema: string; address: Hex; codeHash: Hex; governor: string; token: string } | null;
+  if (!credits || credits.schema !== "fleet.proposal-bonds.v4" || credits.governor.toLowerCase() !== addresses.governor.toLowerCase() || credits.token.toLowerCase() !== addresses.token.toLowerCase()) throw new Error("Deploy single-token proposal bonds through CI first.");
   const budgetCode = await client.publicClient.getBytecode({ address: credits.address });
-  if (!budgetCode || keccak256(budgetCode) !== credits.codeHash) throw new Error("ERC-20 proposal budget code changed.");
+  if (!budgetCode || keccak256(budgetCode) !== credits.codeHash) throw new Error("Proposal bond controller code changed.");
   await progress({ component: "task", type: "task.assigned", title: "Task assigned: investigate the local benchmark", detail: goal });
   const vm = await (await googleRequest("compute", COMPUTE_TARGET)).json() as NativeVm;
   const now = Math.floor(Date.now() / 1000), stopAt = Math.min(nativeStopAt(vm, now), now + settings.durationMinutes * 60);
@@ -56,34 +56,38 @@ export async function prepareEmergent(input: { request: SimulationRequest; clien
   const wallet = createWalletClient({ account: privateKeyToAccount(keys.operatorKey), chain: baseSepolia, transport: http(rpcUrl) });
   const runHash = keccak256(toHex(runId));
   const activeAgents = roster.slice(0, settings.agentCount).map(a => a.address);
-  const paymentSetup = await wallet.writeContract({ address: credits.address, abi: proposalCreditsAbi, functionName: "registerRunPolicy",
-    args: [task.taskId, runHash, settings.proposalCredits, BigInt(stopAt), settings.proposalCost, BigInt(settings.proposalThreshold) * 10n ** 18n, activeAgents], maxFeePerGas: 100000000n, gas: 2500000n });
+  const paymentSetup = await wallet.writeContract({ address: credits.address, abi: proposalBondsAbi, functionName: "registerRunPolicy",
+    args: [task.taskId, runHash, BigInt(stopAt), bondUnits(settings.proposalBond), bondUnits(settings.proposalThreshold),
+      settings.proposalCooldownSeconds, settings.bondParticipationPercent * 100, activeAgents], maxFeePerGas: 100000000n, gas: 2000000n });
   const receipt = await client.publicClient.waitForTransactionReceipt({ hash: paymentSetup, confirmations: 3 });
-  if (receipt.status !== "success") throw new Error("Proposal allowance registration failed.");
-  const proposalToken = await client.publicClient.readContract({ address: credits.address, abi: proposalCreditsAbi, functionName: "proposalToken", args: [task.taskId], blockNumber: receipt.blockNumber });
-  const [tokenCode, supply, ...balances] = await Promise.all([
-    client.publicClient.getBytecode({ address: proposalToken, blockNumber: receipt.blockNumber }),
-    client.publicClient.readContract({ address: proposalToken, abi: proposalTokenAbi, functionName: "totalSupply", blockNumber: receipt.blockNumber }),
-    ...activeAgents.map(agent => client.publicClient.readContract({ address: proposalToken, abi: proposalTokenAbi, functionName: "balanceOf", args: [agent], blockNumber: receipt.blockNumber })),
+  if (receipt.status !== "success") throw new Error("Proposal bond registration failed.");
+  const [tokenCode, supply, controller, ...balances] = await Promise.all([
+    client.publicClient.getBytecode({ address: addresses.token, blockNumber: receipt.blockNumber }),
+    client.publicClient.readContract({ address: addresses.token, abi: bondVotesAbi, functionName: "totalSupply", blockNumber: receipt.blockNumber }),
+    client.publicClient.readContract({ address: addresses.token, abi: bondVotesAbi, functionName: "bondController", blockNumber: receipt.blockNumber }),
+    ...roster.map(agent => client.publicClient.readContract({ address: addresses.token, abi: bondVotesAbi, functionName: "balanceOf", args: [agent.address], blockNumber: receipt.blockNumber })),
   ]);
-  if (!tokenCode || tokenCode === "0x" || supply !== BigInt(activeAgents.length * settings.proposalCredits)
-    || balances.some(balance => balance !== BigInt(settings.proposalCredits))) throw new Error("ERC-20 proposal token distribution did not match.");
+  if (!tokenCode || tokenCode === "0x" || supply !== BigInt(roster.length) * 10n ** 18n || controller.toLowerCase() !== credits.address.toLowerCase()
+    || balances.some(balance => balance !== 10n ** 18n)) throw new Error("Fixed FleetGov electorate and bond binding did not match.");
   const code = await client.publicClient.getBytecode({ address: addresses.hook, blockNumber: receipt.blockNumber });
   if (!code || code === "0x") throw new Error("Missing task proposal hook.");
   const allocation = await armComputeAllocation({ runId, governor: addresses.governor, requiredProposalIds: [], stopAt,
     discovery: { taskId: task.taskId.toString(), hook: addresses.hook, hookCodeHash: keccak256(code),
       creditsContract: credits.address, creditsCodeHash: credits.codeHash, runHash, startBlock: startBlock.toString(),
-      proposalToken: { address: proposalToken, codeHash: keccak256(tokenCode), initialSupply: Number(supply) },
-      creditsPerAgent: settings.proposalCredits, proposalCost: settings.proposalCost, proposalThreshold: settings.proposalThreshold,
+      proposalBonds: { token: addresses.token, tokenCodeHash: keccak256(tokenCode), totalSupply: supply.toString(),
+        amount: bondUnits(settings.proposalBond).toString(), cooldownSeconds: settings.proposalCooldownSeconds, participationBps: settings.bondParticipationPercent * 100 },
+      creditsPerAgent: 1, proposalCost: 1, proposalThreshold: settings.proposalThreshold,
       allowDelegation: settings.allowDelegation, agents: activeAgents, proposalWindowSeconds: 540, publicationWindowSeconds: 120 } });
-  await progress({ component: "compute", type: "allocation.armed", title: "Experiment configured. No predetermined proposals.",
-    detail: `Agents choose when and what to propose. Each received ${settings.proposalCredits} ERC-20 FPROP tokens; a proposal burns ${settings.proposalCost} and requires ${settings.proposalThreshold} FleetGov voting units. No additional minting, transfers or refunds. Delegation is ${settings.allowDelegation ? "enabled" : "disabled"}. The Guardian discovers every task proposal. No vote can extend this allocation.`,
-    txHash: paymentSetup, evidence: { allocationId: allocation.allocationId, taskId: task.taskId.toString(), creditsContract: credits.address,
-      proposalToken, initialSupply: Number(supply), proposalAllowance: settings.proposalCredits, costPerProposal: settings.proposalCost, proposalThreshold: settings.proposalThreshold, allowDelegation: settings.allowDelegation, proposals: [], stopAt: allocation.stopAt } });
+  await progress({ component: "compute", type: "allocation.armed", title: "One FleetGov token. Agent-authored proposals.",
+    detail: `Each agent holds one FleetGov voting token. Proposing reserves ${settings.proposalBond} FleetGov and requires ${settings.proposalThreshold} voting units. A ${settings.proposalCooldownSeconds}s cooldown and one unsettled proposal per agent limit spam. The bond returns when ${settings.bondParticipationPercent}% of the total supply votes FOR, AGAINST or ABSTAIN, even if the proposal loses. Cancellation or insufficient participation forfeits it. Fresh experiments redistribute the original fixed supply after the old run closes; no new tokens are minted.`,
+    txHash: paymentSetup, evidence: { allocationId: allocation.allocationId, taskId: task.taskId.toString(), proposalBonds: credits.address,
+      token: addresses.token, totalSupply: supply.toString(), proposalBond: settings.proposalBond, proposalThreshold: settings.proposalThreshold,
+      proposalCooldownSeconds: settings.proposalCooldownSeconds, bondParticipationPercent: settings.bondParticipationPercent,
+      allowDelegation: settings.allowDelegation, proposals: [], stopAt: allocation.stopAt } });
   const work: SimulationWork = { schema: "fleet.simulation-work.v1", scenario: EMERGENT_SCENARIO, runId,
     allocationId: allocation.allocationId, chainId: 84532, addresses, taskId: task.taskId.toString(),
     startBlock: startBlock.toString(), goal, constitution, settings, createdAt: new Date().toISOString(), preparationEvents: events,
-    agentDriven: { creditsContract: credits.address, proposalToken, allowance: settings.proposalCredits, maxWorkSteps: settings.maxWorkSteps, proposalWindowSeconds: 540 } };
+    agentDriven: { creditsContract: credits.address, proposalBonds: credits.address, allowance: 1, maxWorkSteps: settings.maxWorkSteps, proposalWindowSeconds: 540 } };
   await writeControlObject(`simulations/${runId}/work.json`, work);
   return work;
 }

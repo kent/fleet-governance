@@ -9,6 +9,9 @@ export const ExperimentSettings = z.object({
   budgetUsd: z.number().min(0.05).max(1).default(1),
   proposalCredits: z.number().int().min(1).max(8).default(3).describe("Fixed ERC-20 FPROP tokens minted per active agent for this experiment; no refills or transfers."),
   proposalCost: z.number().int().min(1).max(8).default(1).describe("FPROP tokens permanently burned per proposal, regardless of outcome."),
+  proposalBond: z.number().min(0.01).max(1).multipleOf(0.01).default(0.1).describe("FleetGov reserved per proposal. Returned with sufficient participation, including a losing vote; forfeited on cancellation or insufficient participation."),
+  proposalCooldownSeconds: z.number().int().min(30).max(600).default(60),
+  bondParticipationPercent: z.number().int().min(10).max(100).default(60).describe("Percent of total FleetGov supply at the proposal snapshot that must vote FOR, AGAINST or ABSTAIN to return the bond."),
   proposalThreshold: z.number().int().min(1).max(5).default(1),
   allowDelegation: z.boolean().default(true),
   durationMinutes: z.number().int().min(15).max(45).default(45),
@@ -21,4 +24,10 @@ export const ExperimentSettings = z.object({
   if (s.constitution === "custom" && !s.customConstitution) ctx.addIssue({ code: "custom", message: "Provide the custom constitution." });
 });
 export type ExperimentSettings = z.infer<typeof ExperimentSettings>;
-export const experimentDefaults = () => ExperimentSettings.parse({});
+// Old records retain their original credit parameters. New tools expose one token.
+export const BondExperimentSettings = ExperimentSettings.innerType().omit({ proposalCredits: true, proposalCost: true })
+  .superRefine((s, ctx) => {
+    if (s.proposalThreshold > s.agentCount || !s.allowDelegation && s.proposalThreshold !== 1) ctx.addIssue({ code: "custom", message: "The threshold must be attainable; without delegation use one FleetGov." });
+    if (s.constitution === "custom" && !s.customConstitution) ctx.addIssue({ code: "custom", message: "Provide the custom constitution." });
+  });
+export const experimentDefaults = () => BondExperimentSettings.parse({});

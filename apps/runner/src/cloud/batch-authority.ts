@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ExperimentSettings } from "./experiment-settings.js";
+import { ExperimentSettings, BondExperimentSettings } from "./experiment-settings.js";
 import { OperatorEmail } from "./operators.js";
 import { protectedRecord } from "./protected-records.js";
 import type { SimulationRequest } from "./simulation.js";
@@ -14,6 +14,9 @@ export const BatchInput = z.object({
 }).strict().superRefine((value, ctx) => {
   const cents = value.experiments.reduce((sum, run) => sum + Math.ceil(run.budgetUsd * 100), 0);
   if (cents > Math.floor(value.maxBudgetUsd * 100)) ctx.addIssue({ code: "custom", message: "The sum of run budget ceilings exceeds the batch ceiling." });
+});
+export const BondBatchInput = BatchInput.innerType().extend({ experiments: z.array(BondExperimentSettings).min(1).max(25) }).superRefine((value, ctx) => {
+  if (!BatchInput.safeParse(value).success) ctx.addIssue({ code: "custom", message: "Invalid bounded batch parameters." });
 });
 export const BatchPlan = BatchInput.innerType().extend({
   schema: z.literal("fleet.batch-plan.v1"), batchId: BatchId, requestedBy: OperatorEmail,
@@ -43,7 +46,7 @@ export async function assertBatchLaunch(request: SimulationRequest, batchId?: st
   const stored = await protectedRecord(batchPath(batchId, "plan"));
   const plan = BatchPlan.parse(stored?.value);
   const index = plan.runIds.indexOf(request.runId);
-  if (plan.requestedBy !== request.requestedBy || index < 0 || JSON.stringify(plan.experiments[index]) !== JSON.stringify(request.settings)
+  if (plan.requestedBy !== request.requestedBy || index < 0 || JSON.stringify(plan.experiments[index]) !== JSON.stringify(ExperimentSettings.parse(request.settings))
     || Date.parse(plan.expiresAt) <= Date.now() || await protectedRecord(batchPath(batchId, "cancel"))) {
     throw new Error("This run is outside the human-authorised batch.");
   }

@@ -2,6 +2,7 @@ import { BaseError, ContractFunctionRevertedError, keccak256, type PublicClient,
 import { agoraGovernorAbi, fleetHookAbi, fleetVotesAbi } from "@fleet/abi";
 import type { ComputeAllocation, ComputeObservation } from "./compute-policy.js";
 import { proposalCreditsAbi, proposalTokenAbi, proposalBudgetHookAbi } from "./proposal-credits.js";
+import { discoverBondProposals } from "./bond-discovery.js";
 
 export function isMissingProposal(error: unknown, proposalId: bigint): boolean {
   const reverted = error instanceof BaseError ? error.walk(cause => cause instanceof ContractFunctionRevertedError) : undefined;
@@ -14,6 +15,7 @@ export function isMissingProposal(error: unknown, proposalId: bigint): boolean {
 export async function discoverTaskProposals(client: Pick<PublicClient, "getBytecode" | "readContract" | "getContractEvents">, allocation: ComputeAllocation, blockNumber: bigint): Promise<ComputeObservation["proposals"]> {
   const p = allocation.discovery;
   if (!p || BigInt(p.startBlock) > blockNumber) throw new Error("No confirmed discovery range.");
+  if (p.proposalBonds) return discoverBondProposals(client, allocation, blockNumber);
   const credits = p.creditsContract as Hex, hook = p.hook as Hex, governor = allocation.governor as Hex;
   const [creditsCode, hookCode, bankGovernor, bankToken, governorToken, governorHook, hookGovernor, run, count] = await Promise.all([
     client.getBytecode({ address: credits, blockNumber }), client.getBytecode({ address: hook, blockNumber }),

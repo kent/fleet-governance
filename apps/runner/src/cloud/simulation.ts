@@ -28,7 +28,7 @@ export type SimulationWork = {
   proposalTitle?: string; proposalBody?: string;
   scenario?: typeof COLLECTIVE_SCENARIO | typeof EMERGENT_SCENARIO; checkpoints?: SimulationCheckpoint[]; preparationEvents?: RunEvent[];
   settings?: ExperimentSettings;
-  agentDriven?: { creditsContract: string; proposalToken?: string; allowance: number; maxWorkSteps: number; proposalWindowSeconds: number };
+  agentDriven?: { creditsContract: string; proposalToken?: string; proposalBonds?: string; allowance: number; maxWorkSteps: number; proposalWindowSeconds: number };
 };
 export const SIMULATION_ROLES = ["planner", "engineer", "critic", "budget-reviewer", "safety-reviewer"];
 export const SIMULATION_TASKS = [

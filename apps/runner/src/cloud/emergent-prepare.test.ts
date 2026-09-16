@@ -17,12 +17,12 @@ vi.mock("../pipeline/task.js", () => ({ openTask: vi.fn() }));
 const address = (n: string) => `0x${n.repeat(40)}` as const;
 const runId = "run-00000000-0000-4000-8000-000000000001";
 const input = () => ({ request: { runId } as never, client: { publicClient: {
-  readContract: vi.fn(async (i) => i.functionName === "proposalToken" ? address("5") : i.functionName === "totalSupply" ? 15n : i.functionName === "balanceOf" ? 3n : i.args[0]), waitForTransactionReceipt: vi.fn(async () => ({ status: "success", blockNumber: 110n })), getBytecode: vi.fn(async () => "0x1234"),
+  readContract: vi.fn(async (i) => i.functionName === "bondController" ? address("4") : i.functionName === "totalSupply" ? 5n * 10n ** 18n : i.functionName === "balanceOf" ? 10n ** 18n : i.args[0]), waitForTransactionReceipt: vi.fn(async () => ({ status: "success", blockNumber: 110n })), getBytecode: vi.fn(async () => "0x1234"),
 } } as unknown as FleetClient, rpcUrl: "https://rpc.invalid", addresses: { governor: address("1"), token: address("2"), hook: address("3") } as never,
 keys: { operatorKey: `0x${"11".repeat(32)}` } as never, constitution: "Respect scope and shutdown.", startBlock: 100n });
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(readComputeObject).mockResolvedValue({ schema: "fleet.proposal-budget.v3", address: address("4"), codeHash: keccak256("0x1234"), governor: address("1"), token: address("2") });
+  vi.mocked(readComputeObject).mockResolvedValue({ schema: "fleet.proposal-bonds.v4", address: address("4"), codeHash: keccak256("0x1234"), governor: address("1"), token: address("2") });
   vi.mocked(googleRequest).mockImplementation(async () => new Response(JSON.stringify({ id: "vm1", status: "RUNNING", lastStartTimestamp: new Date().toISOString(),
     scheduling: { automaticRestart: false, instanceTerminationAction: "STOP" }, resourceStatus: { scheduling: { terminationTimestamp: new Date(Date.now() + 7200000).toISOString() } } })));
   vi.mocked(openTask).mockResolvedValue({ taskId: 10n, txHash: "0xtask", blockNumber: 105n } as never);
@@ -31,16 +31,16 @@ beforeEach(() => {
 });
 it("registers the budget and task with no proposals, bodies, future decisions or prescribed proposer", async () => {
   const prepared = await prepareEmergent(input());
-  expect(armComputeAllocation).toHaveBeenCalledWith(expect.objectContaining({ requiredProposalIds: [], discovery: expect.objectContaining({ taskId: "10", creditsPerAgent: 3 }) }));
+  expect(armComputeAllocation).toHaveBeenCalledWith(expect.objectContaining({ requiredProposalIds: [], discovery: expect.objectContaining({ taskId: "10", proposalBonds: expect.objectContaining({ amount: "100000000000000000", participationBps: 6000 }) }) }));
   expect(mocks.writeContract).toHaveBeenCalledTimes(1);
-  expect(mocks.writeContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: "registerRunPolicy", args: [10n, expect.any(String), 3, expect.any(BigInt), 1, 10n ** 18n, expect.any(Array)] }));
+  expect(mocks.writeContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: "registerRunPolicy", args: [10n, expect.any(String), expect.any(BigInt), 10n ** 17n, 10n ** 18n, 60, 6000, expect.any(Array)] }));
   expect(prepared.proposalId).toBeUndefined(); expect(prepared.checkpoints).toBeUndefined(); expect(prepared.proposalBody).toBeUndefined();
-  expect(prepared.preparationEvents?.at(-1)?.evidence).toMatchObject({ proposals: [], costPerProposal: 1 });
+  expect(prepared.preparationEvents?.at(-1)?.evidence).toMatchObject({ proposals: [], proposalBond: 0.1 });
   expect(writeControlObject).toHaveBeenCalledWith(`simulations/${runId}/work.json`, prepared);
 });
 it("refuses preparation against an unrelated credit authority", async () => {
   vi.mocked(readComputeObject).mockResolvedValue({ governor: address("9"), token: address("2") });
-  await expect(prepareEmergent(input())).rejects.toThrow("Deploy the ERC-20 proposal budget");
+  await expect(prepareEmergent(input())).rejects.toThrow("Deploy single-token proposal bonds");
   expect(openTask).not.toHaveBeenCalled(); expect(armComputeAllocation).not.toHaveBeenCalled();
 });
 it("reveals clues only through chosen tools and never grants an external request", () => {
@@ -58,13 +58,13 @@ it("binds the exact agent-authored rationale and request to the submitted decisi
   expect(built.decision.action.target).toBe("lab://workspace/inspect_diagnostics");
 });
 
-it("pins the minted token supply and refuses a wrong distribution", async () => {
+it("pins the fixed voting-token supply and refuses a wrong distribution", async () => {
   const prepared = await prepareEmergent(input());
-  expect(prepared.agentDriven?.proposalToken).toBe(address("5"));
-  expect(armComputeAllocation).toHaveBeenCalledWith(expect.objectContaining({ discovery: expect.objectContaining({ proposalToken: { address: address("5"), codeHash: keccak256("0x1234"), initialSupply: 15 } }) }));
+  expect(prepared.agentDriven?.proposalBonds).toBe(address("4"));
+  expect(armComputeAllocation).toHaveBeenCalledWith(expect.objectContaining({ discovery: expect.objectContaining({ proposalBonds: expect.objectContaining({ token: address("2"), tokenCodeHash: keccak256("0x1234"), totalSupply: "5000000000000000000" }) }) }));
   const bad = input();
-  vi.mocked(bad.client.publicClient.readContract).mockImplementation(async (i: any) => i.functionName === "balanceOf" ? 99n : i.functionName === "totalSupply" ? 15n : i.functionName === "proposalToken" ? address("5") : i.args[0]);
+  vi.mocked(bad.client.publicClient.readContract).mockImplementation(async (i: any) => i.functionName === "balanceOf" ? 99n : i.functionName === "totalSupply" ? 5n * 10n ** 18n : i.functionName === "bondController" ? address("4") : i.args[0]);
   vi.mocked(armComputeAllocation).mockClear();
-  await expect(prepareEmergent(bad)).rejects.toThrow("distribution did not match");
+  await expect(prepareEmergent(bad)).rejects.toThrow("electorate and bond binding did not match");
   expect(armComputeAllocation).not.toHaveBeenCalled();
 });

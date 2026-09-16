@@ -6,13 +6,13 @@ vi.mock("./simulation.js", () => ({ readSimulationRequest: mocks.queue, queueSim
 vi.mock("./compute-admin.js", () => ({ COMPUTE_TARGET: "fixed-worker", releaseComputeAllocation: mocks.release }));
 vi.mock("./google.js", async importOriginal => ({ ...await importOriginal<typeof import("./google.js")>(), googleRequest: mocks.request }));
 import { tickBatch, beginBatchRetirement, releaseBatchAllocation, completeBatchRetirement } from "./batch-runner.js";
-import { experimentDefaults } from "./experiment-settings.js";
+import { ExperimentSettings, experimentDefaults } from "./experiment-settings.js";
 import { CloudError } from "./google.js";
 const batchId = "batch-00000000-0000-4000-8000-000000000001";
 const runId = "run-00000000-0000-4000-8000-000000000001";
 const allocationId = "00000000-0000-4000-8000-000000000002";
 const image = `us-central1-docker.pkg.dev/fleet-governance/fleet/runner@sha256:${"a".repeat(64)}`;
-const plan = { schema: "fleet.batch-plan.v1", batchId, name: "Bounded sweep", requestedBy: "operator1@example.com", createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600_000).toISOString(), maxBudgetUsd: 1, experiments: [experimentDefaults()], runIds: [runId] };
+const plan = { schema: "fleet.batch-plan.v1", batchId, name: "Bounded sweep", requestedBy: "operator1@example.com", createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600_000).toISOString(), maxBudgetUsd: 1, experiments: [ExperimentSettings.parse(experimentDefaults())], runIds: [runId] };
 let store: Map<string, unknown>;
 beforeEach(() => {
   vi.resetAllMocks();
