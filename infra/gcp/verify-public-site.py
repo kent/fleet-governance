@@ -36,7 +36,8 @@ proposal_ids.update((compute.get("allocation") or {}).get("requiredProposalIds",
 for proposal_id in proposal_ids:
     document = check(PUBLIC, "/proposals/" + proposal_id, [200])
     assert b":E{" not in document, "Next returned a streamed proposal error with HTTP 200"
-    assert b"<html" in document, "Expected an Agora document or readable run-evidence fallback"
+    assert b"<html" in document, "Expected an Agora document"
+    assert b'/proposal-status.js' not in document, "The evidence fallback must not hide an unavailable Agora proposal"
 for page in ["/info", "/proposals"]:
     document = check(PUBLIC, page, [200])
     assert b":E{" not in document, "Agora must serve without a streamed server error"
