@@ -493,6 +493,7 @@ function renderInspector() {
     add("Task", agent?.task || "Independently review access to private reference solutions against the charter and constitution.");
     add("Last reported activity", agent?.phase || "No activity recorded");
     add("Model", sim?.model || "Not recorded for this run");
+    if (sim?.modelSettings) jsonDetail("Recorded model settings", sim.modelSettings);
     const address = agent?.address || vote?.voter || identity?.address;
     add("Registered wallet", address);
     if (/^0x[0-9a-fA-F]{40}$/.test(address || "")) link("Voting power and delegations in Agora →", `/delegates/${address}`);

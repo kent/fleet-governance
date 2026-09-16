@@ -46,6 +46,8 @@ export type OpenRouterProviderOpts = {
    *  returned `raw`/error string are built from the prompt and the response body only. */
   apiKey: string;
   model?: string;
+  /** Explicitly selected by the operator for models that advertise this capability. */
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   baseUrl?: string;
   fetchImpl?: typeof fetch;
   /** Delay before the one retry on HTTP 429 or 5xx. Defaults to 300 ms; tests override this to
@@ -309,6 +311,7 @@ export class OpenRouterProvider implements Provider {
   readonly name = "openrouter";
   private readonly apiKey: string;
   private readonly model: string;
+  private readonly reasoningEffort: OpenRouterProviderOpts["reasoningEffort"];
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly retryBackoffMs: number;
@@ -319,6 +322,7 @@ export class OpenRouterProvider implements Provider {
   constructor(opts: OpenRouterProviderOpts) {
     this.apiKey = opts.apiKey;
     this.model = opts.model ?? DEFAULT_OPENROUTER_MODEL;
+    this.reasoningEffort = opts.reasoningEffort;
     this.baseUrl = opts.baseUrl ?? DEFAULT_BASE_URL;
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.retryBackoffMs = opts.retryBackoffMs ?? 300;
@@ -340,6 +344,7 @@ export class OpenRouterProvider implements Provider {
         { role: "user", content: req.user },
       ],
       max_completion_tokens: completionLimit,
+      ...(this.reasoningEffort ? { reasoning: { effort: this.reasoningEffort, exclude: true } } : {}),
       response_format: {
         type: "json_schema",
         json_schema: { name: "fleet_output", strict: true, schema: jsonSchema },

@@ -537,3 +537,25 @@ describe("OpenRouterProvider (against a local fake HTTP server)", () => {
     expect(seenHeaders["content-type"]).toBe("application/json");
   });
 });
+
+
+it("sends explicitly selected reasoning effort while preserving output and price bounds", async () => {
+  const requests: any[] = [];
+  const fetchImpl = (async (_url: unknown, init: RequestInit) => {
+    requests.push(JSON.parse(String(init.body)));
+    return new Response(JSON.stringify({ model: "meta/muse-spark-1.3-contributor",
+      choices: [{ message: { content: '{"value":"ok"}' }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 10, completion_tokens: 20, cost: 0.000005 } }), { status: 200 });
+  }) as typeof fetch;
+  const request = { system: "Review the proposal", user: "Return a public result", schema: z.object({ value: z.string() }), maxTokens: 6000, timeoutMs: 120000,
+    spending: { inputTokens: 100000, inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.2 } };
+  for (const reasoningEffort of [undefined, "low"] as const) {
+    const provider = new OpenRouterProvider({ apiKey: FAKE_API_KEY, fetchImpl, ...(reasoningEffort ? { reasoningEffort } : {}) });
+    expect((await provider.complete(request)).ok).toBe(true);
+  }
+  expect(requests[0].reasoning).toBeUndefined();
+  expect(requests[1].reasoning).toEqual({ effort: "low", exclude: true });
+  expect(requests[1].max_completion_tokens).toBe(5872);
+  expect(requests[1].provider).toMatchObject({ require_parameters: true, allow_fallbacks: false,
+    max_price: { prompt: 0.1, completion: 0.2, request: 0 } });
+});

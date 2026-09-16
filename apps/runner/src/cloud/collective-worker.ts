@@ -35,6 +35,7 @@ export async function runCollectiveWorker(runId: string): Promise<void> {
   const dir = `/srv/fleet/state/simulations/${runId}`;
   const publish = statusPublisher(snapshot => writeObject(simulationPath(runId), snapshot));
   let status: Record<string, unknown> = { runId, scenario: COLLECTIVE_SCENARIO, scripted: false, model: DEMO_MODEL,
+    modelSettings: { reasoningEffort: "low", reviewMaxTokens: 6000, reviewTimeoutMs: 120000 },
     agents, activity, events, rounds, votes: [], communication: { mode: "shared-findings-board", messages }, terminal: false };
   const persist = async (phase: string, message: string) => {
     status = { ...status, phase, message, updatedAt: new Date().toISOString(), ...(inference ? { inference: inference.summary() } : {}) };
@@ -82,7 +83,7 @@ export async function runCollectiveWorker(runId: string): Promise<void> {
         // 6k review and its one 12k repair without changing the run's dollar cap.
         maxOutputTokensPerCall: 16000, prices: { [DEMO_MODEL]: { inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.2 } },
       }) });
-    const provider = new OpenRouterProvider({ apiKey: process.env.OPENROUTER_API_KEY!, model: DEMO_MODEL, maxAttempts: 1 });
+    const provider = new OpenRouterProvider({ apiKey: process.env.OPENROUTER_API_KEY!, model: DEMO_MODEL, reasoningEffort: "low", maxAttempts: 1 });
     const nonces = new NonceManager(new MemoryNonceStore(), rpcUrl);
     const signers = agents.map(agent => new FleetSigner({ privateKey: bundle.keys[`FLEET_AGENT_KEY_${agent.agentId}`]!, rpcUrl, nonces,
       policy: { chainId: 84532, governor: work.addresses.governor, ledger: work.addresses.ledger, token: work.addresses.token,
