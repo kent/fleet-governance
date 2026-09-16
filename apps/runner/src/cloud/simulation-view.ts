@@ -83,7 +83,7 @@ export async function simulationProposal(proposalId: string) {
     const status = await readObject<Status>(simulationPath(run.runId));
     const proposal = status?.rounds?.find(round => round.proposalId === proposalId && round.txHash);
     return proposal ? { ...work, ...proposal, proposalTitle: proposal.title, checkpointIndex: proposal.checkpoint,
-      proposalOrigin: "agent", agents: agentRoster } : null;
+      proposalOrigin: "agent", agents: agentRoster.slice(0, work.settings?.agentCount ?? 5) } : null;
   }
   const checkpoint = work?.checkpoints?.find(item => item.proposalId === proposalId);
   return checkpoint ? { ...work, ...checkpoint, checkpointIndex: work!.checkpoints!.indexOf(checkpoint), agents: agentRoster }

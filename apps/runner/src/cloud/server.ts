@@ -1,9 +1,10 @@
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { DEMO_DEFAULT_GOAL } from "../lib/demo-config.js";
-import { ACTIVE, RUN_ID, controlDeps, queueDemo, runPath, type DemoRun } from "./control.js";
-import { BUCKET, googleRequest, readObject } from "./google.js";
+import { experimentDefaults } from "./experiment-settings.js";
+import { experimentRecord, experimentIndex } from "./experiment-records.js";
+import { RUN_ID, controlDeps, runPath } from "./control.js";
+import { readObject } from "./google.js";
 import { queueSimulation } from "./simulation.js";
 
 import { siteAccess, authorisedRequest, publicProxyPath, publicSnapshot } from "./site-access.js";
@@ -57,27 +58,31 @@ createServer(async (request, response) => {
     }
     if (url.pathname === "/api/experiments" && request.method === "POST") {
       const id = String(request.headers["idempotency-key"] ?? "");
-      json(response, 202, await queueDemo(await body(request), id)); return;
+      json(response, 202, await queueSimulation(id, await body(request))); return;
     }
     if (url.pathname === "/api/experiments" && request.method === "GET") {
-      const listing = await (await googleRequest("storage", `storage/v1/b/${BUCKET}/o?prefix=demo%2Fruns%2F&matchGlob=**%2Frequest.json&maxResults=1000`)).json() as { items?: { name: string }[] };
-      const requests = await Promise.all((listing.items ?? []).map(item => readObject<DemoRun>(item.name)));
-      json(response, 200, { runs: requests.filter(item => item !== null).sort((a, b) => b!.createdAt.localeCompare(a!.createdAt)).slice(0, 50), active: await readObject(ACTIVE) }); return;
+      const experiments = await experimentIndex();
+      json(response, 200, { experiments, runs: experiments }); return;
     }
+
     const match = /^\/api\/experiments\/(run-[0-9a-f-]+)$/.exec(url.pathname);
     if (request.method === "GET" && match && RUN_ID.test(match[1]!)) {
       const id = match[1]!;
-      const [run, status] = await Promise.all([readObject(runPath(id, "request.json")), readObject(runPath(id, "status.json"))]);
-      json(response, run ? 200 : 404, { run, status }); return;
+      const record = await experimentRecord(id);
+      json(response, record ? 200 : 404, record ?? { error: "Experiment not found." }); return;
     }
+
     const evidence = /^\/api\/experiments\/(run-[0-9a-f-]+)\/evidence$/.exec(url.pathname);
     if (request.method === "GET" && evidence && RUN_ID.test(evidence[1]!)) {
-      const value = await readObject(runPath(evidence[1]!, "evidence.json"));
+      const record = await experimentRecord(evidence[1]!);
+      const value = record?.experiment.kind === "governed"
+        ? { ...record, snapshot: await cachedSimulationSnapshot(evidence[1]) }
+        : await readObject(runPath(evidence[1]!, "evidence.json"));
       response.setHeader("content-disposition", `attachment; filename="${evidence[1]}-evidence.json"`);
       json(response, value ? 200 : 404, value ?? { error: "Evidence is saved when this run finishes." }); return;
     }
     if (url.pathname === "/api/experiment-defaults") {
-      json(response, 200, { agentCount: 5, maxAgents: 25, goal: DEMO_DEFAULT_GOAL, constitution: readFileSync(path.join(root, "experiments/constitutions/fleet-v1.md"), "utf8") }); return;
+      json(response, 200, { ...experimentDefaults(), maxAgents: 5, minAgents: 3, electorate: 5, quorumVotes: 3, constitutionText: readFileSync(path.join(root, "experiments/constitutions/fleet-v1.md"), "utf8") }); return;
     }
     if (url.pathname === "/constitution") {
       const constitution = readFileSync(path.join(root, "experiments/constitutions/fleet-v1.md"), "utf8")
@@ -86,15 +91,18 @@ createServer(async (request, response) => {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'self'; script-src 'none'; style-src 'self'; frame-ancestors 'none'; base-uri 'self'" });
       response.end(page.replace("{{CONSTITUTION}}", () => constitution)); return;
     }
-    if (url.pathname === "/experiments" || /^\/experiments\/run-[0-9a-f-]+$/.test(url.pathname)) {
+    if (["/experiments", "/experiments/new"].includes(url.pathname) || /^\/experiments\/run-[0-9a-f-]+$/.test(url.pathname)) {
+      const id = url.pathname.split("/")[2];
+      const record = id && RUN_ID.test(id) ? await experimentRecord(id) : null;
+      if (id && id !== "new" && !record) { json(response, 404, { error: "Experiment not found." }); return; }
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'" });
-      response.end(page("experiment.html")); return;
+      response.end(page(record ? record.experiment.kind === "governed" ? "compute.html" : "experiment.html" : "experiments.html")); return;
     }
     if (url.pathname === "/compute") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'" });
       response.end(page("compute.html")); return;
     }
-    if (["/experiment.js", "/experiment.css", "/compute.js", "/compute.css", "/proposal-status.js"].includes(url.pathname)) {
+    if (["/experiments.js", "/experiments.css", "/experiment.js", "/experiment.css", "/compute.js", "/compute.css", "/proposal-status.js"].includes(url.pathname)) {
       response.writeHead(200, { "content-type": url.pathname.endsWith(".js") ? "text/javascript" : "text/css", "x-content-type-options": "nosniff" });
       response.end(readFileSync(path.join(root, "apps/runner/public", url.pathname.slice(1)))); return;
     }

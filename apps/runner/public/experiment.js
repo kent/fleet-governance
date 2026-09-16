@@ -142,7 +142,7 @@ async function refreshRun() {
     $("empty").hidden = true; $("live").hidden = false;
     $("run-id").textContent = run.runId;
     $("saved-goal").textContent = run.settings.goal;
-    $("saved-constitution").textContent = status?.constitution?.text || run.settings.customConstitution || defaults?.constitution || "Constitution loading.";
+    $("saved-constitution").textContent = status?.constitution?.text || run.settings.customConstitution || defaults?.constitutionText || "Constitution loading.";
     $("constitution-hash").textContent = status?.constitutionHash || "Digest will appear when the worker freezes this run's configuration.";
     $("phase").textContent = phaseLabels[status?.phase] || status?.phase || "Queued";
     $("phase").className = `pill ${status?.phase === "failed" ? "failed" : status?.terminal ? "" : "active"}`;
@@ -168,7 +168,7 @@ async function refreshHistory() {
     if (!runs.length) $("history").append(text("div", "No experiments yet. Your first run will appear here.", "history-row"));
     for (const run of runs) {
       const row = text("div", "", "history-row");
-      row.append(link(run.settings.goal.slice(0, 100), `/experiments/${run.runId}`), text("span", `${run.settings.agentCount} agents`), text("time", new Date(run.createdAt).toLocaleString()));
+      row.append(link((run.goal || run.settings?.goal || "Experiment").slice(0, 100), `/experiments/${run.runId}`), text("span", `${run.agentCount || run.settings?.agentCount} agents`), text("time", new Date(run.createdAt).toLocaleString()));
       $("history").append(row);
     }
   } catch (error) { $("history").textContent = error.message; }

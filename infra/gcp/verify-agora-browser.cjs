@@ -39,7 +39,7 @@ const historical = '177584537204592597751153488017729927912845333076971828744807
       }, votes.map(vote => vote.reason), { timeout: 30000 });
       const content = await page.locator('body').innerText();
       assert.ok(!content.includes('This page couldn’t load'));
-      for (let agent = 1; agent <= 5; agent++) assert.ok(content.includes('Agent' + agent));
+      for (let agent = 1; agent <= (proposalId === historical ? 5 : snapshot.simulationWork?.settings?.agentCount || 5); agent++) assert.ok(content.includes('Agent' + agent));
       for (const [support, label] of [[1, 'FOR'], [0, 'AGAINST']]) {
         const weight = votes.filter(vote => Number(vote.support) === support)
           .reduce((sum, vote) => sum + BigInt(vote.weight), 0n);
@@ -61,7 +61,7 @@ const historical = '177584537204592597751153488017729927912845333076971828744807
         const text = document.body.innerText.replace(/\s+/g, ' ');
         return reasons.every(reason => text.includes(reason.replace(/\s+/g, ' ').slice(0, 100)));
       }, reasons, { timeout: 30000 });
-      assert.match(await page.locator('[data-profile-delegations]').innerText(), /self-delegated/);
+      assert.match(await page.locator('[data-profile-delegations]').innerText(), /Delegated to/);
       assert.deepEqual(errors, [], 'Agent profile must render its actual indexed evidence');
       await page.close();
     }
