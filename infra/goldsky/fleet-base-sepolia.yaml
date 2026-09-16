@@ -4,15 +4,15 @@ sources:
   # A new source identity backfills this Governor instead of resuming the old
   # contract feed's checkpoint. Keep it stable for later routine deployments.
   # https://docs.goldsky.com/turbo-pipelines/cli-reference#apply-a-pipeline
-  fleet_token_v3_logs:
+  fleet_bond_v4_logs:
     type: dataset
     dataset_name: base_sepolia.raw_logs
     version: 1.0.0
     primary_key: id
     start_at: earliest
     filter: >-
-      block_number >= 46907131 AND
-      address IN ('0x7d49b367a4c028c886a90ab8648e94e37b57a3d3', '0xde04508b1b46a35c9fd947ccafabdf78ffebf79a')
+      block_number >= 46915091 AND
+      address IN ('0x6621b6e4dfd16c5bccce7cd696666f5508c7d87d', '0xed9bd5da2439f2561a49b570708fda273fc82e4a')
 transforms:
   fleet_events:
     type: sql
@@ -20,9 +20,9 @@ transforms:
     sql: |
       SELECT id, address, block_number, block_hash, transaction_hash,
              transaction_index, log_index, data, topics, block_timestamp, _gs_op
-      FROM fleet_token_v3_logs
-      WHERE block_number >= 46907131 AND address IN
-        ('0x7d49b367a4c028c886a90ab8648e94e37b57a3d3', '0xde04508b1b46a35c9fd947ccafabdf78ffebf79a')
+      FROM fleet_bond_v4_logs
+      WHERE block_number >= 46915091 AND address IN
+        ('0x6621b6e4dfd16c5bccce7cd696666f5508c7d87d', '0xed9bd5da2439f2561a49b570708fda273fc82e4a')
 sinks:
   history:
     type: webhook

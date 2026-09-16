@@ -1,32 +1,32 @@
 {
   "chainId": 84532,
-  "deploymentBlock": 46907131,
-  "source": "docs/evidence/token-governance-base-sepolia-20260916/report.md",
+  "deploymentBlock": 46915091,
+  "source": "docs/evidence/bond-governance-base-sepolia-20260916/report.md",
   "addresses": {
-    "artifactStore": "0xDf473E1EBDd941DFc211dFFe9a5c164503314550",
-    "executor": "0x1b483311993086aab16bA637eb66Ee2379430881",
-    "governor": "0xdE04508B1B46a35C9fD947CcAfAbDf78fFEBf79a",
-    "hook": "0x5986F7fC203e32B8d94f9f46594dfd7D545422c0",
-    "ledger": "0xA9108a2e6b39DBE6beeA997b8CC4FCeCBD436e45",
-    "registry": "0x2580Fd78D393b3F92bB7ce9Cf79B6cAA77560Ad9",
-    "timelock": "0x6bd2C45Af116f07dDA5eF89F92c7521d2AE2f84a",
-    "token": "0x7d49b367A4c028c886A90ab8648e94e37b57A3d3"
+    "artifactStore": "0x8d55AeB8Fe6c5d1D6599056669e1FA29D63afCf2",
+    "executor": "0xd3eBb27f42107b4acCC42A4F517f74f0eE36C26C",
+    "governor": "0xEd9bd5dA2439f2561A49B570708fda273Fc82e4a",
+    "hook": "0x8C214401ED3DA95d1F6813981383F69f4cd922C0",
+    "ledger": "0x9695307216caf94e745AC825CC4Cee0d516BAf62",
+    "registry": "0xCeE37b4bD5fe7421334cA9b104a81137c5fDE610",
+    "timelock": "0x09896E861F0ADf89E9068121596D8D53df441aAb",
+    "token": "0x6621b6E4DfD16c5bcCCe7cd696666F5508C7d87D"
   },
-  "proposalBudget": {
-    "schema": "fleet.proposal-budget.v3",
+  "proposalBonds": {
+    "schema": "fleet.proposal-bonds.v4",
     "chainId": 84532,
-    "address": "0xdaec0A3AD81Fd988120c877cb47450323809DAFb",
-    "governor": "0xdE04508B1B46a35C9fD947CcAfAbDf78fFEBf79a",
-    "hook": "0x5986F7fC203e32B8d94f9f46594dfd7D545422c0",
-    "token": "0x7d49b367A4c028c886A90ab8648e94e37b57A3d3",
+    "address": "0xcCD905dFB24C8681d3007f9c6CbB11FC9B8aBD60",
+    "governor": "0xEd9bd5dA2439f2561A49B570708fda273Fc82e4a",
+    "hook": "0x8C214401ED3DA95d1F6813981383F69f4cd922C0",
+    "token": "0x6621b6E4DfD16c5bcCCe7cd696666F5508C7d87D",
     "operator": "0xd904518FB12640a8405b36c33b0F0C87098F7977",
-    "codeHash": "0x46eb1cd5c2b8233f26e1d44ec61fb8e7afc04501d5386a0eaefc8bfddb08695a",
-    "observedBlock": "46907148",
-    "revision": "53553bc198aa1c6cef57864ceb8cea36e35fd4dc",
-    "workflowRun": "35133129643"
+    "codeHash": "0x92198ffe4decdffccb38a379be8391cd18732ced42894228f76699fae1c4ff74",
+    "observedBlock": "46915109",
+    "revision": "b94873995febd4115804d07f6ae699e38c92fc7a",
+    "workflowRun": "35158732609"
   },
   "verification": {
-    "proposalId": "98636021541983674808459314770805582488728814206967549486486003487494743075232",
+    "proposalId": "105876239536817791697190251002797392229471859259602692229134181320801892892472",
     "expectedBallots": 5,
     "scripted": true
   }
