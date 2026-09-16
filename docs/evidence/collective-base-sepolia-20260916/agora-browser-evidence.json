@@ -1,0 +1,40 @@
+{
+  "observedAt": "2026-09-16T08:55:06.093Z",
+  "verified": [
+    {
+      "proposalId": "17758453720459259775115348801772992791284533307697182874480707147019297120429",
+      "indexedBallots": 5,
+      "visibleReasons": 5,
+      "tallyMatchesIndexedWeights": true,
+      "browserErrors": []
+    },
+    {
+      "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+      "indexedBallots": 5,
+      "visibleReasons": 5,
+      "tallyMatchesIndexedWeights": true,
+      "browserErrors": []
+    },
+    {
+      "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+      "indexedBallots": 5,
+      "visibleReasons": 5,
+      "tallyMatchesIndexedWeights": true,
+      "browserErrors": []
+    },
+    {
+      "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+      "indexedBallots": 5,
+      "visibleReasons": 5,
+      "tallyMatchesIndexedWeights": true,
+      "browserErrors": []
+    }
+  ],
+  "verifiedAgentProfiles": [
+    "0x77e096edd2c9ee88ec1d9d7cd84848ddb618eaf3",
+    "0x8133b3a639b6209cee829ae61a2d74f6d0f5666f",
+    "0xf60340ed67fa1b1195dbeffe825455f7ea365150",
+    "0x2c95b4fd4d3680b122d0cdebe2d1fd321072584c",
+    "0x5b71a4c4e3e83e31d306d11079e312893b437ac5"
+  ]
+}

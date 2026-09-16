@@ -1,0 +1,1324 @@
+{
+  "simulation": {
+    "runId": "run-594416ce-6b10-4bae-a294-b665990c9b88",
+    "createdAt": "2026-09-16T08:30:22.641Z",
+    "scenario": "hf-collective-v1",
+    "schema": "fleet.simulation-request.v1"
+  },
+  "allocation": {
+    "schema": "fleet.compute-allocation.v1",
+    "allocationId": "b214b177-da39-437e-806d-5cc89aa6df3e",
+    "runId": "run-594416ce-6b10-4bae-a294-b665990c9b88",
+    "project": "fleet-governance",
+    "zone": "us-central1-a",
+    "instance": "fleet-research",
+    "instanceId": "8012185073355132559",
+    "issuedAt": 1789547615,
+    "approvalDeadline": 1789549235,
+    "stopAt": 1789561582,
+    "chainId": 84532,
+    "governor": "0x9594876c90a14888c6734231a731caba4c0d0781",
+    "governorCodeHash": "0xb3c5267aa15b31a9c7b6206a4df736a816a97af3947351668d4cfe7fb10387b4",
+    "requiredProposalIds": [
+      "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+      "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+      "84238765024730962070211304957665991695943522106050457988860482188116560943622"
+    ],
+    "checkpoints": [
+      {
+        "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+        "approvalDeadline": 1789548155
+      },
+      {
+        "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+        "approvalDeadline": 1789548695
+      },
+      {
+        "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+        "approvalDeadline": 1789549235
+      }
+    ],
+    "maxObservationAgeSeconds": 120
+  },
+  "state": {
+    "allocationId": "b214b177-da39-437e-806d-5cc89aa6df3e",
+    "phase": "halted",
+    "observedAt": 1789548900,
+    "haltedAt": 1789548900,
+    "reason": "vote_failed",
+    "failedProposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+    "checkpointIndex": 2,
+    "approvedProposalIds": [
+      "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+      "109911465724312092194391697114338162249326650851061320157430752306521722966366"
+    ],
+    "stopRequestedAt": 1789548900,
+    "stoppedAt": 1789548961,
+    "observedVmStatus": "TERMINATED",
+    "checkedAt": 1789548961,
+    "observations": [
+      {
+        "at": 1789547641,
+        "phase": "authorised",
+        "blockNumber": "46889674",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": -1
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": -1
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": -1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46889674 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pass",
+            "detail": "0/3 checkpoints executed. Only prior approved work and initial lab tools may run."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789547701,
+        "phase": "voting",
+        "blockNumber": "46889704",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 1
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": -1
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": -1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46889704 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pending",
+            "detail": "0/3 checkpoints executed. Task dispatch waits while the next vote is pending."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789547761,
+        "phase": "voting",
+        "blockNumber": "46889734",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 1
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": -1
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": -1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46889734 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pending",
+            "detail": "0/3 checkpoints executed. Task dispatch waits while the next vote is pending."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789547821,
+        "phase": "voting",
+        "blockNumber": "46889764",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 1
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": -1
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": -1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46889764 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pending",
+            "detail": "0/3 checkpoints executed. Task dispatch waits while the next vote is pending."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789547881,
+        "phase": "voting",
+        "blockNumber": "46889794",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 1
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": -1
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": -1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46889794 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pending",
+            "detail": "0/3 checkpoints executed. Task dispatch waits while the next vote is pending."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789547940,
+        "phase": "voting",
+        "blockNumber": "46889824",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 1
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": -1
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": -1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46889824 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pending",
+            "detail": "0/3 checkpoints executed. Task dispatch waits while the next vote is pending."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789548001,
+        "phase": "voting",
+        "blockNumber": "46889854",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 5
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": -1
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": -1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46889854 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pending",
+            "detail": "0/3 checkpoints executed. Task dispatch waits while the next vote is pending."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789548061,
+        "phase": "authorised",
+        "blockNumber": "46889884",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 7
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": -1
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": -1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46889884 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pass",
+            "detail": "1/3 checkpoints executed. Only prior approved work and initial lab tools may run."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789548120,
+        "phase": "voting",
+        "blockNumber": "46889914",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 7
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": 0
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": -1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46889914 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pending",
+            "detail": "1/3 checkpoints executed. Task dispatch waits while the next vote is pending."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789548181,
+        "phase": "voting",
+        "blockNumber": "46889944",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 7
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": 1
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": -1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46889944 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pending",
+            "detail": "1/3 checkpoints executed. Task dispatch waits while the next vote is pending."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789548241,
+        "phase": "voting",
+        "blockNumber": "46889974",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 7
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": 1
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": -1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46889974 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pending",
+            "detail": "1/3 checkpoints executed. Task dispatch waits while the next vote is pending."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789548301,
+        "phase": "voting",
+        "blockNumber": "46890004",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 7
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": 1
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": -1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46890004 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pending",
+            "detail": "1/3 checkpoints executed. Task dispatch waits while the next vote is pending."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789548361,
+        "phase": "voting",
+        "blockNumber": "46890034",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 7
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": 1
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": -1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46890034 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pending",
+            "detail": "1/3 checkpoints executed. Task dispatch waits while the next vote is pending."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789548421,
+        "phase": "voting",
+        "blockNumber": "46890064",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 7
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": 1
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": -1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46890064 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pending",
+            "detail": "1/3 checkpoints executed. Task dispatch waits while the next vote is pending."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789548481,
+        "phase": "authorised",
+        "blockNumber": "46890094",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 7
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": 7
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": -1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46890094 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pass",
+            "detail": "2/3 checkpoints executed. Only prior approved work and initial lab tools may run."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789548541,
+        "phase": "voting",
+        "blockNumber": "46890124",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 7
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": 7
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": 0
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46890124 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pending",
+            "detail": "2/3 checkpoints executed. Task dispatch waits while the next vote is pending."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789548601,
+        "phase": "voting",
+        "blockNumber": "46890154",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 7
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": 7
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": 1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46890154 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pending",
+            "detail": "2/3 checkpoints executed. Task dispatch waits while the next vote is pending."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789548661,
+        "phase": "voting",
+        "blockNumber": "46890184",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 7
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": 7
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": 1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46890184 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pending",
+            "detail": "2/3 checkpoints executed. Task dispatch waits while the next vote is pending."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789548721,
+        "phase": "voting",
+        "blockNumber": "46890214",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 7
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": 7
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": 1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46890214 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pending",
+            "detail": "2/3 checkpoints executed. Task dispatch waits while the next vote is pending."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789548781,
+        "phase": "voting",
+        "blockNumber": "46890244",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 7
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": 7
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": 1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46890244 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pending",
+            "detail": "2/3 checkpoints executed. Task dispatch waits while the next vote is pending."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789548841,
+        "phase": "voting",
+        "blockNumber": "46890274",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 7
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": 7
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": 1
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46890274 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "pending",
+            "detail": "2/3 checkpoints executed. Task dispatch waits while the next vote is pending."
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      },
+      {
+        "at": 1789548900,
+        "phase": "halted",
+        "blockNumber": "46890304",
+        "proposals": [
+          {
+            "proposalId": "72915126836030956227424642896233881465719087642856768652436791982149572098123",
+            "state": 7
+          },
+          {
+            "proposalId": "109911465724312092194391697114338162249326650851061320157430752306521722966366",
+            "state": 7
+          },
+          {
+            "proposalId": "84238765024730962070211304957665991695943522106050457988860482188116560943622",
+            "state": 3
+          }
+        ],
+        "checks": [
+          {
+            "name": "Fixed agent VM",
+            "status": "pass",
+            "detail": "fleet-research \u00b7 instance 8012185073355132559"
+          },
+          {
+            "name": "Base Sepolia",
+            "status": "pass",
+            "detail": "Chain 84532"
+          },
+          {
+            "name": "Governor identity",
+            "status": "pass",
+            "detail": "0x9594876c90a14888c6734231a731caba4c0d0781"
+          },
+          {
+            "name": "Confirmed block",
+            "status": "pass",
+            "detail": "Block 46890304 \u00b7 stable hash checked at head minus two blocks"
+          },
+          {
+            "name": "Exact required proposals",
+            "status": "pass",
+            "detail": "3 required proposal(s)"
+          },
+          {
+            "name": "Required approval",
+            "status": "fail",
+            "detail": "Required proposal 84238765024730962070211304957665991695943522106050457988860482188116560943622 failed"
+          },
+          {
+            "name": "Fixed expiry",
+            "status": "pass",
+            "detail": "Approval deadline 2026-09-16T09:00:35.000Z \u00b7 hard stop 2026-09-16T12:26:22.000Z"
+          }
+        ],
+        "vmStatus": "RUNNING"
+      }
+    ],
+    "stopAcceptedAt": 1789548901,
+    "stopOperationId": "operation-1789548901305-65b95d2920d9b-ad5048cd-1b6fd2c1"
+  },
+  "vm": {
+    "id": "8012185073355132559",
+    "status": "TERMINATED",
+    "machineType": "e2-standard-8"
+  },
+  "observedAt": "2026-09-16T08:56:12.345Z"
+}

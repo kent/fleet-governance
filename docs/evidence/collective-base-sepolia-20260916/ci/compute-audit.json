@@ -1,0 +1,22 @@
+[
+  {
+    "protoPayload": {
+      "authenticationInfo": {
+        "principalEmail": "fleet-compute-controller@fleet-governance.iam.gserviceaccount.com"
+      },
+      "methodName": "v1.compute.instances.stop",
+      "resourceName": "projects/fleet-governance/zones/us-central1-a/instances/fleet-research"
+    },
+    "timestamp": "2026-09-16T08:55:53.430680Z"
+  },
+  {
+    "protoPayload": {
+      "authenticationInfo": {
+        "principalEmail": "fleet-compute-controller@fleet-governance.iam.gserviceaccount.com"
+      },
+      "methodName": "v1.compute.instances.stop",
+      "resourceName": "projects/fleet-governance/zones/us-central1-a/instances/fleet-research"
+    },
+    "timestamp": "2026-09-16T08:55:01.275564Z"
+  }
+]

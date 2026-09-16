@@ -1,0 +1,24 @@
+{
+  "runId": "run-594416ce-6b10-4bae-a294-b665990c9b88",
+  "observedAt": "2026-09-16T08:57:03.907Z",
+  "shutdownLoopClickable": true,
+  "desktopAndMobile": true,
+  "browserErrors": [],
+  "vm": "TERMINATED",
+  "rounds": [
+    {
+      "phase": "approved",
+      "votes": 5
+    },
+    {
+      "phase": "approved",
+      "votes": 5
+    },
+    {
+      "phase": "denied",
+      "votes": 5
+    }
+  ],
+  "events": 273,
+  "browserChecks": "passed"
+}
