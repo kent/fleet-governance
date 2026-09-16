@@ -22,9 +22,9 @@ Choose the number of agents, give them a goal, choose a constitution and press R
 
 GitHub Actions provisions infrastructure and deploys pinned images. A small Cloud Run service, protected by Google Identity-Aware Proxy, serves the launcher. Its Run action writes a request and starts the existing research VM. Starting a worker is an experiment operation; infrastructure and application changes still go through CI.
 
-The VM runs the existing Runner pipeline and Agora read side. Agents share this server, with separate identities, workspaces and inference calls. Agent count does not mean one VM per agent. One experiment runs at a time in this POC so two runs cannot overwrite the active indexer configuration.
+The agent VM runs Runner and agent work. Public Agora, DAO Node, CPLS and Postgres run on the separate governance VM. Goldsky delivers events through a pipeline. The Guardian runs independently on Cloud Run and can stop only the agent VM. Agents share compute with separate identities and model calls; five agents do not mean five servers. One experiment owns the worker at a time.
 
-Each request has a new run ID. Configuration, selected constitution, progress and evidence stay under that ID. A rerun creates another request. Restarting a failed worker resumes the same request only where its transaction checkpoints make that safe.
+Each request has a new run ID. Configuration, selected constitution, progress and evidence stay under that ID. A rerun creates another request. A halted compute allocation cannot resume. Explicit operator recovery retires it permanently; the next experiment needs a new run ID.
 
 ## What the demo proves
 
@@ -50,11 +50,11 @@ Its overall checks remain failed because a provider response exceeded its output
 the guard stopped further task inference. The subsequent request-limit fix preserves both
 the $1 run allowance and the $50 provider limit.
 
-Use **Wake Agora** to start a stopped worker and inspect its latest governance state without
-launching another model experiment. The worker stops after four hours; the launcher and saved
-run evidence remain available. Use **Run** to create a fresh experiment. The GCP infrastructure
-workflow also has a `stop-experiment` action that stops the worker service while preserving
-the disk and onchain history. Deploying through CI starts that service again.
+Use **Run simulation** on `/compute` for the fixed collective scenario: a failing local benchmark, a governed findings board, a governed scorer diagnostic and a proposed external-access boundary crossing. The models choose actual work and votes. Read the [universal-timeline acceptance status](universal-timeline-progress.md) for its current live verification.
+
+Agora stays available when the worker stops. **Start unarmed worker** starts compute only when no active or halted allocation blocks it. After a failed required vote, follow [explicit recovery](compute-governance.md#operator-recovery). A normal deployment or another agent vote cannot clear the halt.
+
+The configurable coding launcher is an earlier task path. It accepts the goal, constitution and agent count described above. The fixed collective lab uses five agents, an existing indexed Governor and operator-selected decision points; changing those scenario parameters requires a code change and CI deployment.
 
 ## Completion evidence
 

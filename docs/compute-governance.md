@@ -184,9 +184,9 @@ Compute API outage can prevent an earlier stop. Task gates close when authority 
 verified. [GCP runtime limits](https://docs.cloud.google.com/compute/docs/instances/limit-vm-runtime),
 [stop API](https://docs.cloud.google.com/compute/docs/reference/rest/v1/instances/stop).
 
-Agora and its indexers currently share the worker VM. They stop with it. The launcher,
-compute visualisation, controller and stored evidence stay outside it. A separate read-only
-Agora host would keep proposal pages available during a shutdown.
+Agora, DAO Node, CPLS and Postgres run on the separate `fleet-readside` VM. Goldsky
+supplies events through a pipeline. They remain available during agent shutdown, along with
+the public timeline, Guardian and stored evidence. The Guardian cannot stop that host.
 
 Stopping the VM does not revoke an existing onchain permit, undo a broadcast transaction or
 cancel compute already accepted by a remote model provider. Those destinations need their own

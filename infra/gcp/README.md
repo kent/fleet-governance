@@ -15,7 +15,9 @@ Open the [launcher](https://fleet-governance-449245570324.us-central1.run.app/ex
 - Project: `fleet-governance`; region: `us-central1`.
 - `fleet-governance` on Cloud Run is public. Its `fleet-public` identity can read experiment evidence and the fixed VM's state. It has no compute mutation, queue, secret or signing authority. The HTTP gateway accepts GET and HEAD only; supplied Google identity headers never grant permission.
 - `fleet-governance-control` is the operator interface behind Google Identity-Aware Proxy. Its `fleet-control` identity can queue experiments and start the fixed worker. It has no wallet or model secrets.
-- `fleet-research` in `us-central1-a` runs the trusted Runner, isolated test containers, Agora, DAO Node, CPLS and Postgres. It is an `e2-standard-8` with 8 vCPUs and 32 GiB RAM. The VM stops after four hours; its disks and records remain.
+- `fleet-research` in `us-central1-a` runs the trusted Runner and agent work. It is an `e2-standard-8` with 8 vCPUs and 32 GiB RAM. A failed required vote stops this VM; its native four-hour stop remains a backstop. Disks and records remain.
+- `fleet-readside` runs public Agora, DAO Node, CPLS and Postgres on separate compute and a persistent data disk. Goldsky supplies the fixed Base Sepolia fleet through an event pipeline. Governance stays available when the agent VM stops.
+- `fleet-compute-controller` is the independent Guardian on Cloud Run. It can read and stop only the fixed agent VM. It cannot start it or stop governance. Its durable halt lives in the protected control bucket.
 - The launcher reaches Agora over the private VPC. Application ports are closed to public ingress. IAP provides administrative SSH access. OS Login and Shielded VM protections are enabled.
 - Viewing requires no login. Operator sign-in is restricted to `operator2@example.com`. The CI provisioner also has IAP access for verification.
 
@@ -29,7 +31,7 @@ Agents share the worker, with separate identities, workspaces and inference call
 4. For a website-only change, enable `site_only`. This builds only the Runner image and deploys the public reader and operator controls. It does not start or redeploy the VM, controller or preparation job.
 5. Review the workflow summary and checks. The workflow builds four images, tests the Runner and contracts, checks Agora's vote archive reader, deploys immutable image digests, configures public viewing and separate IAP operator access, and releases the worker through IAP SSH.
 6. The worker deployment checks the UI, Docker compatibility, sandbox isolation, timeout cleanup and the real tool-to-Docker path. It authenticates the inference key. The optional `verify_inference` input makes one live model request with a two-cent ceiling; it defaults to false.
-7. If a fleet is already deployed, the workflow refreshes Agora and its indexers against that fleet. Deploying code does not create new contracts or start an experiment.
+7. Use `history_only` to deploy the independent governance stack and Goldsky pipeline. A normal worker deployment retires obsolete governance containers on the agent host. Deploying code does not create new contracts or start an experiment.
 
 Deployment and experiments share a filesystem lock. A deployment stops if an experiment owns the worker. Finish that run before retrying deployment.
 
@@ -41,7 +43,9 @@ Deployment and experiments share a filesystem lock. A deployment stops if an exp
 4. Follow funding, deployment, agent activity, proposals, ballots and execution evidence. Open a proposal in Agora to read the indexed vote reasons.
 5. Use the completed run's copy-settings action, adjust the inputs and press Run again. That creates a new run ID and preserves the previous result.
 
-One experiment runs at a time. Each run deploys a fleet for its submitted configuration, and Agora follows the active fleet. Previous run records remain available in the launcher. A stopped VM pauses availability of Agora; the launcher remains available. Use Wake Agora to view the current fleet, or Run to start a new experiment. Either can start the fixed worker.
+One experiment owns the agent worker at a time. **Run simulation** on `/compute` starts the fixed five-agent collective lab using the existing indexed Governor. Its three proposal identities and deadlines are pinned before work starts. The configurable coding launcher is the earlier, separate task path; it can deploy other fleets and is not the collective shutdown acceptance case.
+
+Agora and past proposals stay available while the agent VM is stopped. **Start unarmed worker** is an operator action, not a requirement for viewing. Any armed or halted allocation blocks routine starts and deployments until explicit operator recovery. Use a fresh run identity after recovery; an old failed run cannot resume.
 
 The first task environment is a small coding repository with governed artifact publication. The goal field changes what agents attempt within that environment. Custom constitutions change instructions; they cannot bypass the gateway or contract executor.
 
@@ -71,9 +75,9 @@ The OpenRouter pool caps OpenRouter credits. Its current setting excludes extern
 
 ## Records and recovery
 
-Terraform state is private and versioned in `fleet-governance-tfstate-449245570324`. The private data buckets are `fleet-governance-artifacts-449245570324` and `fleet-governance-archive-449245570324`.
+Terraform state is private and versioned in `fleet-governance-tfstate-449245570324`. The artifacts bucket is `fleet-governance-artifacts-449245570324`. Independent governance uses `fleet-governance-history-449245570324`; `fleet-governance-archive-449245570324` retains the earlier local read-side archive. Protected allocations, Guardian records and blocked-run tombstones live in `fleet-governance-control-449245570324`.
 
-Requests, progress and completed evidence live under `demo/runs/<run-id>/` in the artifacts bucket. Reports and deployment records also live on the VM's separate data disk under `/srv/fleet/state`. The archive bucket contains Agora's indexed proposal and vote data. A loopback reader uses the VM identity to serve that private archive to Agora.
+Requests, progress and completed evidence live under `demo/runs/<run-id>/` in the artifacts bucket. Reports and deployment records also live on the VM's separate data disk under `/srv/fleet/state`. Collective progress lives under `demo/simulations/<run-id>/`. The independent history bucket contains public Agora's indexed proposal and vote data. A reader on the governance host serves that private archive to Agora.
 
 Stopping compute does not delete disks, secrets, objects or onchain permissions. Stored resources continue to incur charges. Replacing a VM and starting a new experiment are separate operations. Preserve the data disk when repairing the worker.
 
