@@ -1,4 +1,4 @@
-import { createPublicClient, http, keccak256, type Hex } from "viem";
+import { BaseError, ContractFunctionRevertedError, createPublicClient, http, keccak256, type Hex } from "viem";
 import { baseSepolia } from "viem/chains";
 import { agoraGovernorAbi } from "@fleet/abi";
 import type { ComputeAllocation, ComputeObservation } from "./compute-policy.js";
@@ -19,11 +19,19 @@ export async function observeComputeApproval(allocation: ComputeAllocation, rpcU
   const proposals: ComputeObservation["proposals"] = [];
   // Bound RPC concurrency independently of agent count and of worker requests.
   for (let index = 0; index < allocation.requiredProposalIds.length; index += 4) {
-    proposals.push(...await Promise.all(allocation.requiredProposalIds.slice(index, index + 4).map(async proposalId => ({
-      proposalId,
-      state: Number(await client.readContract({ address: allocation.governor as Hex, abi: agoraGovernorAbi,
-        functionName: "state", args: [BigInt(proposalId)], blockNumber })),
-    }))));
+    proposals.push(...await Promise.all(allocation.requiredProposalIds.slice(index, index + 4).map(async proposalId => {
+      try {
+        return { proposalId, state: Number(await client.readContract({ address: allocation.governor as Hex, abi: agoraGovernorAbi,
+          functionName: "state", args: [BigInt(proposalId)], blockNumber })) };
+      } catch (error) {
+        const reverted = error instanceof BaseError ? error.walk(cause => cause instanceof ContractFunctionRevertedError) : undefined;
+        if (allocation.checkpoints && reverted instanceof ContractFunctionRevertedError
+          && reverted.data?.errorName === "GovernorNonexistentProposal" && reverted.data.args?.[0] === BigInt(proposalId)) {
+          return { proposalId, state: -1 };
+        }
+        throw error;
+      }
+    })));
   }
   const confirmed = await client.getBlock({ blockNumber });
   if (confirmed.hash !== block.hash) throw new Error("Compute policy observation changed during verification.");

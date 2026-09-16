@@ -110,3 +110,25 @@ it("leaves the VM running for voting or authorised work without a start or resiz
   expect((await reconcileComputeAllocation(policy, deps)).phase).toBe("authorised");
   expect(deps.stopVm).not.toHaveBeenCalled();
 });
+
+it("keeps compute through an approved checkpoint, then persists and enforces a second-vote failure", async () => {
+  const { deps, order, observation } = fixture();
+  const plan = ComputeAllocation.parse({ ...policy, requiredProposalIds: ["123", "456"],
+    checkpoints: [{ proposalId: "123", approvalDeadline: 1200 }, { proposalId: "456", approvalDeadline: 1300 }] });
+  observation.proposals = [{ proposalId: "123", state: -1 }, { proposalId: "456", state: -1 }];
+  expect((await reconcileComputeAllocation(plan, deps)).waitingForProposal).toBe(true);
+  observation.proposals[0]!.state = 1;
+  expect((await reconcileComputeAllocation(plan, deps)).phase).toBe("voting");
+  observation.proposals[0]!.state = 7;
+  expect((await reconcileComputeAllocation(plan, deps)).approvedProposalIds).toEqual(["123"]);
+  observation.proposals[1]!.state = 1;
+  expect((await reconcileComputeAllocation(plan, deps)).phase).toBe("voting");
+  expect(deps.stopVm).not.toHaveBeenCalled();
+  observation.proposals[1]!.state = 3;
+  const stopped = await reconcileComputeAllocation(plan, deps);
+  expect(stopped).toMatchObject({ phase: "halted", failedProposalId: "456", approvedProposalIds: ["123"], stopAcceptedAt: 1100 });
+  expect(order.slice(-3)).toEqual(["save:halted", "stop", "save:halted"]);
+  expect(stopped.observations?.map(x => x.proposals.map(p => p.state))).toEqual([[-1, -1], [1, -1], [7, -1], [7, 1], [7, 3]]);
+  vi.mocked(deps.readVm).mockResolvedValue({ id: "123", status: "TERMINATED" });
+  expect((await reconcileComputeAllocation(plan, deps)).stoppedAt).toBe(1100);
+});

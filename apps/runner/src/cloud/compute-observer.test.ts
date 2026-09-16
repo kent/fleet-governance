@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { createPublicClient, keccak256 } from "viem";
+import { ContractFunctionRevertedError, createPublicClient, encodeErrorResult, keccak256 } from "viem";
 import { observeComputeApproval } from "./compute-observer.js";
+import { agoraGovernorAbi } from "@fleet/abi";
 import { ComputeAllocation } from "./compute-policy.js";
 
 vi.mock("viem", async () => ({ ...await vi.importActual<typeof import("viem")>("viem"), createPublicClient: vi.fn() }));
@@ -47,4 +48,19 @@ it("does not treat an absent Governor or failed state read as approval", async (
   await expect(observeComputeApproval(policy, "https://rpc.example.invalid")).rejects.toThrow("no code");
   client.readContract.mockRejectedValueOnce(new Error("RPC read failed"));
   await expect(observeComputeApproval(policy, "https://rpc.example.invalid")).rejects.toThrow("RPC read failed");
+});
+
+it("accepts only the exact decoded nonexistent-proposal error for pinned checkpoints", async () => {
+  const checkpoints = policy.requiredProposalIds.map((proposalId, index) => ({ proposalId, approvalDeadline: 1200 + index * 100 }));
+  const missing = (id: bigint) => new ContractFunctionRevertedError({ abi: agoraGovernorAbi, functionName: "state",
+    data: encodeErrorResult({ abi: agoraGovernorAbi, errorName: "GovernorNonexistentProposal", args: [id] }) });
+  client.readContract.mockRejectedValueOnce(missing(123n));
+  expect((await observeComputeApproval({ ...policy, checkpoints }, "https://rpc.example.invalid")).proposals[0])
+    .toEqual({ proposalId: "123", state: -1 });
+  client.readContract.mockRejectedValueOnce(missing(999n));
+  await expect(observeComputeApproval({ ...policy, checkpoints }, "https://rpc.example.invalid")).rejects.toThrow();
+  client.readContract.mockRejectedValueOnce(new Error("GovernorNonexistentProposal(123)"));
+  await expect(observeComputeApproval({ ...policy, checkpoints }, "https://rpc.example.invalid")).rejects.toThrow();
+  client.readContract.mockRejectedValueOnce(missing(123n));
+  await expect(observeComputeApproval(policy, "https://rpc.example.invalid")).rejects.toThrow();
 });
