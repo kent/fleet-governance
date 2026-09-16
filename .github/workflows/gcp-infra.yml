@@ -5,7 +5,7 @@ on:
       action:
         description: Infrastructure operation
         type: choice
-        options: [plan, apply, provision-readside, inspect-history, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, deploy-proposal-credits, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, prepare-simulation, launch-simulation, release-preparation, retry-preparation, inspect-simulation, recover-simulation-evidence]
+        options: [plan, apply, provision-readside, inspect-history, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, deploy-proposal-credits, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, verify-agent-experiment, prepare-simulation, launch-simulation, release-preparation, retry-preparation, inspect-simulation, recover-simulation-evidence]
         default: plan
       machine_type:
         description: Pilot VM type
@@ -95,7 +95,7 @@ jobs:
           pnpm exec vitest run --project unit apps/runner/src/cloud/wallets.test.ts
           node apps/runner/dist/cloud/prepare-wallets.js
       - name: Build and verify compute policy administration
-        if: contains(fromJSON('["arm-compute","inspect-compute","compute-drill","release-compute","verify-simulation","launch-simulation","release-preparation","retry-preparation","inspect-simulation","recover-simulation-evidence"]'), inputs.action)
+        if: contains(fromJSON('["arm-compute","inspect-compute","compute-drill","release-compute","verify-simulation","verify-agent-experiment","launch-simulation","release-preparation","retry-preparation","inspect-simulation","recover-simulation-evidence"]'), inputs.action)
         run: |
           npm install -g pnpm@11.9.0
           pnpm install --frozen-lockfile
@@ -193,6 +193,19 @@ jobs:
             exit 1
           fi
           echo 'Actual agent ballots independently verified on Base Sepolia. Collective runs also require two executed approvals, continued work and a third rejected vote. The separate Guardian stopped the VM and routine restart was denied.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify agent-authored experiment without prescribing an outcome
+        if: inputs.action == 'verify-agent-experiment'
+        env:
+          FLEET_GCP_CLI_AUTH: '1'
+        run: |
+          node apps/runner/dist/cloud/verify-agent-experiment.js
+          gcloud storage cp agent-experiment-evidence.json "gs://fleet-governance-control-449245570324/simulations/$(python3 -c 'import json; print(json.load(open("agent-experiment-evidence.json"))["runId"])')/verified.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: inputs.action == 'verify-agent-experiment'
+        with:
+          name: agent-experiment-evidence
+          path: agent-experiment-evidence.json
+          if-no-files-found: error
       - name: Verify the stop caller in GCP audit logs
         if: contains(fromJSON('["compute-drill","verify-simulation"]'), inputs.action)
         run: |
