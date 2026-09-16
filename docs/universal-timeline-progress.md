@@ -1,6 +1,6 @@
 # One run, one timeline
 
-Status: implementation in progress. This is not a completion report.
+Status: implementation deployed; live collective-run verification pending. This is not a completion report.
 
 The goal is a public, continuous record of the whole experiment: task assignment, five real
 agents starting, their work and signed attestations, shared messages, a decision, a Base
@@ -31,7 +31,7 @@ No tools attack Hugging Face or other third-party infrastructure.
 
 | Requirement | Required evidence | Current status |
 | --- | --- | --- |
-| One chronological system timeline | Rendered current and historical runs, with source/timestamp/identity for each event; undated legacy evidence separated | Implemented chronological merge, subsystem/agent filters, decision cards; unit and desktop/mobile browser checks pass; not yet deployed |
+| One chronological system timeline | Rendered current and historical runs, with source/timestamp/identity for each event; undated legacy evidence separated | Implemented chronological merge, subsystem/agent filters, decision cards; unit and desktop/mobile browser checks pass; deployed, real-run browser verification pending |
 | Task, provisioning and actual agent start | Protected preparation events plus worker process/start receipts | Preparation and worker receipts implemented; live verification pending |
 | Agents work and communicate | Real model outputs, bounded tool results, shared messages and signed records | Bounded scorer lab, real model loop, gated board and signed work records implemented; adapter tests pass; live run pending |
 | Multiple genuine votes | At least two successive proposals on Base Sepolia, each with model ballots and public reasons | Three deterministic proposal IDs prepared before work; sequential publication and voting implemented; live run pending |
@@ -39,7 +39,7 @@ No tools attack Hugging Face or other third-party infrastructure.
 | Failure stops only the agent VM | Durable halt, independent stop API acceptance, observed TERMINATED and restart refusal | Existing single-proposal mechanism works; multi-step verification required |
 | Immutable compute envelope | All proposal identities and deadlines fixed before agents start; no vote can extend them | Preserve while adding ordered checkpoints |
 | Agora indexing across the run | Goldsky pipeline, DAO Node and Agora show every proposal/reason and link to its timeline | Proposal lookup resolves each published checkpoint; UI preserves all rounds; live indexing check pending |
-| HN-ready explanation in the maintainer’s voice | Published /info, main page and blog explain incident, crypto's role, control boundary and limitations | Main page, /info and blog revised with incident sources, crypto rationale and explicit limitations; deployment pending |
+| HN-ready explanation in the maintainer’s voice | Published /info, main page and blog explain incident, crypto's role, control boundary and limitations | Main page, /info and blog revised with incident sources, crypto rationale and explicit limitations; deployed anonymously; real-run evidence pending |
 | Deployed real demonstration | GitHub builds/deployments, real model run within $1 run ceiling/$50 pool, independently checked receipts | Not yet performed for new scenario |
 
 ## Control design
@@ -70,3 +70,12 @@ silently clear a halt as part of a vote or ordinary launch.
 
 A completion audit must verify every row above against current files and live observations.
 The goal remains active until those checks pass.
+
+## Deployment checkpoint, 16 September 2026
+
+- Full production CI passed 1,312 unit tests and 129 contract tests.
+- The updated `/info` page and universal timeline load without a Google login.
+- Agora, DAO Node, CPLS and Postgres run on `fleet-readside`. Goldsky uses the event pipeline.
+- The agent deployment now stops the obsolete local governance replicas, preserving their data.
+- The prior halted run was explicitly retired by the operator workflow. Its permanent run block and evidence remain intact.
+- A fresh collective run still needs independent verification of all three proposals, continued work, model accounting and the actual GCP stop.
