@@ -57,7 +57,17 @@ PY
     then
       # An indexer correction must refresh historical totals even if Goldsky has
       # no new delivery. Readiness alone would leave the old cached tally visible.
-      python3 /usr/local/lib/fleet/reconcile-history.py --force
+      # A new pipeline delivery can race the first archive catch-up check.
+      # Retry the idempotent projection refresh, without restarting the worker.
+      refreshed=false
+      for attempt in 1 2 3; do
+        if python3 /usr/local/lib/fleet/reconcile-history.py --force; then
+          refreshed=true
+          break
+        fi
+        sleep 5
+      done
+      [[ "$refreshed" == true ]] || { echo 'History refresh did not converge after three attempts.' >&2; exit 1; }
       systemctl enable --now fleet-history-refresh.timer
       echo 'Independent Agora is serving its refreshed proposal archive and /info.'
       exit 0
