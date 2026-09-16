@@ -187,6 +187,8 @@ if simulations.exists():
             'inputTokens': sum(r.get('inputTokens') or 0 for r in completed),
             'outputTokens': sum(r.get('outputTokens') or 0 for r in completed),
             'lastEventAt': records[-1].get('at') if records else None,
+            'failedCompletions': [{key: entry.get(key) for key in ['at', 'agentId', 'purpose', 'outcome', 'inputTokens', 'outputTokens', 'latencyMs']}
+                                  for entry in completed if entry.get('outcome') != 'ok'],
         }))
 if model_key:
     try:
