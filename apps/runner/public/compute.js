@@ -285,6 +285,7 @@ function renderInspector() {
     if (/^0x[0-9a-fA-F]{64}$/.test(vote?.txHash || agent?.txHash || "")) link("Inspect signed vote on BaseScan ↗", `https://sepolia.basescan.org/tx/${vote?.txHash || agent.txHash}`);
   } else if (inspected === "governance") {
     $("inspect-title").textContent = "Base Sepolia · FleetGov";
+    add("Hosting", "Agora, DAO Node and Postgres run on fleet-readside. Goldsky runs the managed event pipeline. They remain online when the agent cluster stops.");
     add("Network", "84532 · Base Sepolia testnet"); add("Required proposal", allocation?.requiredProposalIds?.join(", "));
     add("Rule", "Every exact required proposal must execute by the approval deadline. A defeated, canceled or expired proposal closes compute authority.");
     add("Governor", allocation?.governor); add("State", sim?.outcome || data?.state?.phase);
@@ -299,7 +300,8 @@ function renderInspector() {
   } else if (inspected === "shutdown") {
     const phase = shutdownPhase(replay, observation, vm?.status);
     $("inspect-title").textContent = "The Guardian closes the loop";
-    add("Direction", "Guardian → GCP stop API → agent worker");
+    add("Direction", "Guardian → GCP stop API → agent cluster only");
+    add("Unaffected", "The governance VM, database, Goldsky pipeline and Guardian stay online.");
     add("Trigger", "A failed required proposal closes compute authority. An individual AGAINST ballot alone does not trigger shutdown.");
     add("Current step", shutdownLabels[phase][0]);
     add("What happens", "The Guardian first saves a durable halt, then requests shutdown of the fixed VM. Only GCP reporting TERMINATED confirms that compute is off.");

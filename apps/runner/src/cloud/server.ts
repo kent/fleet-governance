@@ -121,7 +121,7 @@ createServer(async (request, response) => {
       response.writeHead(incoming.statusCode ?? 502, incoming.headers); incoming.pipe(response);
     });
     proxy.on("timeout", () => proxy.destroy());
-    proxy.on("error", () => { if (!response.headersSent) json(response, 503, { error: "Agora is starting or the worker is stopped. Open /experiments for progress." }); else response.end(); });
+    proxy.on("error", () => { if (!response.headersSent) json(response, 503, { error: "The independent governance service is temporarily unavailable. The agent shutdown state is shown at /compute." }); else response.end(); });
     request.pipe(proxy);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Request failed.";

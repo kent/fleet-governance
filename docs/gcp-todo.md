@@ -56,7 +56,7 @@ Do not expose RPC URLs, signing keys, filesystem paths or infrastructure permiss
 
 - Use the infrastructure workflow's `stop` action to stop the worker without deleting its data. The launcher remains available. Stopping a VM does not revoke an already settled onchain permission or undo a transaction.
 - Use `inspect-demo` for read-only service checks, redacted logs and OpenRouter credit metadata. Diagnostics run in GitHub through IAP.
-- Use Wake Agora in the launcher to start the fixed worker and view existing proposals without starting another experiment.
+- Agora runs on `fleet-readside`, outside the agent shutdown boundary. Viewing proposals does not require starting the agent VM. Use `inspect-history` for the governance VM and `inspect-compute` for the Guardian.
 - A deployment refuses to replace the worker while an experiment holds its execution lock. Finish the run, then retry deployment.
 - A failed or stale run is shown as failed or stale. Review its evidence before rerunning. A fresh run is a new experiment, not an assertion that the earlier one never happened.
 - Preserve Secret Manager, Terraform state, `/srv/fleet/state` and the data buckets during repair. Do not make Docker volume pruning or bucket deletion part of reset.

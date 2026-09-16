@@ -1,66 +1,82 @@
-# Pipeline ingestion, DAO Node and Agora
+# Governance stays on when the agents stop
 
-Fleet Governance uses event ingestion, DAO Node, Postgres and CPLS to serve Agora. Our
-architecture choice is pipelines over subgraphs. DAO Node owns the governance projection;
-the event pipeline feeds its read-side data. We do not build a second governance projection
-in a subgraph.
+Only the agent cluster receives the Guardian's kill signal. Reading the vote should never
+require turning the agents back on.
 
-The deployed path is:
+| Component | Where it runs | What it can do |
+| --- | --- | --- |
+| Agent cluster | `fleet-research`, its own GCP VM | Run bounded agent tasks and sign testnet votes. Cannot provision or restart compute. |
+| Governance | `fleet-readside`, a separate VM with Postgres on a persistent disk | Run Agora, DAO Node, CPLS and the event receiver. Cannot sign agent votes or control compute. |
+| Event pipeline | Goldsky's managed service | Deliver the fixed Fleet token and Governor events from Base Sepolia. |
+| Guardian | Independent Cloud Run service | Verify the exact onchain proposal and stop `fleet-research`. Cannot start it or stop `fleet-readside`. |
 
-1. DAO Node reads the current Fleet Governor through the configured Base Sepolia RPC.
-2. The runner reads confirmed `VoteCast` events from that same Governor. It inserts the
-   proposal ID, voter, weight, support, reason, block and transaction into `fleet.votes` in
-   Postgres. Inserts are idempotent. This is an adapter for CPLS's existing vote source,
-   not a separate subgraph.
-3. CPLS combines the proposal data and Postgres votes and writes the archive Agora reads.
-4. Agora renders the proposals and reasons. After a shutdown, the recovery workflow can
-   reread the saved proposal's actual chain events and restore the vote projection.
+```mermaid
+flowchart LR
+    A[Agent cluster VM] -->|signed proposals and votes| B[Base Sepolia]
+    B --> G[Goldsky event pipeline]
+    G -->|authenticated delivery| D[Governance VM: Postgres and DAO Node]
+    D --> C[CPLS and private archive]
+    C --> U[Agora]
+    B -->|direct RPC verification| K[Guardian on Cloud Run]
+    K -->|durable halt, then GCP stop API| A
+```
 
-The compute controller does not use any of those projections to authorise execution. It
-reads the exact required proposal states directly from the configured RPC and checks chain,
-Governor bytecode, block consistency and freshness. An indexer outage can affect the display;
-it cannot turn a rejected vote into compute permission.
+The governance VM is intentionally small: two vCPUs, 8 GB RAM and a persistent database
+disk. Postgres shares that VM for this research demo. It is a separate database from the
+agent worker's data, not a highly available managed database.
 
-## Goldsky uses direct event pipelines
+## Pipelines, not subgraphs
 
-When we connect Goldsky, use a pipeline sourced directly from Base Sepolia chain data.
-Filter to the Fleet contract addresses, decode the events and deliver them to the database
-that serves this read path. Goldsky supports dataset sources and Postgres sinks in its
-[pipeline configuration](https://docs.goldsky.com/mirror/reference/config-file/pipeline).
-Do not use a subgraph-entity source: putting a pipeline after a subgraph would keep the
-duplicate stack a collaborator flagged.
+[`fleet-base-sepolia.yaml`](../infra/goldsky/fleet-base-sepolia.yaml) defines a Goldsky Turbo
+pipeline using `base_sepolia.raw_logs`. Its source filter restricts backfill to the deployed
+Fleet token and Governor from block 46,858,912. There is no subgraph in this read path.
 
-The division of work is explicit:
+1. Goldsky sends raw events and change operations to an authenticated delivery endpoint.
+2. The receiver validates the contract and event shape, checks the block hash against the
+   RPC, then commits the raw log to Postgres. Duplicate deliveries use the same identity.
+3. DAO Node reads those local logs through a small read-only JSON-RPC adapter. Historical
+   indexing no longer scans thousands of ten-block RPC windows on every restart.
+4. The receiver decodes `VoteCast` into CPLS's existing `fleet.votes` table. DAO Node owns
+   the governance projection. CPLS combines that projection with the ballot rows and
+   writes the private archive that Agora reads.
+5. A host timer checks for new deliveries every 15 seconds and requests an archive refresh.
+   DAO Node polls the local event store every three seconds. CPLS's minute scheduler also
+   updates proposal state as voting deadlines pass.
 
-- **Pipeline:** ingest chain events, checkpoint progress and deliver replayable records.
-- **DAO Node and CPLS:** project governance data into the format Agora consumes.
-- **Agora:** display proposals, ballots and reasons.
-- **Compute controller:** independently verify execution authority against the chain.
+The independent archive uses `fleet-governance-history-449245570324`. The agent runtime
+has no write permission to that bucket. Old worker services cannot overwrite the public
+history if the worker is started for a later authorised run.
 
-The runner's current `VoteCast` adapter is the bounded research implementation of the
-ingestion step. A durable pipeline should replace that adapter as the normal writer after
-we verify matching proposal IDs, voters, support, weight, reasons and transaction identities.
-Keep replay idempotent and test reorg handling. Do not leave two competing normal writers.
-The recovery import remains an explicit repair operation.
+Goldsky delivery is [at least once](https://docs.goldsky.com/turbo-pipelines/delivery-guarantees).
+The receiver acknowledges only after committing its database transaction. It applies
+deletions, rejects replayed orphan blocks and retries when the RPC has not caught up with
+a rollback. A confirmed reorg triggers a DAO Node restart from the local canonical log
+store before the archive refresh. This does not make the research deployment highly
+available; a host outage can still interrupt viewing until that host recovers.
 
-The repository's GCP configuration and GitHub workflows contain no Goldsky subgraph, pipeline
-or configured Goldsky indexing endpoint. A legacy local-development comment mentions Goldsky
-as an upstream RPC fallback; that is not a deployed indexing dependency.
+## Deploy and inspect through GitHub
 
-An independently created Goldsky subgraph should be checked for consumers and then retired
-after any needed pipeline replacement is verified. We have not identified or deleted that resource. The reported
-scratch-account discount is not a dependency or a cost assumption for this deployment.
+1. Run **GCP infrastructure**, action `provision-readside`, for Terraform resources and
+   managed credentials. Its plan guard rejects changes to the governed worker.
+2. Run **GCP deploy Fleet demo**, with `history_only=true`. This builds pinned images,
+   deploys the independent receiver, applies the Goldsky pipeline, waits for historical
+   ballots, then starts Agora and switches the public site to the governance VM.
+3. Use `inspect-history` for redacted service logs and ingestion counts. Use
+   `inspect-compute` separately to check the Guardian and agent VM.
+4. Verify `/info`, `/proposals` and the proposal's reasons while `fleet-research` is
+   `TERMINATED`. A stopped agent VM is no reason to skip those checks.
 
-For a longer-lived service, move ingestion out of the experiment process. Keep its database
-connection private or use an authenticated delivery endpoint; the current worker-local
-Postgres is not a public Goldsky sink. Pipeline credentials belong in managed secrets and
-pipeline definitions and deployment changes belong in GitHub. Do not add a subgraph
-alongside DAO Node just to make a missing vote row appear.
+Goldsky API access and the webhook credential live in GCP Secret Manager. The delivery
+transport has no GCP resource permissions. Signing wallets and model credentials are
+never attached to the governance VM. Neither deployment nor repair clears a halted
+allocation or launches another model run.
 
-## Research limits
+The pipeline currently follows the fixed Base Sepolia pilot contracts in
+[`base-sepolia-pilot.json`](../experiments/compute/base-sepolia-pilot.json). Deploying a
+different fleet requires updating the pipeline filter and governance configuration
+together. The older generic experiment runner still has a worker-local read side; it
+does not publish into this independent pilot archive.
 
-The runner currently ingests votes for the proposals it runs. It is not a general-purpose
-indexer for arbitrary activity submitted outside the experiment. DAO Node, Postgres, CPLS
-and Agora share the worker VM and go offline during a real shutdown. The independent compute
-page and evidence store stay online. Keeping Agora continuously available would require a
-separate read-side host.
+The Guardian does not trust Goldsky, DAO Node or Agora to authorise execution. It reads
+the exact proposal states from Base Sepolia directly. A broken indexer can delay the
+display. It cannot turn a rejected vote into permission to run.
