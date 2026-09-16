@@ -11,6 +11,11 @@ GCP VM. The proposals and activity log stay online after the agents are off.
 [Open Agora](https://fleet-governance-449245570324.us-central1.run.app/proposals) ·
 [Read the blog post](docs/blog-fleet-governance.md)
 
+**Single-token bonds verified:** FleetGov now supplies votes, delegation and proposal
+collateral. A live Base Sepolia test returned the bond after five AGAINST ballots and
+forfeited bonds for cancellation and insufficient participation. Supply stayed fixed at
+five tokens. [Inspect the scripted protocol checks](docs/evidence/bond-governance-base-sepolia-20260916/report.md).
+
 **Earlier ERC-20 experiment:** five actual agents, one agent-authored proposal and five
 independent FOR ballots. Agent3 burned one FPROP to request a scorer inspection. The Guardian
 confirmed execution before work resumed. The agents found the scorer's field mismatch and

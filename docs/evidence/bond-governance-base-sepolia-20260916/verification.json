@@ -1,0 +1,70 @@
+{
+  "chainId": 84532,
+  "scripted": true,
+  "modelAgents": false,
+  "governor": "0xEd9bd5dA2439f2561A49B570708fda273Fc82e4a",
+  "token": "0x6621b6E4DfD16c5bcCCe7cd696666F5508C7d87D",
+  "bondController": "0xcCD905dFB24C8681d3007f9c6CbB11FC9B8aBD60",
+  "taskId": "1",
+  "proposals": [
+    {
+      "proposalId": "87845238369044395182575928548710148316800048910303601739510325191021192021247",
+      "txHash": "0xf273f3400dac47f96ab6a1edf6d121d0baf53a57c191fde09781bf77a37626f3",
+      "state": 2,
+      "settlement": "forfeited",
+      "votes": [
+        "0",
+        "0",
+        "0"
+      ]
+    },
+    {
+      "proposalId": "105876239536817791697190251002797392229471859259602692229134181320801892892472",
+      "txHash": "0xf6ff424d8a86e5d67802245cfe4a70ccc17e40120dd4a73e4f047dab721b147e",
+      "state": 3,
+      "settlement": "returned",
+      "votes": [
+        "4900000000000000000",
+        "0",
+        "0"
+      ]
+    },
+    {
+      "proposalId": "10145995325245263659782296417300425584307630403977395378592859463658121768572",
+      "txHash": "0xebec716829d633871ed407312e7de8e314a55314f1781eaf3f252442f5134106",
+      "state": 3,
+      "settlement": "forfeited",
+      "votes": [
+        "0",
+        "0",
+        "1000000000000000000"
+      ]
+    }
+  ],
+  "totalSupply": "5000000000000000000",
+  "nonVotingTreasury": "200000000000000000",
+  "reservedTokensKeepVotes": true,
+  "losingProposalRefunded": true,
+  "cancellationAndInsufficientParticipationForfeited": true,
+  "penaltiesReduceFutureVotingPower": true,
+  "oldPolicyClosed": true,
+  "transactions": [
+    "0xaee848b50da38d112ed912698ec63af714d00a92416eb426e0f574d941b41970",
+    "0xe5429e1c2c3fcf902fd1a8ac8cb05b2b7592d09921cba0a18d412edeb4538b61",
+    "0xf273f3400dac47f96ab6a1edf6d121d0baf53a57c191fde09781bf77a37626f3",
+    "0xd058a33b2044f5f0c2b4e08d231347b39d1f5b499cdc109c4a8522e3ddaec6de",
+    "0x157fa0c94dbb590bc4c074ef47732fa249814fb4c5d182f137275d768cb1a6e6",
+    "0xf6ff424d8a86e5d67802245cfe4a70ccc17e40120dd4a73e4f047dab721b147e",
+    "0xebec716829d633871ed407312e7de8e314a55314f1781eaf3f252442f5134106",
+    "0x0a4ad3fc36136824d8621a86889ca0d68c9682c594752d72067a23800af42f8f",
+    "0xb98be896b4ff88d22ce84bcc1ccca1984e4b28945a790b035e8084b9b3bccf00",
+    "0x641d32baaf159ca4dc7ebc70b3c2d4902d636e0c3bd405714685f9cf9c7089c9",
+    "0xc1a2846366b4c8029ee30d883dfae037a21373090dd511bc3a18ffd4f20a2662",
+    "0x5b3f6ba571fe9863dc04d427fde324f8070acda16ecf40140278ce7ffbf2138c",
+    "0xd1e3f00a0b030107a21da574db4e934ce83a7a68f0d22d181094459960ab9ba5",
+    "0x77fb881be41d526b3f64695b91c9124e6725b010f7966953522cf016c5f8818a",
+    "0x927d49921cd6e27f0be3ba9141a3e20247d6879d1b7d77b1e204bbcea579d05c",
+    "0x7e6235b1c5596aed5101f76c735fc1eefcbfb16025f1a30cac9887c986a89e58"
+  ],
+  "workflowRun": "35159129185"
+}

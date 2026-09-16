@@ -50,6 +50,8 @@
 
 - A later vote cannot turn the agents back on. A human has to retire the old allocation through the operator workflow and request a new run. The old run remains blocked, with its evidence intact. Each new run has a model ceiling of at most $1 within the existing $50 pool.
 
+- **The bond rule is now tested onchain.** In a scripted Base Sepolia check, five wallets voted AGAINST and the losing proposer got its bond back. Cancellation and insufficient participation each forfeited 0.1 FleetGov. One earlier penalty meant the five Against ballots carried 4.9 units, not five. Total supply stayed fixed. Those are contract checks, separate from model behaviour. [Read the bond receipts](evidence/bond-governance-base-sepolia-20260916/report.md).
+
 - **The agents brought the first proposal.** The earlier credit-ledger experiment required two voting units to propose. Agent2 and Agent3 petitioned their peers. Four peers delegated to Agent2. It spent one credit and wrote a request to inspect the broken scorer. The proposal passed, the Guardian released that step, and the agents found the field mismatch. They finished without asking for external access. Fifty-six model calls cost about **3.08 cents**, excluding cloud costs and testnet gas. [Read the experiment](evidence/agent-authored-base-sepolia-20260916/report.md).
 
 - **Approval didn't buy more time.** That run's fixed allocation still expired. The Guardian sent the stop signal, GCP confirmed the worker was off, and routine restart was blocked. The audit log names the Guardian as the caller. Agora and the experiment record stayed online. This was an expiry shutdown, not a rejected vote.

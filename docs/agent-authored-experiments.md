@@ -106,6 +106,11 @@ part of the trust boundary.
 
 ## Evidence and verification
 
+The [single-token bond protocol test](evidence/bond-governance-base-sepolia-20260916/report.md)
+verified a refund after five AGAINST ballots, cancellation and low-participation forfeitures,
+unchanged total supply and reduced future voting power after penalties. Those were scripted
+transactions with the agent VM off.
+
 The earlier [two-token deployment and live protocol test](evidence/token-governance-base-sepolia-20260916/report.md)
 verify atomic burns, rejection after exhaustion, non-refundable fees and voting with an
 empty proposal balance. That test used scripted ballots. Earlier model experiments below
