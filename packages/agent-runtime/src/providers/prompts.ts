@@ -77,7 +77,11 @@ export function roleSlug(role: string): string {
 }
 
 export function loadRolePrompt(role: string): string {
-  return loadPromptFile(`role-${roleSlug(role)}.md`);
+  const slug = roleSlug(role);
+  // Membership does not require a recognised specialist role. A missing or
+  // custom role must not disenfranchise a registered voter, or select a path.
+  const known = ["planner", "engineer", "critic", "budget-reviewer", "safety-reviewer"];
+  return loadPromptFile(`role-${known.includes(slug) ? slug : "general-reviewer"}.md`);
 }
 
 /** `constitution.md` followed by the member's role file: every baseline system prompt in this

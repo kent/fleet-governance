@@ -208,6 +208,15 @@ describe("role prompts", () => {
     expect(loadRolePrompt("safety_reviewer")).toBe(loadRolePrompt("safety-reviewer"));
   });
 
+  it("lets registered voters without a specialist role review without selecting arbitrary files", () => {
+    for (const role of ["unknown", "", "Research coordinator", "../../constitution", "../private-key"]) {
+      const prompt = buildEvaluateProposalPrompt(anchoredProposal({ member: { agentId: 0, role, manifest: '{"name":"Agent1"}' } }));
+      expect(prompt.system).toContain("Role: General reviewer");
+      expect(prompt.system).toContain("Do not invent a specialist role or additional authority");
+      expect(prompt.system).toContain("Fleet constitution");
+    }
+  });
+
   it("no role prompt contains an em dash", () => {
     for (const role of ["planner", "engineer", "critic", "budget-reviewer", "safety-reviewer"]) {
       expect(loadRolePrompt(role)).not.toContain("—");

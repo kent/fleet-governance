@@ -8,6 +8,7 @@ import { readComputeAllocation, readComputeObject } from "./compute-store.js";
 import { COMPUTE_TARGET, writeControlObject } from "./compute-admin.js";
 import { fundWallets } from "./wallets.js";
 import { recordProposalBudget } from "./deploy-proposal-credits.js";
+import { SIMULATION_ROLES } from "./simulation.js";
 
 const manifestPath = "contracts/token-governance-v3.json";
 async function deploy() {
@@ -26,7 +27,7 @@ async function deploy() {
   if (await reader.getChainId() !== 84532) throw new Error("Wrong chain.");
   if (await reader.getBalance({ address: account("FLEET_DEPLOYER_KEY") }) < 500_000_000_000_000n) throw new Error("Deployer needs at least 0.0005 Base Sepolia ETH.");
   const config = { tokenName: "FleetGov", tokenSymbol: "FLEET", members: Array.from({ length: 5 }, (_, i) => account(`FLEET_AGENT_KEY_${i}`)),
-    agentManifests: Array.from({ length: 5 }, (_, i) => JSON.stringify({ name: `Agent${i + 1}`, experiment: "token-governance" })),
+    agentManifests: Array.from({ length: 5 }, (_, i) => JSON.stringify({ name: `Agent${i + 1}`, role: SIMULATION_ROLES[i], experiment: "token-governance" })),
     fleetManifest: JSON.stringify({ experiment: "ERC-20 proposal scarcity", version: 3 }),
     operator: account("FLEET_OPERATOR_KEY"), guardian: account("FLEET_GUARDIAN_KEY"),
     votingDelay: 15, votingPeriod: 180, proposalThreshold: "1000000000000000000", quorumNumerator: 6000,
