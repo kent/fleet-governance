@@ -59,7 +59,9 @@ export async function fundWallets(count: number, progress: (message: string) => 
   const [keyId, keySecret] = await Promise.all([readSecret("fleet-cdp-api-key-id"), readSecret("fleet-cdp-api-key-secret")]);
   for (const name of names) {
     const address = privateKeyToAccount(bundle.keys[name]!).address;
-    const target = parseEther(name === "FLEET_DEPLOYER_KEY" ? "0.001" : name === "FLEET_KEEPER_KEY" ? "0.0003" : "0.0001");
+    // Registering a run now deploys its fixed-supply proposal token. The operator
+    // must cover that transaction's maximum gas charge, not just openTask.
+    const target = parseEther(name === "FLEET_DEPLOYER_KEY" || name === "FLEET_OPERATOR_KEY" ? "0.001" : name === "FLEET_KEEPER_KEY" ? "0.0003" : "0.0001");
     const journalPath = `wallets/faucet/${address.toLowerCase()}.json`;
     let balance = await client.getBalance({ address });
     const prior = await readObject<{ state: string; balanceBefore: string; txHash?: string }>(journalPath);
