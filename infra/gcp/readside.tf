@@ -120,7 +120,7 @@ resource "google_compute_disk" "readside_data" {
   name   = "fleet-readside-data"
   type   = "pd-balanced"
   zone   = var.zone
-  size   = 30
+  size   = 100
   labels = local.labels
   lifecycle { prevent_destroy = true }
 }
@@ -134,7 +134,7 @@ resource "google_compute_instance" "readside" {
   boot_disk {
     initialize_params {
       image = "ubuntu-os-cloud/ubuntu-2404-lts-amd64"
-      size  = 50
+      size  = 100
       type  = "pd-balanced"
     }
   }

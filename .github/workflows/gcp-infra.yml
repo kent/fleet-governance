@@ -354,6 +354,12 @@ jobs:
               print(resource['address'], actions)
           PY
           terraform apply -input=false readside.tfplan
+      - name: Grow and verify the existing governance filesystems
+        if: inputs.action == 'provision-readside'
+        run: |
+          gcloud compute scp infra/gcp/runtime/grow-history-filesystems.sh fleet-readside:~/fleet-grow-history.sh --zone=us-central1-a --tunnel-through-iap --quiet
+          gcloud compute ssh fleet-readside --zone=us-central1-a --tunnel-through-iap --quiet --command='sudo bash "$HOME/fleet-grow-history.sh"'
+          gcloud compute disks list --filter='name=(fleet-readside fleet-readside-data)' --format='table(name,sizeGb,type.basename(),status)'
       - name: Initialise managed pipeline credentials without logging values
         if: inputs.action == 'provision-readside'
         env:
@@ -371,8 +377,9 @@ jobs:
               subprocess.run(['gcloud','secrets','versions','add',name,'--data-file=-'], input=value, text=True, check=True, stdout=subprocess.DEVNULL)
               print('Initialised '+name)
           PY
-      - name: Confirm worker remains stopped and history host is separate
+      - name: Confirm governance capacity and the separate agent host
         if: inputs.action == 'provision-readside'
         run: |
           gcloud compute instances list --filter='name=(fleet-research fleet-readside)' \
             --format='table(name,status,machineType.basename(),serviceAccounts.email)'
+          python3 -B infra/gcp/verify-public-site.py

@@ -16,12 +16,12 @@ Open the [launcher](https://fleet-governance-449245570324.us-central1.run.app/ex
 - `fleet-governance` on Cloud Run is public. Its `fleet-public` identity can read experiment evidence and the fixed VM's state. It has no compute mutation, queue, secret or signing authority. The HTTP gateway accepts GET and HEAD only; supplied Google identity headers never grant permission.
 - `fleet-governance-control` is the operator interface behind Google Identity-Aware Proxy. Its `fleet-control` identity can queue experiments and start the fixed worker. It has no wallet or model secrets.
 - `fleet-research` in `us-central1-a` runs the trusted Runner and agent work. It is an `e2-standard-8` with 8 vCPUs and 32 GiB RAM. A failed required vote stops this VM; its native four-hour stop remains a backstop. Disks and records remain.
-- `fleet-readside` runs public Agora, DAO Node, CPLS and Postgres on separate compute and a persistent data disk. Goldsky supplies the fixed Base Sepolia fleet through an event pipeline. Governance stays available when the agent VM stops.
+- `fleet-readside` runs public Agora, DAO Node, CPLS and Postgres on separate compute: 2 vCPUs, 8 GiB RAM, a 100 GiB boot disk and a separate 100 GiB data disk. Goldsky supplies the fixed Base Sepolia fleet through an event pipeline. Governance stays available when the agent VM stops.
 - `fleet-compute-controller` is the independent Guardian on Cloud Run. It can read and stop only the fixed agent VM. It cannot start it or stop governance. Its durable halt lives in the protected control bucket.
 - The launcher reaches Agora over the private VPC. Application ports are closed to public ingress. IAP provides administrative SSH access. OS Login and Shielded VM protections are enabled.
 - Viewing requires no login. Operator sign-in is restricted to `operator2@example.com`. The CI provisioner also has IAP access for verification.
 
-Agents share the worker, with separate identities, workspaces and inference calls. The launcher supports 2 to 25 agents, with five selected by default. Agent count does not mean one VM per agent.
+Agents share the worker, with separate identities, workspaces and inference calls. The current experiment launcher supports 3 to 5 agents, with five selected by default. Agent count does not mean one VM per agent.
 
 ## Deploy or change infrastructure
 
@@ -35,6 +35,10 @@ Agents share the worker, with separate identities, workspaces and inference call
 
 Deployment and experiments share a filesystem lock. A deployment stops if an experiment owns the worker. Finish that run before retrying deployment.
 
+Use `provision-readside` to apply governance capacity changes. CI rejects changes outside the independent history resources and refuses to replace a VM or disk. After Terraform grows the disks, CI expands the existing ext4 filesystems, checks usable capacity, and verifies the public application. The resize script checks the project, host, mount and filesystem before writing. It never formats a disk. Deployment also removes unused Docker images while preserving container-referenced images, database files and experiment records.
+
+The September 16 capacity check found 6.6 GiB of memory available on the governance host. The failed deployment ran out of boot disk space while extracting an image. Storage was expanded from 50 to 100 GiB for the boot disk and from 30 to 100 GiB for data; CPU and memory stay at their measured pilot sizes. These GCP resources are billed separately from the $50 model pool.
+
 ## Run, adjust and repeat
 
 1. Open `/experiments` to browse without signing in. Use **Sign in to run** for the operator interface.
@@ -43,7 +47,7 @@ Deployment and experiments share a filesystem lock. A deployment stops if an exp
 4. Follow funding, deployment, agent activity, proposals, ballots and execution evidence. Open a proposal in Agora to read the indexed vote reasons.
 5. Use the completed run's copy-settings action, adjust the inputs and press Run again. That creates a new run ID and preserves the previous result.
 
-One experiment owns the agent worker at a time. **Run simulation** on `/compute` starts the fixed five-agent collective lab using the existing indexed Governor. Its three proposal identities and deadlines are pinned before work starts. The configurable coding launcher is the earlier, separate task path; it can deploy other fleets and is not the collective shutdown acceptance case.
+One experiment owns the agent worker at a time. `/experiments/new` configures the task, agent count, budget, proposal credits, proposal cost, voting-power threshold, delegation, constitution and duration. Agents discover issues and write proposals during work. The preparation record fixes the allocation and expiry with an empty proposal list. Each accepted proposal consumes credits, and the Guardian observes its onchain outcome. Earlier checkpoint runs remain visible as historical records.
 
 Agora and past proposals stay available while the agent VM is stopped. **Start unarmed worker** is an operator action, not a requirement for viewing. Any armed or halted allocation blocks routine starts and deployments until explicit operator recovery. Use a fresh run identity after recovery; an old failed run cannot resume.
 
