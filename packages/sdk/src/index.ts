@@ -9,3 +9,4 @@ export * from "./signer.js";
 export * from "./nonce.js";
 export * from "./keeper.js";
 export * from "./concurrency.js";
+export { logBoundedHttp } from "./log-transport.js";

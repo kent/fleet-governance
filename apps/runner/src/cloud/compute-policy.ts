@@ -5,6 +5,15 @@ const hash = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
 const decimal = z.string().regex(/^(0|[1-9][0-9]*)$/);
 const timestamp = z.number().int().nonnegative().safe();
 
+export const ProposalDiscovery = z.object({
+  taskId: decimal, hook: address, hookCodeHash: hash,
+  creditsContract: address, creditsCodeHash: hash, runHash: hash,
+  startBlock: decimal, creditsPerAgent: z.number().int().min(1).max(8),
+  agents: z.array(address).length(5),
+  proposalWindowSeconds: z.number().int().min(450).max(900),
+  publicationWindowSeconds: z.number().int().min(60).max(120),
+}).strict().refine(value => new Set(value.agents.map(a => a.toLowerCase())).size === 5, "Distinct agent identities required.");
+
 /** Written by human-authorised control software, never by the agent worker. A vote may
  * satisfy this allocation, but cannot edit its deadline, worker, or required proposals. */
 export const ComputeAllocation = z.object({
@@ -21,12 +30,16 @@ export const ComputeAllocation = z.object({
   chainId: z.literal(84532),
   governor: address,
   governorCodeHash: hash,
-  requiredProposalIds: z.array(decimal).min(1).max(64),
+  requiredProposalIds: z.array(decimal).max(64),
   // Optional ordered checkpoints preserve the legacy all-at-once allocation shape.
   // IDs and absolute deadlines are fixed before any agent work starts.
   checkpoints: z.array(z.object({ proposalId: decimal, approvalDeadline: timestamp }).strict()).min(1).max(8).optional(),
+  discovery: ProposalDiscovery.optional(),
   maxObservationAgeSeconds: z.number().int().min(5).max(120),
 }).strict().superRefine((value, ctx) => {
+  if (value.discovery ? value.requiredProposalIds.length !== 0 || !!value.checkpoints : value.requiredProposalIds.length === 0) {
+    ctx.addIssue({ code: "custom", message: "Use either fixed proposals or task-scoped discovery, never both." });
+  }
   if (!(value.issuedAt < value.approvalDeadline && value.approvalDeadline <= value.stopAt)) {
     ctx.addIssue({ code: "custom", message: "Approval must have a deadline within the allocation." });
   }
@@ -50,7 +63,7 @@ export type ComputeAllocation = z.infer<typeof ComputeAllocation>;
 
 export type ComputeHaltReason =
   | "vote_failed" | "approval_deadline" | "allocation_expired"
-  | "unverifiable_vote" | "allocation_mismatch";
+  | "unverifiable_vote" | "allocation_mismatch" | "unpaid_proposal";
 export type ComputeState = {
   allocationId: string;
   phase: "voting" | "authorised" | "halted";
@@ -64,6 +77,7 @@ export type ComputeState = {
   checkpointIndex?: number;
   approvedProposalIds?: string[];
   waitingForProposal?: boolean;
+  observedProposalIds?: string[];
 };
 export type ComputeObservation = {
   chainId: number;
@@ -73,7 +87,8 @@ export type ComputeObservation = {
   blockHash: string;
   blockTimestamp: number;
   /** Read from Governor.state at the same confirmed block. -1 means its specific nonexistent-proposal error, allowed only for pinned future checkpoints. */
-  proposals: { proposalId: string; state: number }[];
+  proposals: { proposalId: string; state: number; proposer?: string; paidAt?: number; creditPaid?: boolean }[];
+  discoveryVerified?: boolean;
 };
 
 /** This is an authority decision, not a model judgment. Terminal stops are irreversible
@@ -109,6 +124,35 @@ export function evaluateComputeAllocation(
   if (proposals.size !== observation.proposals.length
     || allocation.requiredProposalIds.some(id => !Number.isInteger(proposals.get(id))
       || proposals.get(id)! < (allocation.checkpoints ? -1 : 0) || proposals.get(id)! > 7)) return halt("unverifiable_vote");
+  if (allocation.discovery) {
+    const policy = allocation.discovery;
+    if (!observation.discoveryVerified || observation.proposals.length > policy.agents.length * policy.creditsPerAgent
+      || observation.proposals.some(p => !decimal.safeParse(p.proposalId).success || !Number.isInteger(p.state) || p.state < -1 || p.state > 7)) return halt("unverifiable_vote");
+    // Discovery is monotonic. A worker cannot drop a rejected proposal from its status
+    // file, and a reorg cannot quietly remove a proposal the Guardian already observed.
+    if (previous?.observedProposalIds?.some(id => !proposals.has(id))) return halt("unverifiable_vote");
+    const unpaid = observation.proposals.find(p => !p.creditPaid);
+    if (unpaid) return halt("unpaid_proposal", unpaid.proposalId);
+    const spent = new Map<string, number>();
+    for (const p of observation.proposals) {
+      const payer = p.proposer?.toLowerCase();
+      if (!payer || !policy.agents.some(a => a.toLowerCase() === payer)
+        || !Number.isSafeInteger(p.paidAt) || p.paidAt! < allocation.issuedAt - 120 || p.paidAt! > observation.blockTimestamp) return halt("unverifiable_vote");
+      spent.set(payer, (spent.get(payer) ?? 0) + 1);
+      if (spent.get(payer)! > policy.creditsPerAgent) return halt("unverifiable_vote");
+      if ([2, 3, 6].includes(p.state)) return halt("vote_failed", p.proposalId);
+      if (p.state === -1 && now >= p.paidAt! + policy.publicationWindowSeconds) return halt("approval_deadline", p.proposalId);
+      if (now >= Math.min(allocation.stopAt, p.paidAt! + policy.proposalWindowSeconds)
+        && !previous?.approvedProposalIds?.includes(p.proposalId)) return halt("approval_deadline", p.proposalId);
+    }
+    const approved = observation.proposals.filter(p => p.state === 7).map(p => p.proposalId);
+    if (previous?.approvedProposalIds?.some(id => proposals.get(id) !== 7)) return halt("unverifiable_vote");
+    const pending = observation.proposals.some(p => p.state !== 7);
+    return { allocationId: allocation.allocationId, phase: pending ? "voting" : "authorised", observedAt: now,
+      approvedProposalIds: approved, observedProposalIds: observation.proposals.map(p => p.proposalId),
+      waitingForProposal: !pending, ...(approved.length ? { authorisedAt: previous?.authorisedAt ?? now } : {}),
+      blockNumber: observation.blockNumber, blockHash: observation.blockHash };
+  }
   // OpenZeppelin Governor: Canceled=2, Defeated=3, Expired=6. Abstention, a tie and
   // insufficient quorum become Defeated through the Governor's own voting rules.
   const failed = allocation.requiredProposalIds.find(id => [2, 3, 6].includes(proposals.get(id)!));
@@ -157,6 +201,6 @@ export function permitsTaskExecution(state: ComputeState, allocation: ComputeAll
 /** Only initial bounded lab work may use generic task authority between checkpoints.
  * Every governed action must additionally match its own settled checkpoint. */
 export function permitsCheckpointExecution(state: ComputeState, allocation: ComputeAllocation, proposalId: string, now: number): boolean {
-  return !!allocation.checkpoints && allocation.requiredProposalIds.includes(proposalId)
+  return (!!allocation.discovery || !!allocation.checkpoints && allocation.requiredProposalIds.includes(proposalId))
     && permitsTaskExecution(state, allocation, now) && !!state.approvedProposalIds?.includes(proposalId);
 }
