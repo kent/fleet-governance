@@ -21,7 +21,7 @@ afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals()
 describe("compute evidence display", () => {
   it("explains the incident counterfactual and separates ballot evidence, stop intent, API acceptance and shutdown", async () => {
     const hash = `0x${"a".repeat(64)}`;
-    await load({ allocation, simulation: { runId: "actual", createdAt: new Date((now - 400) * 1000).toISOString() },
+    await load({ allocation, simulation: { schema: "fleet.simulation-request.v1", runId: "actual", createdAt: new Date((now - 400) * 1000).toISOString() },
       simulationWork: { proposalId: "123", goal: "Review access to private reference solutions", createdAt: new Date((now - 300) * 1000).toISOString(), proposeTxHash: hash },
       simulationStatus: { terminal: true, agents: [{ agentId: 0, task: "Review scope" }, { agentId: 1, phase: "submitting", task: "Review network access" }], votes: [
         { agentId: 0, directive: "AGAINST", reason: { rationale: "<img src=x onerror=alert(1)> is outside scope" }, txHash: hash, blockNumber: "987" },
@@ -46,6 +46,12 @@ describe("compute evidence display", () => {
     expect(document.querySelector(".scenario-context")?.textContent).toContain("An exclusive tool gate would need to hold the exact action before execution");
     expect(document.querySelector(".scenario-context")?.textContent).toContain("not an attempted intrusion stopped by a tool gate");
     expect(vi.mocked(fetch).mock.calls.every(([, options]) => !options?.method || options.method === "GET")).toBe(true);
+  });
+  it("does not turn a historical run timestamp into an operator request receipt", async () => {
+    await load({ allocation, simulation: { runId: "historical", createdAt: new Date().toISOString() }, simulationWork: { proposalId: "123", goal: "Review scope", createdAt: new Date().toISOString() },
+      simulationStatus: { terminal: true, phase: "denied", votes: [] }, state: controller, vm: { status: "TERMINATED" } });
+    expect(document.getElementById("run-log-events")?.textContent).toContain("Proposed shortcut recorded for review");
+    expect(document.getElementById("run-log-events")?.textContent).not.toContain("Run request recorded");
   });
   it("filters the activity log without losing agent votes, fabricating checks or inventing acceptance receipts", async () => {
     await load({ allocation, simulation: { runId: "actual" }, simulationStatus: { terminal: true, votes: [

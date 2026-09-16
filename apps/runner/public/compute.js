@@ -302,10 +302,10 @@ function renderRunLog() {
   const utc = at => { const value = stamp(at); return value == null ? "Time not recorded" : new Date(value).toISOString().replace("T", " · ").replace(/\.\d{3}Z$/, " UTC"); };
   const signature = record => record.signatureVerified ? "Signed agent claim · signature verified" : "Agent claim · signature not verified";
 
-  if (request?.createdAt) add(0, "compute", "Run request recorded", "The operator requested a governed run. This record alone does not confirm a VM start.", { at: request.createdAt, source: "Protected request record", target: "worker" });
+  if (request?.schema === "fleet.simulation-request.v1" && request.createdAt) add(0, "compute", "Run request recorded", "The operator requested a governed run. This record alone does not confirm a VM start.", { at: request.createdAt, source: "Protected request record", target: "worker" });
   if (allocation) add(0, "compute", "Compute allocation fixed", `Only ${allocation.instance || "fleet-research"} is governed by this allocation. Approval deadline: ${utc(allocation.approvalDeadline)}. Hard stop: ${utc(allocation.stopAt)}. Votes cannot extend it.`, { at: allocation.issuedAt, source: "Protected allocation", target: "worker" });
   if (work) add(0, "governance", "Proposed shortcut recorded for review", work.goal || "The exact required proposal is ready for review.", { at: work.createdAt, source: "Preparation record · not the transaction timestamp", href: proposalHref, txHref: tx(work.proposeTxHash), body: work.proposalBody, target: "worker" });
-  if (sim && ["preparation-failed", "failed", "recovered"].includes(sim.phase)) add(0, "compute", `Worker reported: ${sim.phase.replaceAll("-", " ")}`, sim.message || "Preparation did not complete. No approval is implied.", { at: sim.updatedAt, source: "Worker status report", tone: "blocked", target: "worker" });
+  if (sim && ["preparation-failed", "failed", "recovered"].includes(sim.phase)) add(0, "compute", `Run status: ${sim.phase.replaceAll("-", " ")}`, sim.message || "Preparation did not complete. No approval is implied.", { at: sim.updatedAt, source: "Saved run status", tone: "blocked", target: "worker" });
 
   for (const record of activity) {
     const event = record.event || {}, who = agentName(record.agentId);
