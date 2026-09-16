@@ -203,4 +203,4 @@ async function refreshSimulation() {
 }
 void refreshSimulation();
 
-if (!canLaunch) { $("run").textContent = "Sign in to run experiment →"; $("wake").textContent = "Sign in to wake Agora"; }
+if (!canLaunch) { $("run").textContent = "Sign in to run experiment →"; $("wake").textContent = "Sign in to start worker"; }

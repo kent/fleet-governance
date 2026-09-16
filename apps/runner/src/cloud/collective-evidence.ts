@@ -40,7 +40,7 @@ export async function verifyCollective(input: { work: SimulationWork; allocation
   const rounds = [];
   for (let index = 0; index < checkpoints.length; index++) {
     const checkpoint = checkpoints[index]!, proposalId = BigInt(checkpoint.proposalId);
-    const [votes, outcome] = await Promise.all([client.listVotes(proposalId), client.getProposalState(proposalId)]);
+    const [votes, outcome, created] = await Promise.all([client.listVotes(proposalId), client.getProposalState(proposalId), client.getProposalCreated(proposalId)]);
     if (outcome !== (index < 2 ? 7 : 3) || votes.length !== 5 || new Set(votes.map(vote => vote.voter.toLowerCase())).size !== 5
       || votes.some(vote => !vote.parsedReason || !roster.some(agent => agent.address.toLowerCase() === vote.voter.toLowerCase()))) throw new Error("Incomplete independently verified proposal.");
     const receipts = await Promise.all(votes.map(async vote => {
@@ -49,7 +49,8 @@ export async function verifyCollective(input: { work: SimulationWork; allocation
         voter: vote.voter, directive: ["AGAINST", "FOR", "ABSTAIN"][vote.support], reason: vote.parsedReason,
         txHash: vote.txHash, blockNumber: vote.blockNumber.toString(), at: new Date(Number(block.timestamp) * 1000).toISOString() };
     }));
-    rounds.push({ checkpoint: index, id: checkpoint.id, proposalId: checkpoint.proposalId, title: checkpoint.proposalTitle,
+    if (created.description !== checkpoint.proposalBody) throw new Error("Published proposal differs from the pinned decision.");
+    rounds.push({ checkpoint: index, id: checkpoint.id, proposalId: checkpoint.proposalId, title: checkpoint.proposalTitle, txHash: created.txHash,
       phase: index < 2 ? "approved" : "denied", outcome: index < 2 ? "Executed" : "Defeated", votes: receipts });
   }
   return { rounds, activity, verified: { actualModelReports: 30, independentlyReadBallots: 15, executedCheckpoints: 2,
