@@ -84,6 +84,21 @@ jobs:
           gcloud compute scp infra/gcp/runtime/inspect-vm.py fleet-readside:~/fleet-history-inspect.py --zone=us-central1-a --tunnel-through-iap --quiet
           gcloud compute ssh fleet-readside --zone=us-central1-a --tunnel-through-iap --quiet --command='sudo python3 "$HOME/fleet-history-inspect.py"'
           python3 -B infra/gcp/verify-public-site.py
+      - name: Verify the live governance interface in a browser
+        if: inputs.action == 'inspect-history'
+        run: |
+          npm install --prefix "$RUNNER_TEMP/fleet-browser" --no-audit --no-fund playwright@1.63.0
+          export FLEET_PLAYWRIGHT_MODULE="$RUNNER_TEMP/fleet-browser/node_modules/playwright"
+          export FLEET_BROWSER_BIN
+          FLEET_BROWSER_BIN=$(command -v google-chrome)
+          node infra/gcp/verify-agora-browser.cjs
+          node infra/gcp/verify-experiments-browser.cjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: inputs.action == 'inspect-history'
+        with:
+          name: governance-browser-evidence
+          path: '*browser-evidence.json'
+          if-no-files-found: error
       - name: Prepare and fund five testnet agent wallets
         if: inputs.action == 'prepare-wallets'
         env:
