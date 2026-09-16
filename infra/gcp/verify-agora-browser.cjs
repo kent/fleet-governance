@@ -10,7 +10,7 @@ const historical = '177584537204592597751153488017729927912845333076971828744807
   // Check incomplete historical rounds honestly too. Full-run acceptance is
   // independently enforced by verify-simulation, which still requires 15 ballots.
   const ids = new Map([[historical, 5], ...(snapshot.simulationStatus?.rounds || [])
-    .filter(round => round.txHash && round.votes?.length)
+    .filter(round => ["approved", "denied"].includes(round.phase) && round.txHash && round.votes?.length)
     .map(round => [round.proposalId, round.votes.length])]);
   const browser = await chromium.launch({ headless: true,
     ...(process.env.FLEET_BROWSER_BIN ? { executablePath: process.env.FLEET_BROWSER_BIN } : {}) });
