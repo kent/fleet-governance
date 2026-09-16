@@ -26,7 +26,9 @@ existing = subprocess.check_output(['goldsky','secret','list','--no-color'], tex
 command = ['goldsky','secret','update',name] if name in existing else ['goldsky','secret','create','--name',name]
 result = subprocess.run(command + ['--value', json.dumps({'type':'httpauth','secretKey':'Authorization','secretValue':'Bearer '+webhook}), '--no-color'], capture_output=True, text=True)
 if result.returncode:
-    raise SystemExit('Goldsky delivery credential configuration failed; no secret diagnostics printed.')
+    diagnostic = (result.stdout + result.stderr).replace(token, '[redacted]').replace(webhook, '[redacted]')
+    print(diagnostic[-4000:])
+    raise SystemExit('Goldsky delivery credential configuration failed; credentials redacted.')
 print('Managed delivery credential configured for Fleet only.')
 subprocess.run([str(directory / 'bin/turbo'), 'apply', 'infra/goldsky/fleet-base-sepolia.yaml'], check=True)
 subprocess.run([str(directory / 'bin/turbo'), 'get', 'fleet-base-sepolia-events', '-o', 'json'], check=True)
