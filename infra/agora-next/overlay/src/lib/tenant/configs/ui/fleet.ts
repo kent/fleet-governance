@@ -6,7 +6,7 @@ const TRANSPARENCY_NOTICE =
   "Fleet Governance shows the fleet's proposals, votes and delegates from chain data and its archive. Approval and execution are separate events. In deployments with FleetExecutor, the artifact store accepts only exact, settled permissions. Tool access is checked by the fleet's gateway. This site displays the record; it does not grant execution authority.";
 
 export const fleetTenantUIConfig = new TenantUI({
-  title: "Fleet Governance",
+  title: "Agora governance experiments",
   logo: "/fleet-logo.svg",
   tokens: [TenantTokenFactory.create(TENANT_NAMESPACES.FLEET)],
 
@@ -17,7 +17,7 @@ export const fleetTenantUIConfig = new TenantUI({
   },
 
   organization: {
-    title: "Fleet Governance",
+    title: "Agora governance experiments",
   },
 
   delegates: {
@@ -27,16 +27,16 @@ export const fleetTenantUIConfig = new TenantUI({
   },
 
   customization: {
-    primary: "17 24 39",
-    secondary: "31 41 55",
-    tertiary: "75 85 99",
+    primary: "41 37 36",
+    secondary: "68 64 60",
+    tertiary: "87 83 78",
     neutral: "255 255 255",
-    wash: "249 250 251",
-    line: "209 213 219",
+    wash: "250 250 249",
+    line: "231 229 228",
     positive: "22 163 74",
     negative: "220 38 38",
-    brandPrimary: "56 189 248",
-    brandSecondary: "243 244 246",
+    brandPrimary: "28 25 23",
+    brandSecondary: "245 245 244",
   },
 
   links: [{ name: "experiments", title: "Experiments", url: "/experiments" }],
@@ -46,10 +46,10 @@ export const fleetTenantUIConfig = new TenantUI({
   pages: [
     {
       route: "/",
-      title: "Fleet Governance",
+      title: "Agora governance experiments",
       description: TRANSPARENCY_NOTICE,
       meta: {
-        title: "Fleet Governance",
+        title: "Agora governance experiments",
         description: TRANSPARENCY_NOTICE,
         imageTitle: "Fleet Governance",
         imageDescription: TRANSPARENCY_NOTICE,

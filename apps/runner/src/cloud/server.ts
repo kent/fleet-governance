@@ -103,6 +103,14 @@ createServer(async (request, response) => {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'" });
       response.end(page("compute.html")); return;
     }
+    const brandAssets: Record<string, string> = {
+      "/agora-theme.css": "text/css", "/agora/logo.svg": "image/svg+xml",
+      "/agora/family-regular.woff2": "font/woff2", "/agora/family-medium.woff2": "font/woff2",
+    };
+    if (brandAssets[url.pathname] && request.method === "GET") {
+      response.writeHead(200, { "content-type": brandAssets[url.pathname], "x-content-type-options": "nosniff", "cache-control": "public, max-age=3600" });
+      response.end(readFileSync(path.join(root, "apps/runner/public", url.pathname.slice(1)))); return;
+    }
     if (["/experiments.js", "/experiments.css", "/experiment.js", "/experiment.css", "/compute.js", "/compute.css", "/proposal-status.js"].includes(url.pathname)) {
       response.writeHead(200, { "content-type": url.pathname.endsWith(".js") ? "text/javascript" : "text/css", "x-content-type-options": "nosniff" });
       response.end(readFileSync(path.join(root, "apps/runner/public", url.pathname.slice(1)))); return;

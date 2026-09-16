@@ -28,6 +28,7 @@ RUN npm ci
 # Prisma views, and the two placeholder logo assets). Mirrors the upstream
 # repo layout under infra/agora-next/overlay/, copied straight over /app.
 COPY infra/agora-next/overlay/ /app/
+COPY apps/runner/public/agora/ /app/public/agora/
 COPY experiments/compute/agent-roster.json /app/src/lib/fleet-agent-roster.json
 
 # prisma/fleet-views.prisma (copied above) is the b3* views renamed to

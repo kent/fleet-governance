@@ -1,0 +1,15 @@
+/* Shared Agora marketing identity, with reading widths inside a full-width app. */
+@font-face{font-family:Family;src:url('/agora/family-regular.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:Family;src:url('/agora/family-medium.woff2') format('woff2');font-weight:500;font-style:normal;font-display:swap}
+body{background:#fafaf9;color:#292524}
+h1,h2{font-family:Family,Georgia,serif;font-weight:400!important;letter-spacing:-.025em;line-height:1.2}
+.fleet-content{width:100%;max-width:none;padding:24px clamp(20px,3vw,56px);font-size:16px;line-height:1.7}
+.fleet-info{width:100%;max-width:none;padding:24px 0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:48px 64px}
+.fleet-info>div:first-child{grid-column:1/-1;max-width:1000px;margin-bottom:8px}
+.fleet-info>section{margin-top:0!important;max-width:82ch;border-top:1px solid #e7e5e4;padding-top:24px}
+.fleet-info h1{font-size:clamp(36px,3.5vw,58px)}
+.fleet-info h2{font-size:30px}
+.fleet-info p{font-size:16px;line-height:1.8;color:#57534e}
+.fleet-info a.bg-primary{border-radius:999px;background:#1c1917;color:white}
+.fleet-info a.underline{text-underline-offset:4px;color:#292524}
+@media(max-width:900px){.fleet-info{grid-template-columns:1fr;gap:28px}.fleet-content{padding:20px}.fleet-info>div:first-child{grid-column:auto}}
