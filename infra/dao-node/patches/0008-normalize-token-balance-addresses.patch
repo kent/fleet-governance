@@ -1,0 +1,55 @@
+--- a/app/data_products.py
++++ b/app/data_products.py
+@@ -124,18 +124,18 @@
+ 
+     def handle_erc721(self, event):
+ 
+-        self.balances[event['from']] -= 1
+-        self.balances[event['to']] += 1
++        self.balances[event['from'].lower()] -= 1
++        self.balances[event['to'].lower()] += 1
+ 
+     def handle(self, event): # ERC20
+ 
+         field = self.value_field_name
+ 
+-        self.balances[event['from']] -= event[field]
+-        self.balances[event['to']] += event[field]
++        self.balances[event['from'].lower()] -= event[field]
++        self.balances[event['to'].lower()] += event[field]
+     
+     def balance_of(self, address):
+-        return self.balances[address]
++        return self.balances[address.lower()]
+ 
+     def top(self, k):
+ 
+--- a/tests/test_data_products.py
++++ b/tests/test_data_products.py
+@@ -1,5 +1,26 @@
+ import pytest
+ from app.data_products import Balances, Delegations, NonIVotesVP, Proposals, Votes, ProposalTypes, Proposal, VoteAggregation
++
++
++def test_Balances_checksum_transfers_match_lowercase_delegators():
++    balances = Balances(token_spec={'name': 'erc20', 'version': '?'})
++    agent = '0x5B71A4C4E3e83E31d306d11079e312893B437aC5'
++    zero = '0x' + '0' * 40
++    balances.handle({'from': zero, 'to': agent, 'value': 10**18})
++    assert balances.balance_of(agent.lower()) == 10**18
++    assert balances.balance_of(agent) == 10**18
++    balances.handle({'from': agent.lower(), 'to': zero, 'value': 7})
++    assert balances.balance_of(agent) == 10**18 - 7
++    assert len([key for key in balances.balances if key.lower() == agent.lower()]) == 1
++
++
++def test_Balances_erc721_addresses_are_case_insensitive():
++    balances = Balances(token_spec={'name': 'erc721', 'version': '?'})
++    balances.handle({'from': '0x0000', 'to': '0xAbCd'})
++    assert balances.balance_of('0xabcd') == 1
++    balances.handle({'from': '0xabcd', 'to': '0x0000'})
++    assert balances.balance_of('0xABCD') == 0
++
+ from app.clients_csv import CSVClient
+ import csv
+ import os

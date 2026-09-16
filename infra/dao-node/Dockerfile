@@ -7,7 +7,7 @@ COPY vendor/dao-node /app
 COPY infra/dao-node/patches /patches
 RUN for p in /patches/*.patch; do patch -p1 < "$p"; done
 RUN pip install --no-cache-dir -r requirements.txt pytest \
-    && python -m pytest tests/test_data_products.py -k VoteAggregation -q
+    && python -m pytest tests/test_data_products.py -k "VoteAggregation or Balances" -q
 COPY infra/dao-node/config.template.yaml /config.template.yaml
 COPY infra/dao-node/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
