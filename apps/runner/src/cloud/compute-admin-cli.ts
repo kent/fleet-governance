@@ -3,6 +3,7 @@ import { armComputeAllocation, releaseComputeAllocation } from "./compute-admin.
 import { readSimulationRequest, simulationPath } from "./simulation.js";
 import { readObject } from "./google.js";
 import { readComputeAllocation, readComputeState, readComputeObject } from "./compute-store.js";
+import { publicSnapshot } from "./site-access.js";
 
 try {
   const action = process.argv[2];
@@ -29,7 +30,7 @@ try {
   } else if (action === "inspect") {
     const allocation = await readComputeAllocation();
     const simulation = await readSimulationRequest();
-    console.log(JSON.stringify({ allocation, state: allocation ? await readComputeState(allocation.allocationId) : null, simulation, simulationStatus: simulation ? await readObject(simulationPath(simulation.runId)) : null }));
+    console.log(JSON.stringify(publicSnapshot({ allocation, state: allocation ? await readComputeState(allocation.allocationId) : null, simulation, simulationStatus: simulation ? await readObject(simulationPath(simulation.runId)) : null })));
   } else throw new Error("Unknown compute administration action.");
 } catch {
   console.error("Compute administration failed. The existing allocation remains authoritative; no automatic recovery or restart.");
