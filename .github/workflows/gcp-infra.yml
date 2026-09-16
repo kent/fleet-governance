@@ -110,7 +110,7 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm typecheck
           pnpm exec vitest run --project unit apps/runner/src/cloud/emergent-policy.test.ts apps/runner/src/cloud/proposal-discovery.test.ts
-          docker run --rm -v "$PWD:/workspace" -w /workspace --entrypoint forge ghcr.io/foundry-rs/foundry:v1.7.1@sha256:8347b728d5d393dac1c018691b36f506d23b9dcd78341d40ea0fcb11c3a19cdd test --root contracts --match-contract FleetProposalCreditsTest
+          docker run --rm --user 0:0 -v "$PWD:/workspace" -w /workspace --entrypoint forge ghcr.io/foundry-rs/foundry:v1.7.1@sha256:8347b728d5d393dac1c018691b36f506d23b9dcd78341d40ea0fcb11c3a19cdd test --root contracts --match-contract FleetProposalCreditsTest
           node apps/runner/dist/cloud/deploy-proposal-credits.js
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: inputs.action == 'deploy-proposal-credits'
