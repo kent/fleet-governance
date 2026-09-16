@@ -15,12 +15,12 @@ def request(path, body=None):
             headers={'Content-Type':'application/json'}), timeout=15) as response:
         return json.load(response)
 
-def main():
+def main(force=False):
     root = Path('/opt/fleet').resolve()
     current = request('8010/health')
     cursor = Path('/srv/fleet/state/history-refresh.json')
     old = json.loads(cursor.read_text()) if cursor.exists() else {'deliveries':-1,'reorgs':0}
-    if current.get('events',0) == 0 or current.get('deliveries',0) == old['deliveries']:
+    if current.get('events',0) == 0 or (not force and current.get('deliveries',0) == old['deliveries']):
         return
     # Goldsky can deliver events older than DAO Node's polling lookback. Rebuild
     # this small pilot projection from the local store so delayed batches and
@@ -54,6 +54,9 @@ def main():
 
 if __name__ == '__main__':
     try:
-        main()
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--force", action="store_true", help="Rebuild derived archives after an indexer deployment")
+        main(force=parser.parse_args().force)
     except Exception:
         raise SystemExit('History refresh incomplete; the timer will retry.')

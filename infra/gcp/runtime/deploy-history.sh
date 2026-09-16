@@ -35,13 +35,14 @@ if [[ "$stage" == serve ]]; then
     sleep 5
   done
   [[ "$ready" == true ]] || { echo 'Goldsky historical ballots have not arrived.' >&2; exit 1; }
+  systemctl stop fleet-history-refresh.timer fleet-history-refresh.service 2>/dev/null || true
+  trap 'systemctl start fleet-history-refresh.timer 2>/dev/null || true' EXIT
   docker compose -f "$release/infra/gcp/docker-compose.yml" -f "$release/infra/gcp/history-compose.yml" \
     --project-directory "$release/infra" up -d --force-recreate dao-node blockcache-shim cpls agora-next
   install -d /usr/local/lib/fleet
   install -m 700 "$script_dir/reconcile-history.py" /usr/local/lib/fleet/reconcile-history.py
   install -m 644 "$script_dir/fleet-history-refresh.service" "$script_dir/fleet-history-refresh.timer" /etc/systemd/system/
   systemctl daemon-reload
-  systemctl enable --now fleet-history-refresh.timer
   for _ in $(seq 1 90); do
     if python3 - <<'PY'
 import urllib.request
@@ -54,7 +55,11 @@ except Exception:
     raise SystemExit(1)
 PY
     then
-      echo 'Independent Agora is serving its proposal archive and /info.'
+      # An indexer correction must refresh historical totals even if Goldsky has
+      # no new delivery. Readiness alone would leave the old cached tally visible.
+      python3 /usr/local/lib/fleet/reconcile-history.py --force
+      systemctl enable --now fleet-history-refresh.timer
+      echo 'Independent Agora is serving its refreshed proposal archive and /info.'
       exit 0
     fi
     sleep 5
