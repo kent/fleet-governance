@@ -88,6 +88,11 @@ export async function releaseComputeAllocation(expectedId: string): Promise<void
   if (vm.id !== allocation.instanceId || vm.status !== "TERMINATED" || saved?.value.phase !== "halted") {
     throw new Error("Recovery requires a durable halt and the same VM verified TERMINATED.");
   }
+  // Both manual recovery and batch retirement settle collateral before releasing the run.
+  if (allocation.discovery?.proposalBonds) {
+    const { retireExperimentBonds } = await import("./retire-bonds.js");
+    await retireExperimentBonds(allocation);
+  }
   // Permanent run-level tombstone survives releasing the active allocation pointer.
   if (!await isComputeRunBlocked(allocation.runId)) {
     await writeControlObject(`blocked-runs/${allocation.runId}.json`, { allocationId: allocation.allocationId, runId: allocation.runId });

@@ -44,8 +44,8 @@ const historical = pilot.verification?.proposalId || '17758453720459259775115348
       for (const [support, label] of [[1, 'FOR'], [0, 'AGAINST']]) {
         const weight = votes.filter(vote => Number(vote.support) === support)
           .reduce((sum, vote) => sum + BigInt(vote.weight), 0n);
-        assert.equal(weight % 10n ** 18n, 0n, 'Pilot ballots use whole voting units');
-        assert.match(content, new RegExp(label + '\\s*-\\s*' + (weight / 10n ** 18n) + '(?![0-9])'));
+        const displayed = String(Number(weight) / 1e18).replace('.', '\\.');
+        assert.match(content, new RegExp(label + '\\s*-\\s*' + displayed + '(?![0-9.])'));
       }
       assert.deepEqual(errors, [], 'Hydrated proposal must not throw browser errors');
       verified.push({ proposalId, indexedBallots: votes.length, visibleReasons: votes.length,

@@ -1,0 +1,11 @@
+--- a/src/components/shared/TokenAmount.tsx
++++ b/src/components/shared/TokenAmount.tsx
+@@ -25,7 +25,7 @@
+       amount,
+       decimals,
+       maximumSignificantDigits,
+-      specialFormatting
++      specialFormatting && Tenant.current().namespace !== "fleet"
+     );
+   }, [amount, decimals, maximumSignificantDigits, specialFormatting]);
+ 
