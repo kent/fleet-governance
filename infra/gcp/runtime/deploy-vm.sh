@@ -42,6 +42,9 @@ if [[ -n "$existing_runner" ]]; then
   fi
 fi
 
+# Match the history host's release hygiene. Keep every container-referenced
+# image, all volumes and all run evidence; discard only unused image revisions.
+docker image prune --all --force
 export DOCKER_CONFIG
 DOCKER_CONFIG=$(mktemp -d)
 trap 'rm -rf "$DOCKER_CONFIG"' EXIT
