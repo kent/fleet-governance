@@ -39,6 +39,10 @@ describe("compute evidence display", () => {
     (document.querySelector("#inspect-content button") as HTMLButtonElement).click();
     expect(document.getElementById("inspect-content")?.textContent).toContain("COMPUTE STOPPED");
     expect(vi.mocked(fetch).mock.calls.every(([, options]) => !options?.method || options.method === "GET")).toBe(true);
+    click("close-inspector");
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(document.getElementById("inspector")?.hidden).toBe(true);
+    expect(location.hash).toBe("");
   });
   it("preserves partial receipts and never animates finished agents with an old submitting phase", async () => {
     await load({ allocation, state: { phase: "voting", observedAt: now }, vm: { status: "RUNNING" }, simulation: { runId: "actual" },

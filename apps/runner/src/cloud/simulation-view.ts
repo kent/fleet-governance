@@ -53,8 +53,9 @@ export async function simulationSnapshot(selectedRun?: string) {
     const observed = await (await googleRequest("compute", "compute/v1/projects/fleet-governance/zones/us-central1-a/instances/fleet-research")).json() as { id: string; status: string; machineType: string };
     vm = { id: observed.id, status: observed.status, machineType: observed.machineType.split("/").pop()! };
   } else vm = { status: state?.observedVmStatus ?? "UNKNOWN" };
+  const replay = selectedRun && (evidence as { allocationId?: string } | null)?.allocationId !== allocation?.allocationId ? null : evidence;
   return { simulation: isCurrentRun ? request : work ? { runId, createdAt: work.createdAt } : null,
-    simulationStatus: status, simulationWork: work, allocation, state, vm, evidence, agentRoster,
+    simulationStatus: status, simulationWork: work, allocation, state, vm, evidence: replay, agentRoster,
     activity: runId ? await verifiedActivity(status, runId, work?.taskId) : [], isCurrentRun,
     observedAt: new Date().toISOString() };
 }

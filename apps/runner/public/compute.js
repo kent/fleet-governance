@@ -66,7 +66,7 @@ function confirmedAgentVotes(simulation) {
   return [...votes.values()];
 }
 function renderActivity({ replay, actual, simulation, allocation, state, votes, halted, stopped, authorised, shutdown }) {
-  const liveAgents = actual ? simulation?.agents || [] : [];
+  const liveAgents = actual && data.isCurrentRun !== false ? simulation?.agents || [] : [];
   const reviewing = simulation?.terminal ? 0 : liveAgents.filter(a => a.phase === "reviewing").length;
   const submittingVotes = simulation?.terminal ? 0 : liveAgents.filter(a => a.phase === "submitting").length;
   const confirmed = new Set([...votes.map(v => v.agentId), ...liveAgents.filter(a => a.phase === "voted").map(a => a.agentId)]).size;
@@ -103,19 +103,19 @@ function renderActivity({ replay, actual, simulation, allocation, state, votes, 
   for (const [id, selector, activity] of [["worker", ".workers", worker], ["chain", ".chain", chain], ["guardian", ".controller", guardian]]) {
     const zone = document.querySelector(selector);
     zone.dataset.phase = activity.phase;
-    zone.dataset.busy = String(activity.busy);
+    zone.dataset.busy = String(activity.busy && data.isCurrentRun !== false);
     $(id + "-activity-title").textContent = activity.title;
     $(id + "-activity-detail").textContent = activity.detail;
   }
   $("task-badge").textContent = stopped ? "Off" : halted ? "Blocked" : failed ? "Failed" : delayed ? "Waiting" : preparing ? "Preparing" : reviewing || submittingVotes ? "Working" : allocation ? authorised ? "Authorised" : "Task work paused" : "Idle";
   $("architecture-map").dataset.progress = delayed ? "delayed" : "current";
-  $("ballot-connector").classList.toggle("flowing", !halted && !stopped && !delayed && !simulation?.terminal && (submittingVotes > 0 || (!replay && simulation?.phase === "voting" && confirmed < 5)));
-  $("guardian-connector").classList.toggle("flowing", guardian.busy && !halted);
+  $("ballot-connector").classList.toggle("flowing", data.isCurrentRun !== false && !halted && !stopped && !delayed && !simulation?.terminal && (submittingVotes > 0 || (!replay && simulation?.phase === "voting" && confirmed < 5)));
+  $("guardian-connector").classList.toggle("flowing", guardian.busy && !halted && data.isCurrentRun !== false);
   const summary = halted ? guardian : failed || delayed || preparing || reviewing || submittingVotes ? worker : allocation ? guardian : worker;
-  $("activity-summary").dataset.busy = String(summary.busy);
+  $("activity-summary").dataset.busy = String(summary.busy && data.isCurrentRun !== false);
   $("activity-summary").dataset.phase = summary.phase;
   $("activity-title").textContent = replay ? `Recorded activity · ${summary.title}` : summary.title;
-  $("activity-age").textContent = replay ? "Evidence playback" : actual ? `Run update ${ageLabel(progressAge)} · refreshes every 5s` : "Live observations · refreshes every 5s";
+  $("activity-age").textContent = data.isCurrentRun === false && !replay ? "Saved observations for this run" : replay ? "Evidence playback" : actual ? `Run update ${ageLabel(progressAge)} · refreshes every 5s` : "Live observations · refreshes every 5s";
 }
 
 function stopPlayback() { clearInterval(playback); playback = null; $("play").textContent = "▶ Play evidence"; }
@@ -197,7 +197,7 @@ function render() {
   for (let i = 0; i < 5; i++) {
     const ballot = votes.find(vote => vote.agentId === i);
     const liveAgent = actual ? simulation?.agents?.find(a => a.agentId === i) : null;
-    const isRunning = !halted && !stopped && !simulation?.terminal && ["reviewing", "submitting"].includes(liveAgent?.phase);
+    const isRunning = data.isCurrentRun !== false && !halted && !stopped && !simulation?.terminal && ["reviewing", "submitting"].includes(liveAgent?.phase);
     const blocked = halted || ballot?.directive === "AGAINST" || liveAgent?.vote?.support === "AGAINST";
     const voted = !!ballot || liveAgent?.phase === "voted";
     const agentLabel = stopped ? "Off" : halted ? "Blocked" : voted ? blocked ? "Against" : ballot?.directive === "ABSTAIN" || liveAgent?.vote?.support === "ABSTAIN" ? "Abstain" : "For" : simulation?.terminal ? "Stopped" : liveAgent?.phase === "reviewing" ? "Reviewing" : liveAgent?.phase === "submitting" ? "Signing" : liveAgent?.phase === "worker_failed" ? "Failed" : liveAgent?.phase === "absent" ? "No vote" : "Waiting";
@@ -211,7 +211,7 @@ function render() {
     agent.dataset.busy = String(!!isRunning);
     agent.querySelector(".agent-symbol").textContent = stopped ? "⏻" : isRunning ? "◉" : voted ? "✓" : "○";
     agent.querySelector(".agent-phase").textContent = agentLabel;
-    agent.setAttribute("aria-label", `Inspect agent ${i}${liveAgent ? `, ${liveAgent.role}, ${liveAgent.phase}` : ""}`);
+    agent.setAttribute("aria-label", `Inspect ${agentName(i)}${liveAgent ? `, ${liveAgent.role}, ${liveAgent.phase}` : ""}`);
   }
   $("for-count").textContent = showVotes ? votes.filter(vote => vote.directive === "FOR").length : "–";
   $("against-count").textContent = showVotes ? votes.filter(vote => vote.directive === "AGAINST").length : "–";
@@ -265,7 +265,7 @@ function render() {
   renderGuardianCard(state, replay);
   $("run-context").textContent = data.isCurrentRun === false ? "Saved run. VM state is the recorded state for this allocation." : "Current run. VM state is read directly from GCP.";
   if (inspected) renderInspector();
-  $("updated").textContent = replay ? `Replaying evidence recorded ${date(evidence?.observedAt)}. Playback compresses elapsed time; timestamps are the recorded observations.` : `Last direct GCP observation: ${date(data.observedAt)}. Guardian state last checked: ${date(state?.observedAt)}.`;
+  $("updated").textContent = data.isCurrentRun === false && !replay ? `Saved run evidence. Last recorded GCP check: ${date(state?.checkedAt || state?.observedAt)}. This is not a live VM observation.` : replay ? `Replaying evidence recorded ${date(evidence?.observedAt)}. Playback compresses elapsed time; timestamps are the recorded observations.` : `Last direct GCP observation: ${date(data.observedAt)}. Guardian state last checked: ${date(state?.observedAt)}.`;
 }
 
 function inspect(target) { inspected = target; inspectorKey = ""; history.replaceState(null, "", `${location.pathname}${location.search}#${target}`); $("inspector").hidden = false; renderInspector(); $("inspector").scrollIntoView?.({ behavior: "smooth", block: "nearest" }); }
@@ -433,7 +433,7 @@ function renderInspector() {
   }
 }
 for (const el of document.querySelectorAll("[data-inspect]")) el.addEventListener("click", () => inspect(el.dataset.inspect));
-$("close-inspector").addEventListener("click", () => { inspected = null; $("inspector").hidden = true; });
+$("close-inspector").addEventListener("click", () => { inspected = null; history.replaceState(null, "", `${location.pathname}${location.search}`); $("inspector").hidden = true; });
 $("run-simulation").addEventListener("click", async () => {
   if (!canLaunch) { openOperator(); return; }
   submitting = true; render();
@@ -454,7 +454,7 @@ async function refresh() {
     if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) throw new Error("Compute state could not be verified. Please try again.");
     data = await response.json(); $("error").textContent = "";
     const hash = location.hash.slice(1);
-    if (!inspected && /^(worker|controller|shutdown|agent-[0-4])$/.test(hash)) { inspected = hash; $("inspector").hidden = false; }
+    if (!inspected && /^(worker|controller|shutdown|agent-[0-4])$/.test(hash)) inspect(hash);
     render();
   } catch (error) {
     $("error").textContent = `${error.message} The last display may be stale; it does not authorise execution.`;
