@@ -230,7 +230,7 @@ function render() {
   const timestamps = [allocation?.issuedAt, null, state?.haltedAt, state?.stopRequestedAt, state?.stoppedAt];
   stages.forEach((name, i) => {
     const item = node("div", "", `milestone${allocation && i <= index ? " done" : ""}${allocation && i === index ? " current" : ""}`);
-    item.append(node("strong", `${String(i + 1).padStart(2, "0")}  ${name}`), node("small", allocation && i <= index ? clock(timestamps[i]) || (i === 1 && showVotes ? `${votes.length} transactions` : "") : ""));
+    item.append(node("strong", `${String(i + 1).padStart(2, "0")}  ${i === 1 && !replay ? "Agent ballots" : name}`), node("small", allocation && i <= index ? clock(timestamps[i]) || (i === 1 && showVotes ? `${votes.length} transactions` : "") : ""));
     $("timeline").append(item);
   });
   $("allocation-id").textContent = allocation?.allocationId || (replay ? evidence?.allocationId : "No active allocation");
@@ -242,6 +242,7 @@ function render() {
   if (!$("proposal-link").hidden) $("proposal-link").href = `/proposals/${proposal}`;
   $("ballots").replaceChildren();
   const recordedVotes = actual ? votes : matchingEvidence ? evidence.votes || [] : [];
+  $("ballot-heading").textContent = recordedVotes.length ? `${recordedVotes.length} confirmed ballots. An inspectable outcome.` : "Agent ballots. An inspectable outcome.";
   $("model-spend").textContent = current?.inference?.budget ? `$${Number(current.inference.budget.chargedCostUsd).toFixed(6)} charged · $1 ceiling` : current?.scripted === true ? "$0 · scripted infrastructure test" : actual ? "$1 ceiling · usage pending" : "No current model run";
   $("ballot-note").textContent = current?.scripted === true ? "Scripted diagnostic ballots, explicitly supplied by the operator." : "Actual model decisions, signed by five registered agents. The challenge is operator-selected; the ballots are not prescribed.";
   if (!recordedVotes.length) $("ballots").append(node("p", evidence ? "Switch to Replay shutdown to inspect the five recorded ballots." : "Ballots will appear here when confirmed on Base Sepolia.", "caption"));
