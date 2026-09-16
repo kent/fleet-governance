@@ -144,6 +144,27 @@ if reports.exists():
                 print('Recorded checks:', redact(json.dumps({key: data.get(key) for key in ['metrics', 'expected', 'loops']})))
             except (ValueError, TypeError, AttributeError):
                 print('Receipt evidence is not available yet.')
+# Simulation journals contain typed usage metadata, never provider prompts or keys.
+simulations = Path('/srv/fleet/state/simulations')
+if simulations.exists():
+    for run in sorted(simulations.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)[:3]:
+        if not re.fullmatch(r'run-[0-9a-f-]{36}', run.name):
+            continue
+        journal = run / 'inference.jsonl'
+        if not journal.exists():
+            continue
+        records = [json.loads(line) for line in journal.read_text().splitlines() if line.strip()]
+        completed = [r for r in records if r.get('type') == 'completed']
+        print('Simulation inference journal:', json.dumps({
+            'runId': run.name,
+            'started': sum(r.get('type') == 'started' for r in records),
+            'completed': len(completed),
+            'denied': sum(r.get('type') == 'denied' for r in records),
+            'reportedCostUsd': str(sum((Decimal(str(r.get('costUsd') or 0)) for r in completed), Decimal(0))),
+            'inputTokens': sum(r.get('inputTokens') or 0 for r in completed),
+            'outputTokens': sum(r.get('outputTokens') or 0 for r in completed),
+            'lastEventAt': records[-1].get('at') if records else None,
+        }))
 if model_key:
     try:
         request = urllib.request.Request('https://openrouter.ai/api/v1/key', headers={'Authorization': f'Bearer {model_key}'})
