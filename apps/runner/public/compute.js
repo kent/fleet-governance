@@ -239,7 +239,7 @@ function render() {
     $("timeline").append(item);
   });
   $("allocation-id").textContent = allocation?.allocationId || (replay ? evidence?.allocationId : "No active allocation");
-  $("run-id").textContent = allocation?.runId || (replay ? evidence?.runId : "–");
+  $("run-id").textContent = allocation?.runId || (replay ? evidence?.runId : simulation?.runId || data.simulation?.runId || "–");
   $("approval-deadline").textContent = date(allocation?.approvalDeadline);
   $("expiry").textContent = date(allocation?.stopAt);
   const proposal = actual ? data.simulationWork?.proposalId : matchingEvidence ? evidence.proposalId : allocation?.requiredProposalIds?.[0];

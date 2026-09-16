@@ -54,7 +54,7 @@ export async function simulationSnapshot(selectedRun?: string) {
     vm = { id: observed.id, status: observed.status, machineType: observed.machineType.split("/").pop()! };
   } else vm = { status: state?.observedVmStatus ?? "UNKNOWN" };
   const replay = selectedRun && (evidence as { allocationId?: string } | null)?.allocationId !== allocation?.allocationId ? null : evidence;
-  return { simulation: isCurrentRun ? request : work ? { runId, createdAt: work.createdAt } : null,
+  return { simulation: isCurrentRun ? request : work || status ? { runId, createdAt: work?.createdAt ?? status?.createdAt ?? status?.updatedAt } : null,
     simulationStatus: status, simulationWork: work, allocation, state, vm, evidence: replay, agentRoster,
     activity: runId ? await verifiedActivity(status, runId, work?.taskId) : [], isCurrentRun,
     observedAt: new Date().toISOString() };

@@ -34,6 +34,17 @@ it("uses a historical run's saved allocation and VM observation instead of a lat
   expect((await simulationSnapshot()).vm.status).toBe("RUNNING");
 });
 
+it("preserves a failed preparation attempt even when it never published an allocation or proposal", async () => {
+  vi.mocked(readSimulationWork).mockResolvedValue(null);
+  vi.mocked(readObject).mockResolvedValue({ runId: previous, phase: "preparation-failed", terminal: true });
+  const snapshot = await simulationSnapshot(previous);
+  expect(snapshot.simulation?.runId).toBe(previous);
+  expect(snapshot.simulationStatus?.phase).toBe("preparation-failed");
+  expect(snapshot.allocation).toBeNull();
+  expect(snapshot.vm.status).toBe("UNKNOWN");
+  expect(googleRequest).not.toHaveBeenCalled();
+});
+
 it("only verifies signatures bound to this task, run and registered agent wallet", async () => {
   const key = `0x${"11".repeat(32)}` as const;
   agentRoster[0]!.address = privateKeyToAccount(key).address;
