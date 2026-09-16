@@ -24,13 +24,15 @@ done
 mountpoint -q /srv/fleet
 if [[ "$stage" == serve ]]; then
   release="/srv/fleet/releases/$revision"
-  # Do not let an empty DAO Node projection overwrite the existing archive while
-  # Goldsky is backfilling. The original five ballots prove historical delivery.
+  # Require this deployment's real acceptance ballots before serving its archive.
+  proof_id=$(python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); print(p.get("verification",{}).get("proposalId","17758453720459259775115348801772992791284533307697182874480707147019297120429"))' "$release/experiments/compute/base-sepolia-pilot.json")
+  [[ "$proof_id" =~ ^[0-9]{1,78}$ ]]
+  export FLEET_VERIFICATION_PROPOSAL="$proof_id"
   ready=false
   for _ in $(seq 1 120); do
     count=$(docker compose -f "$release/infra/gcp/docker-compose.yml" --project-directory "$release/infra" \
       exec -T postgres psql -U agora -p 55432 -d agora_web3 -Atc \
-      "SELECT count(*) FROM fleet.votes WHERE proposal_id='17758453720459259775115348801772992791284533307697182874480707147019297120429'" || true)
+      "SELECT count(*) FROM fleet.votes WHERE proposal_id='$proof_id'" || true)
     if [[ "$count" == 5 ]]; then ready=true; break; fi
     sleep 5
   done
@@ -45,9 +47,9 @@ if [[ "$stage" == serve ]]; then
   systemctl daemon-reload
   for _ in $(seq 1 90); do
     if python3 - <<'PY'
-import urllib.request
+import os, urllib.request
 try:
-    for path in ['/info', '/proposals', '/proposals/17758453720459259775115348801772992791284533307697182874480707147019297120429']:
+    for path in ['/info', '/proposals', '/proposals/' + os.environ['FLEET_VERIFICATION_PROPOSAL']]:
         with urllib.request.urlopen('http://127.0.0.1:3000' + path, timeout=10) as response:
             document = response.read()
             assert response.status == 200 and b'<html' in document and b':E{' not in document

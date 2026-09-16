@@ -3,14 +3,15 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { chromium } = require(process.env.FLEET_PLAYWRIGHT_MODULE || 'playwright');
 const base = 'https://fleet-governance-449245570324.us-central1.run.app';
-const historical = '17758453720459259775115348801772992791284533307697182874480707147019297120429';
+const pilot = JSON.parse(fs.readFileSync('experiments/compute/base-sepolia-pilot.json', 'utf8'));
+const historical = pilot.verification?.proposalId || '17758453720459259775115348801772992791284533307697182874480707147019297120429';
 
 (async () => {
   const snapshot = await (await fetch(base + '/api/compute-policy')).json();
   // Check incomplete historical rounds honestly too. Full-run acceptance is
   // independently enforced by verify-simulation, which still requires 15 ballots.
   const ids = new Map([[historical, 5], ...(snapshot.simulationStatus?.rounds || [])
-    .filter(round => ["approved", "denied"].includes(round.phase) && round.txHash && round.votes?.length)
+    .filter(round => (!snapshot.simulationWork?.addresses?.governor || snapshot.simulationWork.addresses.governor.toLowerCase() === pilot.addresses.governor.toLowerCase()) && ["approved", "denied"].includes(round.phase) && round.txHash && round.votes?.length)
     .map(round => [round.proposalId, round.votes.length])]);
   const browser = await chromium.launch({ headless: true,
     ...(process.env.FLEET_BROWSER_BIN ? { executablePath: process.env.FLEET_BROWSER_BIN } : {}) });

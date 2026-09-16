@@ -1,9 +1,10 @@
 """Strict normalization of the fixed Fleet Goldsky log feed."""
 import re
 
-GOVERNOR = '0x9594876c90a14888c6734231a731caba4c0d0781'
-TOKEN = '0xc70af42f2e4fc5551d7046e955c9aea6c16eeb8f'
-START = 46858912
+import os
+GOVERNOR = os.environ.get('GOVERNOR_ADDRESS', '0x9594876c90a14888c6734231a731caba4c0d0781').lower()
+TOKEN = os.environ.get('TOKEN_ADDRESS', '0xc70af42f2e4fc5551d7046e955c9aea6c16eeb8f').lower()
+START = int(os.environ.get('DAO_NODE_START_BLOCK', '46858912'))
 
 def hex_value(value, size=None):
     if not isinstance(value, str) or not re.fullmatch(r'0x(?:[0-9a-fA-F]{2})*', value):

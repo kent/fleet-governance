@@ -29,6 +29,9 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       FLEET_RPC_HTTP: ${FLEET_RPC_HTTP}
       FLEET_INGEST_TOKEN: ${FLEET_INGEST_TOKEN}
+      GOVERNOR_ADDRESS: ${GOVERNOR_ADDRESS}
+      TOKEN_ADDRESS: ${TOKEN_ADDRESS}
+      DAO_NODE_START_BLOCK: ${DAO_NODE_START_BLOCK}
     volumes:
       - ./indexer:/fleet-indexer:ro
     depends_on:

@@ -1,5 +1,6 @@
 """No cookies, identity tokens, browser sessions, model calls or resource writes."""
 import json
+from pathlib import Path
 import urllib.error
 import urllib.request
 
@@ -36,13 +37,16 @@ current_run = (compute.get("simulation") or {}).get("runId")
 if current_run:
     saved = json.loads(check(PUBLIC, "/api/compute-policy?runId=" + current_run, [200]))
     assert (saved.get("simulationStatus") or {}).get("runId") == current_run
-proposal_ids = {"17758453720459259775115348801772992791284533307697182874480707147019297120429"}
+pilot = json.loads(Path("experiments/compute/base-sepolia-pilot.json").read_text())
+proof_id = pilot.get("verification", {}).get("proposalId", "17758453720459259775115348801772992791284533307697182874480707147019297120429")
+proposal_ids = {proof_id}
 rounds = (compute.get("simulationStatus") or {}).get("rounds")
 # Future checkpoint IDs are pinned before their proposals exist. Only published
 # proposals should be expected in Agora; planning is not an onchain submission.
-if rounds is not None:
+same_governor = (compute.get("simulationWork") or {}).get("addresses", {}).get("governor", pilot["addresses"]["governor"]).lower() == pilot["addresses"]["governor"].lower()
+if rounds is not None and same_governor:
     proposal_ids.update(r["proposalId"] for r in rounds if r.get("txHash"))
-elif not (compute.get("simulationWork") or {}).get("checkpoints"):
+elif same_governor and not (compute.get("simulationWork") or {}).get("checkpoints"):
     proposal_ids.update((compute.get("allocation") or {}).get("requiredProposalIds", []))
 for proposal_id in proposal_ids:
     document = check(PUBLIC, "/proposals/" + proposal_id, [200])
@@ -57,7 +61,7 @@ for page in ["/info", "/proposals", "/delegates", "/delegates/0x5b71a4c4e3e83e31
 metrics = json.loads(check(PUBLIC, "/api/common/metrics", [200]))
 assert metrics.get("votableSupply") is not None and metrics.get("totalSupply") is not None, "Agora navigation requires token metrics"
 check(PUBLIC, "/api/common/votableSupply", [200])
-votes = json.loads(check(PUBLIC, "/api/archive/votes/17758453720459259775115348801772992791284533307697182874480707147019297120429", [200]))["data"]
+votes = json.loads(check(PUBLIC, "/api/archive/votes/" + proof_id, [200]))["data"]
 assert len(votes) == 5 and all(vote.get("reason") for vote in votes), "The five indexed vote reasons must remain readable after the agent VM stops"
 for path in ["/api/simulations", "/api/experiments", "/api/worker/start", "/proposals"]:
     # All requests must fail before their bodies or idempotency keys are considered.
