@@ -80,4 +80,24 @@ describe("cloud batch lifecycle", () => {
     expect(mocks.put).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ phase: "blocked" }), "0");
     expect(mocks.launch).not.toHaveBeenCalled();
   });
+  it("closes a recovered preparation without retrying it or advancing the batch", async () => {
+    mocks.blocked.mockResolvedValue(true);
+    store.set(`batches/${batchId}/state.json`, { batchId, index: 0, phase: "blocked", updatedAt: new Date().toISOString(), message: "Preparation needs recovery." });
+    expect(await tickBatch()).toMatchObject({ phase: "cancelled" });
+    expect(mocks.put).toHaveBeenCalledWith(`batches/${batchId}/state.json`, expect.objectContaining({ phase: "cancelled", index: 0 }), "1");
+    expect(mocks.remove).toHaveBeenCalledWith("batches/active.json", "1");
+    expect(mocks.launch).not.toHaveBeenCalled();
+  });
+  it("keeps a recovered run reserved until its queue and allocation are both released", async () => {
+    mocks.blocked.mockResolvedValue(true);
+    mocks.queue.mockResolvedValue({ runId, createdAt: new Date().toISOString() });
+    expect(await tickBatch()).toMatchObject({ phase: "preparing" });
+    expect(mocks.remove).not.toHaveBeenCalled();
+    mocks.queue.mockResolvedValue(null);
+    mocks.allocation.mockResolvedValue(allocation);
+    mocks.state.mockResolvedValue({ value: { phase: "halted" } });
+    expect(await tickBatch()).toMatchObject({ action: "retire" });
+    expect(mocks.remove).not.toHaveBeenCalled();
+    expect(mocks.launch).not.toHaveBeenCalled();
+  });
 });

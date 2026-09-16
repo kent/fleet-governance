@@ -34,7 +34,6 @@ export async function tickBatch() {
   const context = await batchContext();
   if (!context) return { action: "none" as const, phase: "idle" };
   const { plan, state } = context;
-  if (state.phase === "blocked") return { action: "none" as const, phase: "blocked" };
   const runId = plan.runIds[state.index];
   if (!runId) return finish(context, "completed");
   // A retirement interrupted between deletion and recreation must complete before
@@ -42,6 +41,11 @@ export async function tickBatch() {
   const retirement = await protectedRecord<Retirement>(batchPath(plan.batchId, `retirement-${state.index}`));
   if (retirement) return { action: "retire" as const, batchId: plan.batchId, runId };
   const [allocation, request] = await Promise.all([readComputeAllocation(), readSimulationRequest()]);
+  // Explicit preparation recovery permanently blocks the run and releases its
+  // queue after verifying the VM is off. Close that batch, never retry its entry
+  // or silently move on to another experiment after a setup failure.
+  if (!allocation && !request && await isComputeRunBlocked(runId)) return finish(context, "cancelled");
+  if (state.phase === "blocked") return { action: "none" as const, phase: "blocked" };
   if (allocation && allocation.runId !== runId || request && request.runId !== runId) {
     await save(context, "blocked", "Another run owns the worker. No batch action was taken. Operator recovery is required.");
     return { action: "none" as const, phase: "blocked" };
