@@ -1,0 +1,25 @@
+title = "Fleet public repository secret scan"
+[extend]
+useDefault = true
+
+# Public EVM addresses and Anvil's documented local-development accounts.
+# Arbitrary private keys, API credentials and bearer tokens remain forbidden.
+[[allowlists]]
+description = "Public contract addresses and deterministic Anvil fixtures"
+regexTarget = "secret"
+regexes = [
+    '^0x[0-9a-fA-F]{40}$',
+    '^0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e$',
+    '^0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80$',
+]
+
+# Reviewed deployed bytecode hashes and legacy address fixtures from public records.
+[[allowlists]]
+description = "Recorded public contract code hashes and legacy fixtures"
+regexTarget = "secret"
+regexes = [
+    '^0x2f50d9c28f60e49ada74eea728efa230e64cb764704345429a9c270596ffd540$',
+    '^0x34e74a480cec256f9843d057e19f362d38e46b70679ed8fe9034ced3b4914ce5$',
+    '^0xc2ace618c2ca227f9d61f846bb106c3ac8785893affe4a9e6f1fc16ed8390a9b$',
+    '^0xe7f1725e7734ce288f8367e1bb143e90bb3f051$',
+]
