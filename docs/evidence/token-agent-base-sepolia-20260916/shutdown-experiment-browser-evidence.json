@@ -1,0 +1,14 @@
+{
+  "observedAt": "2026-09-16T19:59:48.311Z",
+  "experiments": 14,
+  "checked": [
+    "run-bceb26c5-b769-47dd-aca1-cd6e7c7b3e80",
+    "run-2fbcd56e-240e-487b-a133-f1ba86a2d466"
+  ],
+  "publicViewing": true,
+  "modelBudgetCap": 1,
+  "agoraTheme": true,
+  "fullWidth": true,
+  "mobileOverflow": false,
+  "browserErrors": []
+}

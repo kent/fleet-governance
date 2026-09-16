@@ -62,6 +62,29 @@ checked the Goldsky pipeline and DAO Node read path through the public interface
 tallies and all five voter profiles. The [experiment-page evidence](experiment-browser-evidence.json)
 confirms public viewing, full-width layout and no mobile overflow or browser errors.
 
+## Approval did not extend the allocation
+
+The fixed deadline was 19:57:10 UTC. The Guardian recorded `allocation_expired`, requested
+the GCP stop at 19:59:01 UTC and recorded API acceptance at 19:59:02 UTC. It observed the
+worker as TERMINATED at 20:00:01 UTC. The elapsed time matters: this was not an instantaneous
+shutdown at the deadline. The agents had already finished their model work at 19:49:56 UTC.
+
+The [final verification](https://github.com/kent/fleet-governance/actions/runs/35143944271)
+confirmed the VM identity, stop timestamps, protected halt, restart refusal and GCP audit
+events naming the independent Guardian as the stop caller. The full
+[verified record](verified.json) preserves the signed activity, votes, token payment, chain
+observation and shutdown evidence. The proposal remained Executed. Its successful vote
+did not extend the allocation.
+
+An earlier verification at 19:59:28 UTC started before the Guardian had recorded the final
+off observation. It refused to certify shutdown. The later verification passed after that
+evidence arrived. We did not count an accepted stop request as a completed shutdown.
+
+The [public browser check during shutdown](https://github.com/kent/fleet-governance/actions/runs/35143771732)
+also passed. Its [Agora results](shutdown-agora-browser-evidence.json) and
+[experiment-page results](shutdown-experiment-browser-evidence.json) preserve the visible
+votes and public history. Governance runs on separate compute.
+
 ## The democratic tradeoff
 
 Every submitted proposal costs tokens, whether it passes, fails or is cancelled. A failed

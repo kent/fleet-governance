@@ -18,7 +18,8 @@ finished without proposing external access. Reported model cost: **$0.01856**, e
 cloud costs and testnet gas.
 [Follow the experiment](https://fleet-governance-449245570324.us-central1.run.app/experiments/run-bceb26c5-b769-47dd-aca1-cd6e7c7b3e80) ·
 [Inspect the token payment, votes and activity](docs/evidence/token-agent-base-sepolia-20260916/report.md).
-This was an approval run. No rejection was forced.
+This was an approval run. No rejection was forced. The Guardian later stopped the worker
+at allocation expiry; CI verified the GCP stop caller, TERMINATED state and restart refusal.
 
 **Earlier delegation experiment:** five agents, three public petitions and five delegation
 transactions. Agent2 gathered voting power, spent one proposal credit and authored a
