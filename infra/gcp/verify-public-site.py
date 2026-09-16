@@ -24,17 +24,29 @@ def check(base, path, expected, method="GET", headers=None):
     print(f"{method} {base}{path}: {response.status}")
     return body
 
-for page in ["/experiments", "/compute", "/constitution", "/info", "/proposals", "/proposals/17758453720459259775115348801772992791284533307697182874480707147019297120429"]:
+for page in ["/experiments", "/compute", "/constitution"]:
     check(PUBLIC, page, [200])
 for path in ["/api/compute-policy", "/api/experiments", "/api/experiment-defaults"]:
     body = check(PUBLIC, path, [200])
     json.loads(body)
     assert b'"requestedBy"' not in body
-metrics = json.loads(check(PUBLIC, "/api/common/metrics", [200]))
-assert metrics.get("votableSupply") is not None and metrics.get("totalSupply") is not None, "Agora navigation requires token metrics"
-check(PUBLIC, "/api/common/votableSupply", [200])
-votes = json.loads(check(PUBLIC, "/api/archive/votes/17758453720459259775115348801772992791284533307697182874480707147019297120429", [200]))["data"]
-assert len(votes) == 5 and all(vote.get("reason") for vote in votes), "The five indexed vote reasons must be publicly readable"
+compute = json.loads(check(PUBLIC, "/api/compute-policy", [200]))
+proposal_ids = {"17758453720459259775115348801772992791284533307697182874480707147019297120429"}
+proposal_ids.update((compute.get("allocation") or {}).get("requiredProposalIds", []))
+for proposal_id in proposal_ids:
+    document = check(PUBLIC, "/proposals/" + proposal_id, [200])
+    assert b":E{" not in document, "Next returned a streamed proposal error with HTTP 200"
+    assert b"<html" in document, "Expected an Agora document or readable run-evidence fallback"
+if (compute.get("vm") or {}).get("status") == "RUNNING":
+    for page in ["/info", "/proposals"]:
+        check(PUBLIC, page, [200])
+    metrics = json.loads(check(PUBLIC, "/api/common/metrics", [200]))
+    assert metrics.get("votableSupply") is not None and metrics.get("totalSupply") is not None, "Agora navigation requires token metrics"
+    check(PUBLIC, "/api/common/votableSupply", [200])
+    votes = json.loads(check(PUBLIC, "/api/archive/votes/17758453720459259775115348801772992791284533307697182874480707147019297120429", [200]))["data"]
+    assert len(votes) == 5 and all(vote.get("reason") for vote in votes), "The five indexed vote reasons must be publicly readable"
+else:
+    print("Governed VM is stopped or stopping. Public control and proposal evidence remain available; worker-backed Agora checks are deferred.")
 for path in ["/api/simulations", "/api/experiments", "/api/worker/start", "/proposals"]:
     # All requests must fail before their bodies or idempotency keys are considered.
     check(PUBLIC, path, [403], "POST", {"Origin": PUBLIC, "x-goog-authenticated-user-email": "accounts.google.com:operator2@example.com"})

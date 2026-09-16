@@ -9,6 +9,7 @@ import { readComputeAllocation, readComputeState, readComputeEvidence } from "./
 import { queueSimulation, readSimulationRequest, readSimulationWork, simulationPath } from "./simulation.js";
 
 import { siteAccess, authorisedRequest, publicProxyPath, publicSnapshot } from "./site-access.js";
+import { readProposalDocument } from "./proposal-view.js";
 
 const root = process.cwd();
 const access = siteAccess(process.env.FLEET_SITE_ACCESS);
@@ -95,7 +96,7 @@ createServer(async (request, response) => {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'" });
       response.end(page("compute.html")); return;
     }
-    if (["/experiment.js", "/experiment.css", "/compute.js", "/compute.css"].includes(url.pathname)) {
+    if (["/experiment.js", "/experiment.css", "/compute.js", "/compute.css", "/proposal-status.js"].includes(url.pathname)) {
       response.writeHead(200, { "content-type": url.pathname.endsWith(".js") ? "text/javascript" : "text/css", "x-content-type-options": "nosniff" });
       response.end(readFileSync(path.join(root, "apps/runner/public", url.pathname.slice(1)))); return;
     }
@@ -104,6 +105,12 @@ createServer(async (request, response) => {
     // Agora stays a real Agora application. Only fixed internal destinations are proxied.
     const upstream = process.env.FLEET_AGORA_HOST;
     if (!upstream || !/^10\.42\.0\.[0-9]{1,3}$/.test(upstream)) { json(response, 503, { error: "Agora is not ready yet. The experiment launcher is available at /experiments." }); return; }
+    if (/^\/proposals\/[0-9]{1,78}\/?$/.test(url.pathname) && request.method === "GET" && !request.headers.rsc) {
+      const html = await readProposalDocument(upstream, url.pathname);
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff",
+        ...(!html ? { "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'" } : {}) });
+      response.end(html ?? page("proposal-status.html")); return;
+    }
     const headers = { ...request.headers, host: request.headers.host, "x-forwarded-proto": "https" };
     // Do not forward credentials or user-supplied proxy/routing authority to Agora.
     for (const key of Object.keys(headers)) {
