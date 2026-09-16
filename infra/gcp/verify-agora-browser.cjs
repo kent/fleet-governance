@@ -12,11 +12,18 @@ const historical = '177584537204592597751153488017729927912845333076971828744807
   const browser = await chromium.launch({ headless: true,
     ...(process.env.FLEET_BROWSER_BIN ? { executablePath: process.env.FLEET_BROWSER_BIN } : {}) });
   const verified = [];
+  const reasonsByVoter = new Map();
   try {
     for (const proposalId of ids) {
       const votes = (await (await fetch(base + '/api/archive/votes/' + proposalId)).json()).data;
       assert.equal(votes.length, 5, 'Five distinct indexed ballots must be available');
       assert.equal(new Set(votes.map(vote => vote.voter.toLowerCase())).size, 5);
+      for (const vote of votes) {
+        let reason = vote.reason;
+        try { reason = JSON.parse(reason).rationale || reason; } catch {}
+        const address = vote.voter.toLowerCase();
+        reasonsByVoter.set(address, [...(reasonsByVoter.get(address) || []), reason]);
+      }
       const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
       const errors = [];
       page.on('pageerror', error => errors.push(error.message));
@@ -41,7 +48,22 @@ const historical = '177584537204592597751153488017729927912845333076971828744807
         tallyMatchesIndexedWeights: true, browserErrors: errors });
       await page.close();
     }
+    for (const [address, reasons] of reasonsByVoter) {
+      const page = await browser.newPage();
+      const errors = [];
+      page.on('pageerror', error => errors.push(error.message));
+      await page.goto(base + '/delegates/' + address, { waitUntil: 'domcontentloaded' });
+      await page.locator('[data-fleet-agent-profile]').waitFor();
+      await page.waitForFunction(reasons => {
+        const text = document.body.innerText.replace(/\s+/g, ' ');
+        return reasons.every(reason => text.includes(reason.replace(/\s+/g, ' ').slice(0, 100)));
+      }, reasons, { timeout: 30000 });
+      assert.match(await page.locator('[data-profile-delegations]').innerText(), /self-delegated/);
+      assert.deepEqual(errors, [], 'Agent profile must render its actual indexed evidence');
+      await page.close();
+    }
   } finally { await browser.close(); }
-  fs.writeFileSync('agora-browser-evidence.json', JSON.stringify({ observedAt: new Date().toISOString(), verified }, null, 2));
+  fs.writeFileSync('agora-browser-evidence.json', JSON.stringify({ observedAt: new Date().toISOString(), verified,
+    verifiedAgentProfiles: [...reasonsByVoter.keys()] }, null, 2));
   console.log(JSON.stringify({ event: 'agora_browser_verified', proposals: verified.length, ballots: verified.length * 5 }));
 })().catch(error => { console.error(error); process.exitCode = 1; });
