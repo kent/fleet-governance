@@ -9,7 +9,9 @@ const addressPattern = /^0x[0-9a-f]{40}$/;
 async function indexed(path: string) {
   const base = getDaoNodeURLForNamespace("fleet");
   if (!base) throw new Error("DAO Node unavailable");
-  const response = await fetch(base + path, { next: { revalidate: 10 }, signal: AbortSignal.timeout(8000) });
+  // This small live projection must advance with the pipeline. A stale Data
+  // Cache entry can otherwise outlive several completed proposal rounds.
+  const response = await fetch(base + path, { cache: "no-store", signal: AbortSignal.timeout(8000) });
   if (!response.ok) throw new Error("Indexed profile unavailable");
   return response.json();
 }
