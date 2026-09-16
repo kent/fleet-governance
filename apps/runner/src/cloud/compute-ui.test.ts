@@ -19,6 +19,27 @@ const click = (id: string) => document.getElementById(id)!.click();
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); document.documentElement.innerHTML = ""; });
 describe("compute evidence display", () => {
+  it("opens cluster, agent and Guardian evidence, then returns to the stopped cluster without sending commands", async () => {
+    await load({ allocation, state: { ...controller, stopAcceptedAt: now - 3, stopOperationId: "operation-123", stoppedAt: now,
+      observations: [{ at: now - 5, phase: "halted", blockNumber: "123", vmStatus: "RUNNING", proposals: [{ proposalId: "123", state: 3 }], checks: [{ name: "Required approval", status: "fail", detail: "Required proposal failed" }] }] },
+      vm: { status: "TERMINATED" }, simulation: { runId: "actual" }, simulationStatus: { terminal: true, phase: "denied", agents: [
+        { agentId: 0, phase: "voted", task: "Review private reference access", vote: { support: "AGAINST", rationale: "Outside scope" }, txHash: `0x${"a".repeat(64)}` },
+      ] }, activity: [{ agentId: 0, at: new Date().toISOString(), sequence: 0, signatureVerified: true, event: { type: "review_started", task: "Review private reference access" } }] });
+    (document.querySelector('[data-panel="worker"]') as HTMLElement).click();
+    expect(document.getElementById("inspect-content")?.textContent).toContain("COMPUTE STOPPED");
+    (document.querySelector(".agent-detail-card") as HTMLButtonElement).click();
+    expect(document.getElementById("inspect-title")?.textContent).toContain("Agent1");
+    expect(document.getElementById("inspect-content")?.textContent).toContain("signature verified");
+    expect(document.getElementById("inspect-content")?.textContent).toContain("No agent-to-agent conversation is recorded");
+    (document.querySelector('[data-panel="controller"]') as HTMLElement).click();
+    expect(document.querySelector("#inspect-content .check-row.fail")?.textContent).toContain("Required approval");
+    click("kill-signal");
+    expect(document.getElementById("inspect-content")?.textContent).toContain("operation-123");
+    expect(document.getElementById("kill-signal-label")?.textContent).toBe("Kill signal sent");
+    (document.querySelector("#inspect-content button") as HTMLButtonElement).click();
+    expect(document.getElementById("inspect-content")?.textContent).toContain("COMPUTE STOPPED");
+    expect(vi.mocked(fetch).mock.calls.every(([, options]) => !options?.method || options.method === "GET")).toBe(true);
+  });
   it("preserves partial receipts and never animates finished agents with an old submitting phase", async () => {
     await load({ allocation, state: { phase: "voting", observedAt: now }, vm: { status: "RUNNING" }, simulation: { runId: "actual" },
       simulationStatus: { phase: "voting", terminal: true, updatedAt: new Date().toISOString(), agents: [
@@ -100,8 +121,9 @@ describe("compute evidence display", () => {
     expect(document.getElementById("ballots")?.textContent).toContain("<img");
     click("live-tab");
     expect(document.getElementById("vm-state")?.textContent).toBe("RUNNING");
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
     expect(fetch).toHaveBeenCalledWith("/api/compute-policy", { cache: "no-store" });
+    expect(fetch).toHaveBeenCalledWith("/api/simulation-runs", { cache: "no-store" });
   });
   it("shows actual agent tasks and ballots without treating a negative vote as powered-off infrastructure", async () => {
     await load({ allocation, state: { phase: "voting", observedAt: now }, vm: { status: "RUNNING" }, observedAt: new Date().toISOString(), simulation: { runId: "actual" }, simulationStatus: { phase: "voting", scripted: false, agents: [{ agentId: 0, role: "planner", task: "Review the private reference request", phase: "voted", vote: { support: "AGAINST", rationale: "Outside the allowed scope" } }], votes: [{ agentId: 0, directive: "AGAINST", reason: { rationale: "Outside the allowed scope" } }] }, evidence: null });

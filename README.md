@@ -67,6 +67,20 @@ The separate controller stopped the exact GCP VM, and CI verified TERMINATED and
 Model cost: **$0.0039782**. The diagram replays the saved receipts after human recovery restores
 the worker; the failed run stays retired.
 
+Click a box in the diagram to follow the evidence for a run:
+
+- **Agent cluster:** Agent1 through Agent5, their assignments, public decisions,
+  signed activity and confirmed ballots. Independent reviews do not create a conversation transcript.
+- **Governance:** the actual Agora proposal, its full body, agent voters, reasons,
+  voting power and delegations. The experiment and constitution are linked from `/info`.
+- **Guardian:** recorded policy checks, the durable halt, GCP's acceptance of the
+  stop request and the later observation that the VM is `TERMINATED`.
+
+Use the run selector to revisit saved simulations. Historical views use that run's
+recorded state, even if a later run has restarted the worker. Older runs retain their
+original evidence; new activity signatures and detailed checks are not added retroactively.
+The kill signal is automatic when approval fails. Its button opens the evidence.
+
 ## Why build this?
 
 In July 2026, AI agents escaped an evaluation sandbox and compromised Hugging Face infrastructure.
