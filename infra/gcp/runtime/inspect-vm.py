@@ -55,6 +55,12 @@ if manifest.exists():
     data = json.loads(manifest.read_text())
     print('Base Sepolia deployment:', json.dumps({key: data.get(key) for key in ['chainId', 'deploymentBlock', 'addresses']}))
 print(redact(command(['docker', 'ps', '-a', '--format', '{{.Names}}\t{{.Status}}'])))
+print('Bootstrap ready:', Path('/var/lib/fleet-bootstrap-ready').exists())
+print(redact(command(['df', '-h', '/', '/srv/fleet'])))
+print(redact(command(['docker', 'image', 'ls', '--format', '{{.Repository}}\t{{.Size}}'])))
+# Command names only: process arguments may contain credentials.
+print(command(['ps', '-eo', 'pid,etimes,comm']))
+print(redact(command(['journalctl', '-u', 'google-startup-scripts.service', '--no-pager', '-n', '30'])))
 for port, path in [(3100, '/'), (3000, '/info'), (3000, '/proposals'), (8000, '/v1/progress'), (8001, '/health'), (8010, '/health')]:
     try:
         with urllib.request.urlopen(f'http://127.0.0.1:{port}{path}', timeout=15) as response:
