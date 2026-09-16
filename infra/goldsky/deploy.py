@@ -21,7 +21,7 @@ auth.touch(mode=0o600)
 os.chmod(auth, 0o600)
 auth.write_text(token)
 webhook = secret('fleet-goldsky-webhook-token')
-name = 'fleet-governance-history'
+name = 'FLEET_GOVERNANCE_HISTORY'
 existing = subprocess.check_output(['goldsky','secret','list','--no-color'], text=True, stderr=subprocess.DEVNULL)
 command = ['goldsky','secret','update',name] if name in existing else ['goldsky','secret','create','--name',name]
 result = subprocess.run(command + ['--value', json.dumps({'type':'httpauth','secretKey':'Authorization','secretValue':'Bearer '+webhook}), '--no-color'], capture_output=True, text=True)

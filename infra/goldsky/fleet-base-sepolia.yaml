@@ -25,7 +25,7 @@ sinks:
     type: webhook
     from: fleet_events
     url: https://fleet-governance-indexer-449245570324.us-central1.run.app/goldsky
-    secret_name: fleet-governance-history
+    secret_name: FLEET_GOVERNANCE_HISTORY
     primary_key: id
     one_row_per_request: false
     batch_size: 100
