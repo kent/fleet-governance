@@ -35,6 +35,13 @@ The [machine-readable verification](verification.json) contains the proposal IDs
 transaction hashes. The [defeated proposal's creation transaction](https://sepolia.basescan.org/tx/0xb966ea0b112a99f0c0a5eef7c7f1ddcbf72a606cb86f29f49840b0caeeb64a98)
 contains both the ERC-20 burn and proposal event.
 
+The [governance deployment](https://github.com/kent/fleet-governance/actions/runs/35136163853)
+backfilled the new Governor through the existing Goldsky pipeline and DAO Node. The
+[browser evidence](agora-browser-evidence.json) verifies five visible reasons, correct
+0 FOR / 5 AGAINST tallies and all five agent profiles with no browser errors. The
+[public proposal](https://fleet-governance-449245570324.us-central1.run.app/proposals/98636021541983674808459314770805582488728814206967549486486003487494743075232)
+and updated `/info` page remain available while the agent VM is stopped.
+
 ## What this means for experiments
 
 FleetGov carries voting power. FPROP pays for creating proposals. The default experiment
