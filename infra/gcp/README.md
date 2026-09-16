@@ -39,6 +39,8 @@ Use `provision-readside` to apply governance capacity changes. CI rejects change
 
 The September 16 capacity check found 6.6 GiB of memory available on the governance host. The failed deployment ran out of boot disk space while extracting an image. Storage was expanded from 50 to 100 GiB for the boot disk and from 30 to 100 GiB for data; CPU and memory stay at their measured pilot sizes. These GCP resources are billed separately from the $50 model pool.
 
+The [capacity verification](https://github.com/kent/fleet-governance/actions/runs/35107099800) confirmed both 100 GiB disks, online filesystem growth, 78 GiB free on the boot disk and 86 GiB free on the data disk. Public proposals and vote records remained available. The additional 120 GiB of balanced disk storage costs approximately **US$12 per 730-hour month**, before taxes or credits, using Google's listed US$0.000136986 per GiB-hour [disk rate](https://cloud.google.com/compute/disks-image-pricing). This is the storage increase, not the total project bill.
+
 ## Run, adjust and repeat
 
 1. Open `/experiments` to browse without signing in. Use **Sign in to run** for the operator interface.
