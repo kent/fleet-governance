@@ -15,9 +15,11 @@ try {
   const rpcUrl = await readSecret("fleet-base-sepolia-rpc-url");
   const client = new FleetClient({ rpcUrl, chainId: 84532, addresses: work.addresses, deploymentBlock: BigInt(work.startBlock) });
   await client.assertChain();
-  const [observation, state, progress, response] = await Promise.all([observeComputeApproval(allocation, rpcUrl), readComputeState(allocation.allocationId),
-    readObject<Record<string, any>>(simulationPath(request.runId)), googleRequest("compute", COMPUTE_TARGET)]);
-  const vm = await response.json() as NativeVm;
+  // Consume the VM response before waiting for the longer chain-history scan.
+  // Leaving its body unread lets the request's 30-second deadline cancel it.
+  const [observation, state, progress, vm] = await Promise.all([observeComputeApproval(allocation, rpcUrl), readComputeState(allocation.allocationId),
+    readObject<Record<string, any>>(simulationPath(request.runId)),
+    googleRequest("compute", COMPUTE_TARGET).then(response => response.json() as Promise<NativeVm>)]);
   const result = await verifyAgentExperiment({ work, allocation, observation, client, progress: progress ?? {} });
   let restartDenied = false;
   try { await assertComputeStartAllowed(); } catch { restartDenied = true; }
