@@ -25,6 +25,7 @@ resource "google_secret_manager_secret_iam_member" "readside_secrets" {
     jwt      = google_secret_manager_secret.runtime["fleet-jwt-secret"].id
     rpc      = google_secret_manager_secret.rpc["fleet-base-sepolia-rpc-url"].id
     ws       = google_secret_manager_secret.rpc["fleet-base-sepolia-ws-url"].id
+    ingest   = google_secret_manager_secret.readside_webhook.id
   }
   secret_id = each.value
   role      = "roles/secretmanager.secretAccessor"
@@ -63,8 +64,38 @@ resource "google_compute_firewall" "readside_http" {
   target_service_accounts = [google_service_account.readside.email]
   allow {
     protocol = "tcp"
-    ports    = ["3000"]
+    ports    = ["3000", "8010"]
   }
+}
+
+resource "google_secret_manager_secret" "readside_webhook" {
+  secret_id = "fleet-goldsky-webhook-token"
+  labels    = local.labels
+  replication {
+    auto {}
+  }
+  lifecycle { prevent_destroy = true }
+}
+
+resource "google_secret_manager_secret" "readside_goldsky" {
+  secret_id = "fleet-goldsky-api-token"
+  labels    = local.labels
+  replication {
+    auto {}
+  }
+  lifecycle { prevent_destroy = true }
+}
+
+resource "google_service_account" "readside_ingest" {
+  account_id   = "fleet-ingest"
+  display_name = "Fleet Goldsky delivery transport"
+  description  = "No GCP permissions; forwards authenticated events to the private history receiver."
+}
+
+resource "google_service_account_iam_member" "readside_ingest_ci" {
+  service_account_id = google_service_account.readside_ingest.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${local.provisioner}"
 }
 
 resource "google_compute_disk" "readside_data" {

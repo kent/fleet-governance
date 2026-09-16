@@ -296,6 +296,23 @@ jobs:
               print(resource['address'], actions)
           PY
           terraform apply -input=false readside.tfplan
+      - name: Initialise managed pipeline credentials without logging values
+        if: inputs.action == 'provision-readside'
+        env:
+          GOLDSKY_BOOTSTRAP_CREDENTIALS: ${{ secrets.GOLDSKY_BOOTSTRAP_CREDENTIALS }}
+        run: |
+          python3 - <<'PY'
+          import os, secrets, subprocess
+          for name in ['fleet-goldsky-webhook-token', 'fleet-goldsky-api-token']:
+              result = subprocess.run(['gcloud','secrets','versions','describe','1','--secret='+name,'--format=value(state)'], capture_output=True, text=True)
+              if result.returncode == 0:
+                  assert result.stdout.strip() == 'ENABLED'
+                  continue
+              value = secrets.token_urlsafe(32) if name.endswith('webhook-token') else os.environ['GOLDSKY_BOOTSTRAP_CREDENTIALS'].strip()
+              assert value, 'Goldsky bootstrap credential is missing'
+              subprocess.run(['gcloud','secrets','versions','add',name,'--data-file=-'], input=value, text=True, check=True, stdout=subprocess.DEVNULL)
+              print('Initialised '+name)
+          PY
       - name: Confirm worker remains stopped and history host is separate
         if: inputs.action == 'provision-readside'
         run: |
