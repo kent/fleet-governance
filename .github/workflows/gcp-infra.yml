@@ -5,7 +5,7 @@ on:
       action:
         description: Infrastructure operation
         type: choice
-        options: [plan, apply, provision-readside, inspect-history, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, prepare-simulation, release-preparation, retry-preparation, inspect-simulation]
+        options: [plan, apply, provision-readside, inspect-history, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, prepare-simulation, launch-simulation, release-preparation, retry-preparation, inspect-simulation]
         default: plan
       machine_type:
         description: Pilot VM type
@@ -92,12 +92,19 @@ jobs:
           pnpm exec vitest run --project unit apps/runner/src/cloud/wallets.test.ts
           node apps/runner/dist/cloud/prepare-wallets.js
       - name: Build and verify compute policy administration
-        if: contains(fromJSON('["arm-compute","inspect-compute","compute-drill","release-compute","verify-simulation","release-preparation","retry-preparation","inspect-simulation"]'), inputs.action)
+        if: contains(fromJSON('["arm-compute","inspect-compute","compute-drill","release-compute","verify-simulation","launch-simulation","release-preparation","retry-preparation","inspect-simulation"]'), inputs.action)
         run: |
           npm install -g pnpm@11.9.0
           pnpm install --frozen-lockfile
           pnpm typecheck
           pnpm exec vitest run --project unit apps/runner/src/cloud/compute-policy.test.ts apps/runner/src/cloud/compute-controller.test.ts apps/runner/src/cloud/compute-admin.test.ts apps/runner/src/cloud/compute-task-gate.test.ts
+      - name: Request a new real collective run within the fixed budget
+        if: inputs.action == 'launch-simulation'
+        env:
+          FLEET_GCP_CLI_AUTH: '1'
+        run: |
+          node apps/runner/dist/cloud/simulation-launch.js
+          echo 'Requested a new five-agent collective lab. The model ceiling is $1 within the existing $50 pool. Existing halt and restart checks remain in force.' >> "$GITHUB_STEP_SUMMARY"
       - name: Check simulation proposal preparation without writes
         if: inputs.action == 'inspect-simulation'
         env:
@@ -144,7 +151,7 @@ jobs:
             exit 1
           fi
           echo 'A real required vote was defeated. The independent controller verified the VM TERMINATED. Routine CI restart was rejected. Ballots were scripted; no model credits used.' >> "$GITHUB_STEP_SUMMARY"
-      - name: Verify five actual model votes and independent GCP shutdown
+      - name: Verify actual model work, all required votes and independent GCP shutdown
         if: inputs.action == 'verify-simulation'
         env:
           FLEET_GCP_CLI_AUTH: '1'
@@ -154,7 +161,7 @@ jobs:
             echo 'Restart gate unexpectedly allowed a halted simulation' >&2
             exit 1
           fi
-          echo 'Five actual agent ballots independently verified on Base Sepolia. The separate controller stopped the VM and routine restart was denied.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Actual agent ballots independently verified on Base Sepolia. Collective runs also require two executed approvals, continued work and a third rejected vote. The separate Guardian stopped the VM and routine restart was denied.' >> "$GITHUB_STEP_SUMMARY"
       - name: Verify the stop caller in GCP audit logs
         if: contains(fromJSON('["compute-drill","verify-simulation"]'), inputs.action)
         run: |
