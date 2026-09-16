@@ -42,6 +42,8 @@ env_file.write_text('\n'.join(f"{key}='{value}'" for key, value in values.items(
 abi_dir = root / 'infra/dao-node/abis'
 abi_dir.mkdir(exist_ok=True)
 for contract, abi in [('token', 'FleetVotes'), ('governor', 'AgoraGovernor')]:
-    shutil.copyfile(root / f'packages/abi/abis/{abi}.json', abi_dir / (pilot['addresses'][contract] + '.json'))
+    # DAO Node resolves local ABI filenames by lowercase address. Deployment
+    # manifests may use checksum casing, which is distinct on the Linux host.
+    shutil.copyfile(root / f'packages/abi/abis/{abi}.json', abi_dir / (pilot['addresses'][contract].lower() + '.json'))
 (root / 'deployments/agora-next-deployment.json').write_text(json.dumps({'chainId': 84532, **pilot['addresses']}))
 print('Independent governance history configured. No agent credentials were requested.')
