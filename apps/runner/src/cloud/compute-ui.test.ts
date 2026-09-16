@@ -19,6 +19,17 @@ const click = (id: string) => document.getElementById(id)!.click();
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); document.documentElement.innerHTML = ""; });
 describe("compute evidence display", () => {
+  it("shows an expired allocation as the stop cause even when a previous proposal passed", async () => {
+    await load({ allocation, state: { ...controller, reason: "allocation_expired", stoppedAt: now, observations: [{
+      at: now, phase: "halted", proposals: [], checks: [
+        { name: "Fixed agent VM", status: "pass", detail: "Pinned VM" },
+        { name: "Required approval", status: "unknown", detail: "1/0 agent proposals executed" },
+      ],
+    }] }, vm: { status: "TERMINATED" } });
+    expect(document.getElementById("policy-checks")?.textContent).toContain("The fixed allocation expired");
+    expect(document.getElementById("policy-checks")?.textContent).not.toContain("1/0");
+    expect(document.getElementById("policy-checks")?.textContent).toContain("Durable restart lock");
+  });
   it("explains the incident counterfactual and separates ballot evidence, stop intent, API acceptance and shutdown", async () => {
     const hash = `0x${"a".repeat(64)}`;
     await load({ allocation, simulation: { schema: "fleet.simulation-request.v1", runId: "actual", createdAt: new Date((now - 400) * 1000).toISOString() },

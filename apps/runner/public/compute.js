@@ -435,6 +435,11 @@ function inspect(target) { inspected = target; inspectorKey = ""; history.replac
 function guardianRows(state, replay = false) {
   if (replay && stage < 2) return [{ name: "Required approval", status: "pending", detail: "Recorded voting stage. Task execution waits for settled approval." }];
   const recorded = state?.observations?.at(-1)?.checks;
+  if (state?.phase === "halted" && state.reason === "allocation_expired") return [
+    ...(recorded || []).filter(check => check.name === "Fixed agent VM"),
+    { name: "Fixed expiry", status: "fail", detail: `The fixed allocation expired. Shutdown is independent of the proposal outcome.` },
+    { name: "Durable restart lock", status: "pass", detail: `Halt saved ${date(state.haltedAt)}.` },
+  ];
   if (recorded?.length) return recorded;
   if (state?.phase === "halted") return [
     { name: "Required approval", status: "fail", detail: state.reason === "vote_failed" ? `Required proposal ${state.failedProposalId || ""} failed.` : `Authority closed: ${state.reason || "halted"}.` },
@@ -448,7 +453,7 @@ function checkRow(check) {
   const detail = node("div", ""); detail.append(node("strong", check.name), node("small", check.detail)); row.append(detail); return row;
 }
 function renderGuardianCard(state, replay) {
-  $("policy-checks").replaceChildren(...guardianRows(state, replay).filter(check => ["Required approval", "Fixed agent VM", "Confirmed block", "Guardian checks", "Durable restart lock"].includes(check.name)).slice(0, 3).map(checkRow));
+  $("policy-checks").replaceChildren(...guardianRows(state, replay).filter(check => ["Required approval", "Fixed agent VM", "Fixed expiry", "Confirmed block", "Guardian checks", "Durable restart lock"].includes(check.name)).slice(0, 3).map(checkRow));
   const halted = replay ? stage >= 2 : state?.phase === "halted";
   const sent = halted && (replay ? stage >= 3 : !!state?.stopAcceptedAt || !!state?.stoppedAt);
   const requested = halted && !!state?.stopRequestedAt;

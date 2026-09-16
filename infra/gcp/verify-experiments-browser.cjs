@@ -31,6 +31,9 @@ const base = 'https://fleet-governance-449245570324.us-central1.run.app';
         await page.locator('#experiment-record').waitFor();
         assert.equal(await page.locator('#experiment-name').innerText(), experiment.settings.name);
         assert.equal(await page.locator('#agents > button').count(), experiment.agentCount);
+        assert.ok(await page.locator('.zone').evaluateAll(zones => zones.every(zone =>
+          zone.querySelector('.zone-heading').getBoundingClientRect().top >= zone.querySelector('.inspect-zone').getBoundingClientRect().bottom + 4)),
+        'Inspect links must not overlap component headings or status badges');
       }
       checked.push(experiment.id);
     }

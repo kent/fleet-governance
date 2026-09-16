@@ -65,3 +65,4 @@ pre,code,dd{font-size:13px;line-height:1.7}pre{background:#f5f5f4;color:#44403c;
 #run-log-status{font-size:14px;background:#f5f5f4;color:#44403c}#run-log-context,#run-log-gaps,.log-group>.caption{font-size:13px;color:#57534e}.event-component{font-size:13px}.event-actions a,.event-actions button,.event-checks summary{font-size:13px;color:#44403c}.event-body>p.event-assignment{font-size:13px;color:#57534e}.event-checkpoint{font-size:11px;background:#f5f5f4;color:#57534e}.decision-card small,.decision-card span{font-size:13px;color:#57534e}
 body>header nav{flex:none;width:max-content}.run-controls p{font-size:13px;color:#57534e;line-height:1.7}.run-picker{background:#fff;border-color:#e7e5e4}.run-picker select{border-color:#d6d3d1;color:#44403c}.network{background:#f0eeeb}
 @media(max-width:800px){body>header nav{width:100%;flex:none}}
+.architecture .zone{padding-top:48px}
