@@ -25,3 +25,11 @@ $('credential-form').onsubmit = async event => {
 };
 $('copy').onclick = async () => { await navigator.clipboard.writeText($('credential').value); $('message').textContent = 'Credential copied.'; };
 refresh().catch(error => { $('message').textContent = error.message; });
+
+$('check').onclick = async () => {
+  $('check').disabled = true;
+  try {
+    const result = await api('/api/mcp-check', { method: 'POST', body: JSON.stringify({ token: $('credential').value }) });
+    $('check-result').textContent = `Connected through the live MCP endpoint. ${result.toolCount} tools available. $${result.maxRunBudgetUsd} per-run ceiling; $${result.modelPoolUsd} provider pool. No experiments launched.`;
+  } catch (error) { $('check-result').textContent = error.message; } finally { $('check').disabled = false; }
+};

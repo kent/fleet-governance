@@ -6,6 +6,7 @@ import { experimentRecord, experimentIndex } from "./experiment-records.js";
 import { RUN_ID, controlDeps, runPath } from "./control.js";
 import { readObject } from "./google.js";
 import { readComputeObject } from "./compute-store.js";
+import { checkMcpConnection } from "./mcp-connection.js";
 import { issueOperatorToken, listOperatorTokens, revokeOperatorToken } from "./operator-tokens.js";
 import { createExperimentDraft, runExperimentDraft } from "./experiment-drafts.js";
 import { operatorIdentity } from "./operators.js";
@@ -46,6 +47,9 @@ createServer(async (request, response) => {
       const operator = operatorIdentity(request.headers)!;
       if (request.method === "GET") { json(response, 200, { tokens: await listOperatorTokens(operator) }); return; }
       if (request.method === "POST") { json(response, 201, await issueOperatorToken(operator, await body(request))); return; }
+    }
+    if (url.pathname === "/api/mcp-check" && access === "operator" && request.method === "POST") {
+      json(response, 200, await checkMcpConnection(operatorIdentity(request.headers)!, await body(request))); return;
     }
     const tokenMatch = /^\/api\/mcp-tokens\/([a-f0-9]{64})$/.exec(url.pathname);
     if (tokenMatch && access === "operator" && request.method === "DELETE") {
