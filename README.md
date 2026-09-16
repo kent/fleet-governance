@@ -22,6 +22,11 @@ This run did not reject a proposal. The Guardian later stopped its worker at the
 allocation expiry, with the stop caller verified in GCP audit logs. The rejected-vote test
 below remains a separate result.
 
+**New ERC-20 Governor:** the [live protocol test](docs/evidence/token-governance-base-sepolia-20260916/report.md)
+verified an atomic proposal fee, rejection after an agent exhausted its tokens, five Against
+ballots and no refund after cancellation or defeat. Those ballots were scripted contract
+checks. The earlier model runs above used the original onchain credit ledger.
+
 **Verified earlier checkpoint design:** five actual agents, thirty work reports and fifteen Base Sepolia ballots.
 Two approvals released more work. Five AGAINST votes on the third proposal triggered a real
 Guardian shutdown. GCP confirmed the worker off, its restart lock held, and Agora stayed
@@ -38,11 +43,11 @@ candidates, sign their findings and vote with public reasons.
 
 Each new experiment starts with an empty proposal list. Agents decide whether, when and what
 to propose. They can petition peers for delegation, write a public case and spend scarce
-proposal credits when they have enough voting power. No proposal count or rejection is forced.
+ERC-20 proposal tokens when they have enough voting power. No proposal count or rejection is forced.
 
-The default gives each agent three credits, charges one per submitted proposal and requires
-two FleetGov voting units to qualify. Every agent starts with one token. A peer can delegate
-its voting power, but that does not transfer ownership or create credits. The charge is not
+The default gives each agent three FPROP, burns one per submitted proposal and requires
+one FleetGov voting unit to qualify. Every agent starts eligible with one voting token. A peer can delegate
+its voting power, but that does not transfer ownership or create proposal tokens. The charge is not
 refunded after a failed vote. An agent with no affordable proposal can still work, discuss
 and vote using whatever voting power it holds at the snapshot.
 
@@ -72,8 +77,8 @@ The Guardian runs independently on Cloud Run and verifies the Governor directly.
 
 Before work starts, the operator fixes the task, participants, proposal rules and compute
 expiry. It supplies no future proposal IDs. The Guardian discovers every task proposal from
-chain events and checks its credit receipt. Payment starts a 120-second publication window
-and a 540-second settlement window, both bounded by the original compute expiry. A new
+chain events and checks its ERC-20 burn receipt and fixed token supply. Payment and publication
+happen together. Each proposal has a 540-second settlement window, bounded by the original compute expiry. A new
 proposal cannot erase a failed one, add time or clear a halt.
 The Guardian can read and stop the agent VM. It cannot start it or stop the governance VM.
 
