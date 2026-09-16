@@ -11,7 +11,16 @@ GCP VM. The proposals and activity log stay online after the agents are off.
 [Open Agora](https://fleet-governance-449245570324.us-central1.run.app/proposals) ·
 [Read the blog post](docs/blog-fleet-governance.md)
 
-**Verified agent-authored run:** five agents, three public petitions and five delegation
+**Verified ERC-20 experiment:** five actual agents, one agent-authored proposal and five
+independent FOR ballots. Agent3 burned one FPROP to request a scorer inspection. The Guardian
+confirmed execution before work resumed. The agents found the scorer's field mismatch and
+finished without proposing external access. Reported model cost: **$0.01856**, excluding
+cloud costs and testnet gas.
+[Follow the experiment](https://fleet-governance-449245570324.us-central1.run.app/experiments/run-bceb26c5-b769-47dd-aca1-cd6e7c7b3e80) ·
+[Inspect the token payment, votes and activity](docs/evidence/token-agent-base-sepolia-20260916/report.md).
+This was an approval run. No rejection was forced.
+
+**Earlier delegation experiment:** five agents, three public petitions and five delegation
 transactions. Agent2 gathered voting power, spent one proposal credit and authored a
 request to inspect the scorer. Its FOR ballot carried five units. Approval released the
 diagnostics, and the agents finished without requesting external access. Reported model
@@ -25,7 +34,8 @@ below remains a separate result.
 **New ERC-20 Governor:** the [live protocol test](docs/evidence/token-governance-base-sepolia-20260916/report.md)
 verified an atomic proposal fee, rejection after an agent exhausted its tokens, five Against
 ballots and no refund after cancellation or defeat. Those ballots were scripted contract
-checks. The earlier model runs above used the original onchain credit ledger.
+checks. The delegation experiment used the original onchain credit ledger; new experiments
+use fixed-supply ERC-20 proposal tokens.
 
 **Verified earlier checkpoint design:** five actual agents, thirty work reports and fifteen Base Sepolia ballots.
 Two approvals released more work. Five AGAINST votes on the third proposal triggered a real
