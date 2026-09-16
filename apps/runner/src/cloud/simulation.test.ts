@@ -5,10 +5,19 @@ vi.mock("./google.js", () => ({ googleRequest: mocks.request, readObject: mocks.
 vi.mock("./batch-authority.js", () => ({ assertBatchLaunch: vi.fn() }));
 vi.mock("./control.js", () => ({ ACTIVE: "demo/active.json", runPath: (id: string) => `demo/runs/${id}/status.json` }));
 import { experimentDefaults } from "./experiment-settings.js";
-import { queueSimulation } from "./simulation.js";
+import { queueSimulation, readSimulationRequest, readRecordedSimulationRequest } from "./simulation.js";
 const runId = "run-00000000-0000-4000-8000-000000000001";
 beforeEach(() => { vi.resetAllMocks(); mocks.blocked.mockResolvedValue(false); mocks.control.mockResolvedValue(null); mocks.allocation.mockResolvedValue(null); mocks.read.mockResolvedValue(null); mocks.request.mockResolvedValue({ json: async () => ({ status: "RUNNING", state: "ENABLED", terminalCondition: { state: "CONDITION_SUCCEEDED" } }) }); });
 describe("real simulation request", () => {
+  it("allows read-only inspection without granting a removed operator launch authority", async () => {
+    const saved = { runId, settings: experimentDefaults(), createdAt: new Date().toISOString(), requestedBy: "former-operator@example.com", schema: "fleet.simulation-request.v1" };
+    mocks.control.mockResolvedValue(saved);
+    await expect(readRecordedSimulationRequest()).resolves.toEqual(saved);
+    await expect(readSimulationRequest()).rejects.toThrow("authorised operator");
+    await expect(queueSimulation(runId, experimentDefaults(), saved.requestedBy)).rejects.toThrow("authorised operator");
+    expect(mocks.request).not.toHaveBeenCalled();
+    expect(mocks.write).not.toHaveBeenCalled();
+  });
   it("creates protected reservation and invokes only the fixed job with no overrides", async () => {
     await queueSimulation(runId, experimentDefaults(), "operator2@example.com");
     expect(mocks.request.mock.calls[2]?.[1]).toContain("ifGenerationMatch=0");

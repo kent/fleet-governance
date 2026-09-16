@@ -46,6 +46,14 @@ export async function readSimulationRequest(): Promise<SimulationRequest | null>
   const value = await readComputeObject(SIMULATION_QUEUE);
   return value ? simulationRequest.parse(value) : null;
 }
+// A protected record can outlive an operator's access. Public viewers validate
+// its shape, not current launch authority, and redact requestedBy at the boundary.
+// Launchers and workers must keep using readSimulationRequest above.
+const recordedSimulationRequest = simulationRequest.extend({ requestedBy: z.string().email() });
+export async function readRecordedSimulationRequest(): Promise<SimulationRequest | null> {
+  const value = await readComputeObject(SIMULATION_QUEUE);
+  return value ? recordedSimulationRequest.parse(value) : null;
+}
 export async function readSimulationWork(runId: string): Promise<SimulationWork | null> {
   simulationPath(runId);
   return await readComputeObject(`simulations/${runId}/work.json`) as SimulationWork | null;

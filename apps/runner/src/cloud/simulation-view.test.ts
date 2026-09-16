@@ -4,17 +4,17 @@ import { ActivityAttestor, type ActivityAttestation } from "../pipeline/activity
 import { agentRoster, simulationSnapshot } from "./simulation-view.js";
 import { googleRequest, readObject } from "./google.js";
 import { readComputeAllocation, readComputeAllocationById, readComputeState } from "./compute-store.js";
-import { readSimulationRequest, readSimulationWork } from "./simulation.js";
+import { readRecordedSimulationRequest, readSimulationWork } from "./simulation.js";
 
 vi.mock("./google.js", () => ({ BUCKET: "test-bucket", googleRequest: vi.fn(), readObject: vi.fn() }));
 vi.mock("./compute-store.js", () => ({ readComputeAllocation: vi.fn(), readComputeAllocationById: vi.fn(), readComputeState: vi.fn(), readComputeEvidence: vi.fn(async () => null) }));
-vi.mock("./simulation.js", () => ({ readSimulationRequest: vi.fn(), readSimulationWork: vi.fn(), simulationPath: (run: string) => run }));
+vi.mock("./simulation.js", () => ({ readRecordedSimulationRequest: vi.fn(), readSimulationWork: vi.fn(), simulationPath: (run: string) => run }));
 const current = "run-00000000-0000-4000-8000-000000000001";
 const previous = "run-00000000-0000-4000-8000-000000000002";
 const original = agentRoster[0]!.address;
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(readSimulationRequest).mockResolvedValue({ runId: current } as never);
+  vi.mocked(readRecordedSimulationRequest).mockResolvedValue({ runId: current } as never);
   vi.mocked(readComputeAllocation).mockResolvedValue({ runId: current, allocationId: "current" } as never);
   vi.mocked(readComputeAllocationById).mockResolvedValue({ runId: previous, allocationId: "previous" } as never);
   vi.mocked(readComputeState).mockResolvedValue({ value: { phase: "halted", observedVmStatus: "TERMINATED" } } as never);

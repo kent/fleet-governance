@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { BUCKET, googleRequest, readObject } from "./google.js";
 import { readComputeAllocation, readComputeAllocationById, readComputeState, readComputeEvidence } from "./compute-store.js";
-import { readSimulationRequest, readSimulationWork, simulationPath } from "./simulation.js";
+import { readRecordedSimulationRequest, readSimulationWork, simulationPath } from "./simulation.js";
 import { verifyActivity, type ActivityAttestation } from "../pipeline/activity-attestation.js";
 import { publicSnapshot } from "./site-access.js";
 import type { RunEvent } from "./run-events.js";
@@ -49,7 +49,7 @@ async function verifiedActivity(status: Status | null, runId: string, taskId?: s
 
 export async function simulationSnapshot(selectedRun?: string) {
   if (selectedRun && !runPattern.test(selectedRun)) throw new Error("Invalid run identity.");
-  const [active, request, evidence] = await Promise.all([readComputeAllocation(), readSimulationRequest(), readComputeEvidence()]);
+  const [active, request, evidence] = await Promise.all([readComputeAllocation(), readRecordedSimulationRequest(), readComputeEvidence()]);
   const runId = selectedRun ?? request?.runId ?? active?.runId;
   const isCurrentRun = !selectedRun || selectedRun === request?.runId || selectedRun === active?.runId;
   const [status, work] = runId ? await Promise.all([readObject<Status>(simulationPath(runId)), readSimulationWork(runId)]) : [null, null];

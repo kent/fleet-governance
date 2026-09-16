@@ -39,6 +39,7 @@ env:
   TF_IN_AUTOMATION: 'true'
   TF_VAR_machine_type: ${{ inputs.machine_type }}
   TF_VAR_max_run_hours: ${{ inputs.max_run_hours }}
+  FLEET_OPERATOR_EMAILS_JSON: ${{ secrets.FLEET_OPERATOR_EMAILS_JSON }}
 jobs:
   infrastructure:
     runs-on: ubuntu-latest
