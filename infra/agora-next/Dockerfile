@@ -52,6 +52,9 @@ EXPOSE 3000
 FROM base AS production
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 NODE_OPTIONS=--max-old-space-size=4096
 ENV NEXT_PUBLIC_AGORA_INSTANCE_NAME=fleet NEXT_PUBLIC_AGORA_INSTANCE_TOKEN=FLEET NEXT_PUBLIC_AGORA_ENV=dev
+# The testnet uses dev chain settings, but its public UI must not mount the
+# browser-only tenant theme switcher and disagree with the server render.
+ENV NEXT_PUBLIC_TENANT_SWITCHER_ENABLED=false
 ENV NEXT_PUBLIC_FLEET_CHAIN_ID=84532 NEXT_PUBLIC_FORK_NODE_URL=https://sepolia.base.org NEXT_PUBLIC_AGORA_API_KEY=research
 ENV NEXT_PUBLIC_AGORA_BASE_URL=https://fleet-governance-449245570324.us-central1.run.app
 RUN ./node_modules/.bin/vitest run --config fleet-tests/vitest.config.ts \
