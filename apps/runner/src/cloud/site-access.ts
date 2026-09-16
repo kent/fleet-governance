@@ -1,9 +1,7 @@
 import type { IncomingHttpHeaders } from "node:http";
 
-const operators = new Set([
-  "accounts.google.com:operator2@example.com",
-  "accounts.google.com:fleet-provisioner@fleet-governance.iam.gserviceaccount.com",
-]);
+import { operatorIdentity } from "./operators.js";
+
 export type SiteAccess = "public" | "operator";
 export function siteAccess(value: string | undefined): SiteAccess {
   // An omitted or misspelled deployment setting must never grant public access.
@@ -14,7 +12,7 @@ export function authorisedRequest(access: SiteAccess, method: string, headers: I
   if (access === "public") return method === "GET" || method === "HEAD";
   // Operator service accepts traffic only through IAP, with Cloud Run IAM enabled.
   // Public mode never trusts this client-spoofable header, even for known users.
-  if (!operators.has(String(headers["x-goog-authenticated-user-email"]))) return false;
+  if (!operatorIdentity(headers)) return false;
   return ["GET", "HEAD"].includes(method) || headers.origin === `https://${headers.host}`;
 }
 export function publicProxyPath(pathname: string): boolean {
@@ -27,9 +25,9 @@ export function publicProxyPath(pathname: string): boolean {
 export function publicSnapshot(value: unknown): unknown {
   // Evidence is intentionally public. Operator attribution and credentials are not.
   return JSON.parse(JSON.stringify(value, (key, entry: unknown) => {
-    if (/^(requestedBy|email|privateKey|privateKeys|secret|secrets|apiKey|accessToken|authorization|rpcUrl|rpcHttp|rpcWs)$/i.test(key)) return undefined;
+    if (/^(requestedBy|email|privateKey|privateKeys|secret|secrets|apiKey|accessToken|token|tokenHash|authorization|rpcUrl|rpcHttp|rpcWs)$/i.test(key)) return undefined;
     if (typeof entry !== "string") return entry;
-    return entry.replace(/sk-or-v1-[a-zA-Z0-9_-]+|alch_[a-zA-Z0-9_-]+|Bearer\s+\S+/g, "[redacted]")
+    return entry.replace(/sk-or-v1-[a-zA-Z0-9_-]+|alch_[a-zA-Z0-9_-]+|fleet_mcp_[a-zA-Z0-9_-]+|Bearer\s+\S+/g, "[redacted]")
       .replace(/https?:\/\/[^\s"<>]*(?:alchemy\.com|alchemyapi\.io)\/[^\s"<>]*/gi, "[private RPC]");
   }));
 }
