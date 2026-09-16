@@ -15,7 +15,7 @@ export async function experimentRecord(id: string) {
   ]);
   if (protectedRequest || request || work || simulationStatus) {
     const saved = protectedRequest ?? request;
-    const settings = work?.settings ?? protectedRequest?.settings ?? request?.settings ?? null;
+    const settings = work?.settings ?? protectedRequest?.settings ?? request?.settings ?? simulationStatus?.settings ?? null;
     const rounds = simulationStatus?.rounds ?? [];
     const experiment = { id, runId: id, name: settings?.name ?? (work?.checkpoints ? "Recorded checkpoint experiment" : work?.agentDriven ? "Agent-authored governance" : "Recorded compute experiment"),
       kind: "governed", scenario: work?.scenario ?? saved?.scenario ?? "legacy-compute", settings,

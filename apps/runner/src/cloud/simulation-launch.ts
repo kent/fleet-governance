@@ -1,12 +1,2 @@
-import { queueSimulation } from "./simulation.js";
-
-// Executed only by the existing GitHub WIF workflow after an operator dispatch.
-// Ordinary queue/start checks still refuse any active or halted allocation.
-try {
-  const request = await queueSimulation();
-  console.log(JSON.stringify({ event: "experiment_requested", runId: request.runId, scenario: request.scenario,
-    url: `https://fleet-governance-449245570324.us-central1.run.app/experiments/${request.runId}` }));
-} catch {
-  console.error("Could not request a new run. Existing allocation and request locks remain in force.");
-  process.exitCode = 1;
-}
+throw new Error("Direct CI experiment launches are disabled. Sign in with an authorised human account and create a run or a bounded batch through the website or MCP.");
+export {};

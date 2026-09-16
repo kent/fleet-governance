@@ -1,0 +1,76 @@
+name: Reconcile authorised experiment batches
+on:
+  schedule:
+    - cron: '3/5 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: gcp-fleet-governance
+  cancel-in-progress: false
+env:
+  CLOUDSDK_CORE_PROJECT: fleet-governance
+  FLEET_GCP_CLI_AUTH: '1'
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          project_id: fleet-governance
+          workload_identity_provider: projects/449245570324/locations/global/workloadIdentityPools/github/providers/github
+          service_account: fleet-provisioner@fleet-governance.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      - name: Check for a protected human-authorised batch
+        id: active
+        run: |
+          python3 - <<'PYTHON'
+          import os, subprocess, urllib.request, urllib.error
+          token = subprocess.check_output(['gcloud', 'auth', 'print-access-token'], text=True).strip()
+          request = urllib.request.Request('https://storage.googleapis.com/storage/v1/b/fleet-governance-control-449245570324/o/batches%2Factive.json', headers={'Authorization': 'Bearer ' + token})
+          try:
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  response.read()
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+                  out.write('present=true\n')
+          except urllib.error.HTTPError as error:
+              if error.code != 404:
+                  raise RuntimeError('Protected batch lookup failed') from None
+          PYTHON
+      - name: Build the trusted batch controller
+        if: steps.active.outputs.present == 'true'
+        run: |
+          npm install -g pnpm@11.9.0
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+      - name: Advance only the exact approved run
+        if: steps.active.outputs.present == 'true'
+        id: tick
+        run: node apps/runner/dist/cloud/batch-cli.js tick
+      - name: Preserve exact retirement authority and pinned Guardian image
+        if: steps.tick.outputs.action == 'retire'
+        id: retirement
+        run: node apps/runner/dist/cloud/batch-cli.js begin-retirement
+      - name: Drain the old Guardian and release only its halted allocation
+        if: steps.retirement.outcome == 'success'
+        id: drain
+        run: |
+          gcloud scheduler jobs pause fleet-compute-policy --location=us-central1
+          if gcloud run services list --region=us-central1 --filter='metadata.name=fleet-compute-controller' --format='value(metadata.name)' | grep -q '^fleet-compute-controller$'; then
+            gcloud run services delete fleet-compute-controller --region=us-central1 --quiet
+          fi
+          for _ in 1 2 3; do sleep 45; done
+          node apps/runner/dist/cloud/batch-cli.js release
+      - name: Restore the independent Guardian even if retirement failed
+        if: always() && steps.retirement.outcome == 'success'
+        id: restore
+        run: bash infra/gcp/deploy-compute-controller.sh
+      - name: Record retirement before considering another run
+        if: steps.drain.outcome == 'success' && steps.restore.outcome == 'success'
+        run: node apps/runner/dist/cloud/batch-cli.js complete-retirement

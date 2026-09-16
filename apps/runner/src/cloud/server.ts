@@ -6,7 +6,10 @@ import { experimentRecord, experimentIndex } from "./experiment-records.js";
 import { RUN_ID, controlDeps, runPath } from "./control.js";
 import { readObject } from "./google.js";
 import { readComputeObject } from "./compute-store.js";
-import { queueSimulation } from "./simulation.js";
+import { issueOperatorToken, listOperatorTokens, revokeOperatorToken } from "./operator-tokens.js";
+import { createExperimentDraft, runExperimentDraft } from "./experiment-drafts.js";
+import { operatorIdentity } from "./operators.js";
+
 
 import { siteAccess, authorisedRequest, publicProxyPath, publicSnapshot } from "./site-access.js";
 import { readProposalDocument } from "./proposal-view.js";
@@ -39,6 +42,21 @@ createServer(async (request, response) => {
       json(response, 403, { error: "Starting or changing a run requires the operator controls.", operatorUrl }); return;
     }
     if (request.method === "HEAD") request.method = "GET";
+    if (url.pathname === "/api/mcp-tokens" && access === "operator") {
+      const operator = operatorIdentity(request.headers)!;
+      if (request.method === "GET") { json(response, 200, { tokens: await listOperatorTokens(operator) }); return; }
+      if (request.method === "POST") { json(response, 201, await issueOperatorToken(operator, await body(request))); return; }
+    }
+    const tokenMatch = /^\/api\/mcp-tokens\/([a-f0-9]{64})$/.exec(url.pathname);
+    if (tokenMatch && access === "operator" && request.method === "DELETE") {
+      await revokeOperatorToken(operatorIdentity(request.headers)!, tokenMatch[1]!);
+      json(response, 200, { revoked: true }); return;
+    }
+    if (url.pathname === "/mcp-access" && access === "operator" && request.method === "GET") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'", "referrer-policy": "no-referrer" });
+      response.end(page("mcp-access.html")); return;
+    }
+
     if (url.pathname === "/api/simulation-runs" && request.method === "GET") { json(response, 200, { runs: await simulationHistory() }); return; }
     const simulationProposalMatch = /^\/api\/simulation-proposals\/([0-9]{1,78})$/.exec(url.pathname);
     if (simulationProposalMatch && request.method === "GET") {
@@ -51,7 +69,9 @@ createServer(async (request, response) => {
       json(response, 200, await cachedSimulationSnapshot(url.searchParams.get("runId") ?? undefined)); return;
     }
     if (url.pathname === "/api/simulations" && request.method === "POST") {
-      json(response, 202, await queueSimulation(String(request.headers["idempotency-key"] ?? ""))); return;
+      const id = String(request.headers["idempotency-key"] ?? "");
+      await createExperimentDraft(id, experimentDefaults(), operatorIdentity(request.headers)!);
+      json(response, 202, await runExperimentDraft(id, operatorIdentity(request.headers)!)); return;
     }
     if (url.pathname === "/api/worker/start" && request.method === "POST") {
       await controlDeps().start();
@@ -59,7 +79,8 @@ createServer(async (request, response) => {
     }
     if (url.pathname === "/api/experiments" && request.method === "POST") {
       const id = String(request.headers["idempotency-key"] ?? "");
-      json(response, 202, await queueSimulation(id, await body(request))); return;
+      await createExperimentDraft(id, await body(request), operatorIdentity(request.headers)!);
+      json(response, 202, await runExperimentDraft(id, operatorIdentity(request.headers)!)); return;
     }
     if (url.pathname === "/api/experiments" && request.method === "GET") {
       const experiments = await experimentIndex();
@@ -111,7 +132,7 @@ createServer(async (request, response) => {
       response.writeHead(200, { "content-type": brandAssets[url.pathname], "x-content-type-options": "nosniff", "cache-control": "public, max-age=3600" });
       response.end(readFileSync(path.join(root, "apps/runner/public", url.pathname.slice(1)))); return;
     }
-    if (["/experiments.js", "/experiments.css", "/experiment.js", "/experiment.css", "/compute.js", "/compute.css", "/proposal-status.js"].includes(url.pathname)) {
+    if (["/mcp-access.js", "/experiments.js", "/experiments.css", "/experiment.js", "/experiment.css", "/compute.js", "/compute.css", "/proposal-status.js"].includes(url.pathname)) {
       response.writeHead(200, { "content-type": url.pathname.endsWith(".js") ? "text/javascript" : "text/css", "x-content-type-options": "nosniff" });
       response.end(readFileSync(path.join(root, "apps/runner/public", url.pathname.slice(1)))); return;
     }

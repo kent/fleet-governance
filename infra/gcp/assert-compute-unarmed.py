@@ -10,7 +10,7 @@ def main():
         ['gcloud', 'auth', 'print-access-token'], check=True,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     ).stdout.strip()
-    for name in ['active.json', 'simulation-queue.json']:
+    for name in ['active.json', 'simulation-queue.json', 'batches%2Factive.json']:
         request = urllib.request.Request(
             f'https://storage.googleapis.com/storage/v1/b/fleet-governance-control-449245570324/o/{name}',
             headers={'Authorization': f'Bearer {token}'},

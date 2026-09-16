@@ -84,6 +84,7 @@ export async function saveComputeState(value: ComputeRecord, generation: string)
 /** Launcher and CI must consult this store, not worker-written status.json, before
  * restarting a worker. The worker has no permission to modify either allocation or halt. */
 export async function assertComputeStartAllowed(): Promise<void> {
+  if (await object("batches/active.json")) throw new Error("An authorised batch owns this worker. The batch controller must allocate each new run.");
   if (await object("simulation-queue.json")) throw new Error("A protected simulation request owns this worker. Human recovery is required before a new run or restart.");
   const allocation = await readComputeAllocation();
   if (!allocation) return;

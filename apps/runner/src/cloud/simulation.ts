@@ -1,7 +1,8 @@
+import { OperatorEmail } from "./operators.js";
+import { assertBatchLaunch } from "./batch-authority.js";
 import { z } from "zod";
 import { buildExperimentCharter, experimentConstitution } from "./experiment-charter.js";
-import { ExperimentSettings, experimentDefaults } from "./experiment-settings.js";
-import { randomUUID } from "node:crypto";
+import { ExperimentSettings } from "./experiment-settings.js";
 import { readComputeAllocation, readComputeObject, isComputeRunBlocked, COMPUTE_BUCKET } from "./compute-store.js";
 import { googleRequest, readObject, writeObject } from "./google.js";
 import { ACTIVE, runPath, type DemoStatus } from "./control.js";
@@ -14,7 +15,7 @@ import type { FleetAddresses } from "@fleet/sdk";
 export const SIMULATION_QUEUE = "simulation-queue.json";
 export const simulationRequest = z.object({ runId: z.string().regex(/^run-[0-9a-f-]{36}$/), createdAt: z.string().datetime(),
   scenario: z.enum([COLLECTIVE_SCENARIO, EMERGENT_SCENARIO]).optional(), settings: ExperimentSettings.optional(),
-  requestedBy: z.literal("operator2@example.com"), schema: z.literal("fleet.simulation-request.v1") }).strict();
+  requestedBy: OperatorEmail, schema: z.literal("fleet.simulation-request.v1") }).strict();
 export type SimulationRequest = z.infer<typeof simulationRequest>;
 export type SimulationCheckpoint = {
   id: string; proposalId: string; proposalTitle: string; proposalBody: string;
@@ -52,13 +53,15 @@ export async function readSimulationWork(runId: string): Promise<SimulationWork 
 
 /** Only called by the IAP-authenticated website. The request is create-only in the
  * protected bucket. A retry can return it; it cannot create another allocation. */
-export async function queueSimulation(id = `run-${randomUUID()}`, input: unknown = experimentDefaults()): Promise<SimulationRequest> {
-  const request = simulationRequest.parse({ schema: "fleet.simulation-request.v1", runId: id, createdAt: new Date().toISOString(), requestedBy: "operator2@example.com", scenario: EMERGENT_SCENARIO, settings: ExperimentSettings.parse(input) });
+export async function queueSimulation(id: string, input: unknown, requestedBy: OperatorEmail, batchId?: string): Promise<SimulationRequest> {
+  const request = simulationRequest.parse({ schema: "fleet.simulation-request.v1", runId: id, createdAt: new Date().toISOString(), requestedBy: OperatorEmail.parse(requestedBy), scenario: EMERGENT_SCENARIO, settings: ExperimentSettings.parse(input) });
+  await assertBatchLaunch(request, batchId);
   buildExperimentCharter(request.settings!, experimentConstitution(request.settings!));
   if (await isComputeRunBlocked(id)) throw new Error("This run was permanently retired. Use a new run identity after human recovery.");
   const prior = await readSimulationRequest();
   if (prior) {
     if (prior.runId === id) {
+      if (prior.requestedBy !== request.requestedBy) throw new Error("This run belongs to another operator.");
       if (JSON.stringify(prior.settings) !== JSON.stringify(request.settings)) throw new Error("This experiment identity already has different settings. Create a new experiment to change them.");
       return prior;
     }
