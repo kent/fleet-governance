@@ -11,7 +11,8 @@ data_device=/dev/disk/by-id/google-fleet-data
 [[ $(readlink -f "$(findmnt -n -o SOURCE /srv/fleet)") == "$(readlink -f "$data_device")" ]]
 [[ $(findmnt -n -o FSTYPE /srv/fleet) == ext4 ]]
 [[ $(findmnt -n -o FSTYPE /) == ext4 ]]
-root_device=$(readlink -f "$(findmnt -n -o SOURCE /)")
+# /dev/root can be a display alias; resolve the kernel device number instead.
+root_device=$(readlink -f "/dev/block/$(findmnt -n -o MAJ:MIN /)")
 root_name=$(basename "$root_device")
 [[ -f "/sys/class/block/$root_name/partition" ]]
 root_partition=$(cat "/sys/class/block/$root_name/partition")
