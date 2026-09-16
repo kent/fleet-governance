@@ -19,6 +19,51 @@ const click = (id: string) => document.getElementById(id)!.click();
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); document.documentElement.innerHTML = ""; });
 describe("compute evidence display", () => {
+  it("shows preparation work without pretending the queued agents are reviewing", async () => {
+    await load({ allocation: null, state: null, vm: { status: "RUNNING" }, simulation: { runId: "actual" },
+      simulationStatus: { phase: "provisioning", updatedAt: new Date().toISOString(), agents: [] } });
+    expect(document.querySelector(".workers")?.getAttribute("data-phase")).toBe("working");
+    expect(document.querySelector(".workers")?.getAttribute("data-busy")).toBe("true");
+    expect(document.getElementById("worker-activity-title")?.textContent).toBe("Preparing the worker");
+    expect(document.querySelectorAll(".agent.running")).toHaveLength(0);
+    expect(document.querySelectorAll(".agent.idle")).toHaveLength(5);
+    expect(document.querySelectorAll(".connector.flowing")).toHaveLength(0);
+    expect(document.getElementById("guardian-activity-title")?.textContent).toBe("Standing by");
+  });
+  it("shows concurrent reviews, signatures and confirmed ballots, then stops work animation on a halt", async () => {
+    const state = { allocation, state: { phase: "voting", observedAt: now }, vm: { status: "RUNNING" }, simulation: { runId: "actual" },
+      simulationStatus: { phase: "voting", updatedAt: new Date().toISOString(), agents: [
+        { agentId: 0, phase: "reviewing" }, { agentId: 1, phase: "submitting" },
+        { agentId: 2, phase: "voted", vote: { support: "AGAINST" } },
+      ], votes: [] } };
+    await load(state);
+    expect(document.getElementById("worker-activity-title")?.textContent).toBe("1 reviewing · 1 signing");
+    expect(document.getElementById("chain-activity-detail")?.textContent).toBe("1 / 5 confirmed on Base Sepolia");
+    expect(document.querySelectorAll(".agent.running")).toHaveLength(2);
+    expect(document.querySelectorAll(".connector.flowing")).toHaveLength(2);
+    expect(document.getElementById("agent-2")?.classList.contains("blocked")).toBe(true);
+    expect(document.querySelector(".workers")?.getAttribute("data-phase")).toBe("working");
+    const agent = document.getElementById("agent-0");
+    Object.assign(state.state, controller);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(document.getElementById("agent-0")).toBe(agent);
+    expect(document.querySelectorAll(".agent.running")).toHaveLength(0);
+    expect(document.querySelectorAll(".connector.flowing")).toHaveLength(0);
+    expect(document.getElementById("guardian-activity-title")?.textContent).toBe("Stopping the worker");
+    expect(document.getElementById("worker-activity-title")?.textContent).toBe("Task execution blocked");
+  });
+  it("marks missing progress as waiting and freezes activity when observation fails", async () => {
+    await load({ allocation: null, state: null, vm: { status: "RUNNING" }, simulation: { runId: "actual" },
+      simulationStatus: { phase: "provisioning", updatedAt: new Date(Date.now() - 180000).toISOString(), agents: [] } });
+    expect(document.getElementById("worker-activity-title")?.textContent).toBe("Waiting for a progress update");
+    expect(document.querySelector(".workers")?.getAttribute("data-busy")).toBe("false");
+    expect(document.getElementById("activity-age")?.textContent).toContain("3m ago");
+    vi.mocked(fetch).mockRejectedValueOnce(new Error("Connection unavailable"));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(document.getElementById("architecture-map")?.dataset.observation).toBe("unavailable");
+    expect(document.getElementById("activity-summary")?.dataset.busy).toBe("false");
+    expect(document.getElementById("activity-title")?.textContent).toBe("Waiting for a fresh observation");
+  });
   it("does not call a stop request a stopped VM; replay never mutates live resources", async () => {
     await load({ allocation, state: controller, vm: { status: "RUNNING" }, observedAt: new Date().toISOString(), evidence });
     expect(document.getElementById("vm-state")?.textContent).toBe("RUNNING");

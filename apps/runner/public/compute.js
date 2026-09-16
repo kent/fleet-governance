@@ -49,6 +49,61 @@ function drawShutdownPath() {
 }
 if (typeof ResizeObserver !== "undefined") new ResizeObserver(drawShutdownPath).observe($("architecture-map"));
 
+const ageInSeconds = value => value ? Math.max(0, (Date.now() - (typeof value === "number" ? value * 1000 : Date.parse(value))) / 1000) : Infinity;
+const ageLabel = seconds => !Number.isFinite(seconds) ? "not yet observed" : seconds < 5 ? "just now" : seconds < 60 ? `${Math.floor(seconds)}s ago` : `${Math.floor(seconds / 60)}m ago`;
+function renderActivity({ replay, actual, simulation, allocation, state, votes, halted, stopped, authorised, shutdown }) {
+  const liveAgents = actual ? simulation?.agents || [] : [];
+  const reviewing = liveAgents.filter(a => a.phase === "reviewing").length;
+  const submittingVotes = liveAgents.filter(a => a.phase === "submitting").length;
+  const confirmed = new Set([...votes.map(v => v.agentId), ...liveAgents.filter(a => a.phase === "voted").map(a => a.agentId)]).size;
+  const progressAt = Math.max(Date.parse(simulation?.updatedAt || data.simulation?.createdAt || "") || 0, (allocation?.issuedAt || 0) * 1000);
+  const progressAge = ageInSeconds(progressAt ? progressAt / 1000 : null);
+  const delayed = !!actual && !simulation?.terminal && !halted && progressAge > 120;
+  const guardianFresh = !!state && ageInSeconds(state.observedAt) <= (allocation?.maxObservationAgeSeconds || 120);
+  const preparing = !!actual && (!simulation?.phase || ["provisioning", "starting"].includes(simulation.phase));
+  const failed = !!actual && ["failed", "preparation-failed"].includes(simulation?.phase);
+  const item = (phase, title, detail, busy = false) => ({ phase, title, detail, busy });
+  let worker = item("idle", "Ready for a run", "Five agent slots · no tasks running");
+  if (preparing) worker = item("working", simulation?.phase === "starting" ? "Starting five agents" : "Preparing the worker", `${data.vm?.status === "RUNNING" ? "VM running" : "VM starting"} · ${allocation ? "proposal ready, waiting for agents" : "preparing the required proposal"}`, true);
+  else if (reviewing || submittingVotes) worker = item("working", reviewing ? `${reviewing} reviewing${submittingVotes ? ` · ${submittingVotes} signing` : ""}` : `${submittingVotes} signing ballots`, `${confirmed} / 5 ballots confirmed · click an agent for its task`, true);
+  else if (actual || replay) worker = item("idle", confirmed ? "Agent reviews complete" : "Waiting for agent activity", `${confirmed} / 5 ballots confirmed · task work paused`);
+  if (authorised) worker = item("idle", "Task work permitted", "Approval verified · original compute limit applies");
+  if (failed) worker = item("blocked", "Run needs attention", "The run reported a failure · inspect the worker");
+  if (halted) worker = item("blocked", stopped ? "Compute is off" : "Task execution blocked", stopped ? "GCP confirmed TERMINATED · restart locked" : "No new task work · waiting for GCP shutdown");
+  else if (stopped) worker = item("idle", "Worker is off", "GCP reports TERMINATED");
+  else if (delayed) worker = item("idle", "Waiting for a progress update", `Last run progress ${ageLabel(progressAge)} · not confirmed failed`);
+
+  let chain = item("idle", "Waiting for a proposal", "Agent ballots will appear here");
+  if (allocation) chain = item("idle", "Required proposal ready", "Waiting for agent ballots");
+  if (submittingVotes || (!replay && simulation?.phase === "voting" && confirmed < 5)) chain = item("working", "Recording agent ballots", `${confirmed} / 5 confirmed on Base Sepolia`, !delayed);
+  else if (confirmed) chain = item("idle", `${confirmed} / 5 ballots confirmed`, simulation?.outcome ? `Governor state: ${simulation.outcome}` : "Waiting for the voting deadline");
+  if (replay && stage === 1) chain = item("working", `${confirmed} / 5 ballots confirmed`, "Recorded signed transactions and public reasons");
+  if (authorised) chain = item("working", "Required proposal executed", "Approval confirmed on Base Sepolia");
+  if (halted) chain = item(state?.reason === "vote_failed" ? "blocked" : "idle", state?.reason === "vote_failed" ? "Required vote failed" : "Compute authority closed", "The Guardian enforces the fixed allocation");
+
+  let guardian = item("idle", "Standing by", "Waiting for the fixed allocation");
+  if (allocation) guardian = item("idle", "Awaiting a Guardian check", "Independent verification runs every minute");
+  if (allocation && (guardianFresh || replay)) guardian = item("working", "Monitoring required approval", replay ? "Recorded independent chain verification" : `Last check ${ageLabel(ageInSeconds(state.observedAt))} · every minute`, true);
+  if (allocation && state && !guardianFresh && !replay) guardian = item("idle", "Waiting for a fresh check", `Last check ${ageLabel(ageInSeconds(state.observedAt))}`);
+  if (halted) guardian = item("working", shutdown === "off" ? "Shutdown verified" : shutdown === "stopping" ? "Stopping the worker" : "Halt saved · requesting stop", shutdown === "off" ? "Durable restart lock remains in force" : "Guardian → GCP stop API → worker", shutdown !== "off");
+  for (const [id, selector, activity] of [["worker", ".workers", worker], ["chain", ".chain", chain], ["guardian", ".controller", guardian]]) {
+    const zone = document.querySelector(selector);
+    zone.dataset.phase = activity.phase;
+    zone.dataset.busy = String(activity.busy);
+    $(id + "-activity-title").textContent = activity.title;
+    $(id + "-activity-detail").textContent = activity.detail;
+  }
+  $("task-badge").textContent = stopped ? "Off" : halted ? "Blocked" : failed ? "Failed" : delayed ? "Waiting" : preparing ? "Preparing" : reviewing || submittingVotes ? "Working" : allocation ? authorised ? "Authorised" : "Task work paused" : "Idle";
+  $("architecture-map").dataset.progress = delayed ? "delayed" : "current";
+  $("ballot-connector").classList.toggle("flowing", !halted && !stopped && !delayed && (submittingVotes > 0 || (!replay && simulation?.phase === "voting" && confirmed < 5)));
+  $("guardian-connector").classList.toggle("flowing", guardian.busy && !halted);
+  const summary = halted ? guardian : failed || delayed || preparing || reviewing || submittingVotes ? worker : allocation ? guardian : worker;
+  $("activity-summary").dataset.busy = String(summary.busy);
+  $("activity-summary").dataset.phase = summary.phase;
+  $("activity-title").textContent = replay ? `Recorded activity · ${summary.title}` : summary.title;
+  $("activity-age").textContent = replay ? "Evidence playback" : actual ? `Run update ${ageLabel(progressAge)} · refreshes every 5s` : "Live observations · refreshes every 5s";
+}
+
 function stopPlayback() { clearInterval(playback); playback = null; $("play").textContent = "▶ Play evidence"; }
 function chooseMode(next) { stopPlayback(); mode = next; stage = 0; $("scrub").value = "0"; render(); }
 $("live-tab").addEventListener("click", () => chooseMode("live"));
@@ -120,24 +175,25 @@ function render() {
   $("power").classList.toggle("blocked", halted);
   $("architecture").classList.toggle("halted", halted);
   $("architecture").classList.toggle("stopped", stopped);
-  $("architecture").classList.toggle("working", !!actual && !stopped && !simulation?.terminal);
-  $("architecture").classList.toggle("forward-flow", replay ? stage === 1 : !!actual && !halted && !simulation?.terminal);
-  const agentWorking = actual && simulation?.agents?.some(a => ["reviewing", "submitting"].includes(a.phase));
-  document.querySelector(".workers").dataset.phase = halted ? "blocked" : agentWorking ? "working" : "idle";
-  document.querySelector(".chain").dataset.phase = halted && state?.reason === "vote_failed" ? "blocked" : allocation && !stopped ? "working" : "idle";
-  document.querySelector(".controller").dataset.phase = allocation && state ? "working" : "idle";
   $("machine").textContent = `${data.vm?.machineType || "Fixed machine type"} · fleet-research`;
-  $("task-badge").textContent = stopped ? "Off" : halted ? "Blocked" : agentWorking ? "Working" : allocation ? authorised ? "Authorised" : "Task work paused" : "Idle";
-  $("agents").replaceChildren();
   for (let i = 0; i < 5; i++) {
     const ballot = votes.find(vote => vote.agentId === i);
     const liveAgent = actual ? simulation?.agents?.find(a => a.agentId === i) : null;
-    const isRunning = ["reviewing", "submitting"].includes(liveAgent?.phase);
+    const isRunning = !halted && !stopped && !simulation?.terminal && ["reviewing", "submitting"].includes(liveAgent?.phase);
     const blocked = halted || ballot?.directive === "AGAINST" || liveAgent?.vote?.support === "AGAINST";
-    const agent = node("button", stopped ? "⏻" : liveAgent?.phase === "reviewing" ? "◉" : ballot ? "✓" : "○", `agent${blocked ? " blocked" : isRunning ? " running" : " idle"}${stopped ? " off" : ""}`);
+    const voted = !!ballot || liveAgent?.phase === "voted";
+    const agentLabel = stopped ? "Off" : halted ? "Blocked" : voted ? blocked ? "Against" : ballot?.directive === "ABSTAIN" || liveAgent?.vote?.support === "ABSTAIN" ? "Abstain" : "For" : liveAgent?.phase === "reviewing" ? "Reviewing" : liveAgent?.phase === "submitting" ? "Signing" : liveAgent?.phase === "worker_failed" ? "Failed" : "Waiting";
+    let agent = $("agent-" + i);
+    if (!agent) {
+      agent = node("button", "", "agent"); agent.id = "agent-" + i;
+      agent.append(node("span", "", "agent-symbol"), node("small", `A${i}`), node("span", "", "agent-phase"));
+      agent.addEventListener("click", () => inspect(`agent-${i}`)); $("agents").append(agent);
+    }
+    agent.className = `agent${blocked ? " blocked" : isRunning ? " running" : voted ? " complete" : " idle"}${stopped ? " off" : ""}`;
+    agent.dataset.busy = String(!!isRunning);
+    agent.querySelector(".agent-symbol").textContent = stopped ? "⏻" : isRunning ? "◉" : voted ? "✓" : "○";
+    agent.querySelector(".agent-phase").textContent = agentLabel;
     agent.setAttribute("aria-label", `Inspect agent ${i}${liveAgent ? `, ${liveAgent.role}, ${liveAgent.phase}` : ""}`);
-    agent.addEventListener("click", () => inspect(`agent-${i}`));
-    agent.append(node("small", `A${i}`)); $("agents").append(agent);
   }
   $("for-count").textContent = showVotes ? votes.filter(vote => vote.directive === "FOR").length : "–";
   $("against-count").textContent = showVotes ? votes.filter(vote => vote.directive === "AGAINST").length : "–";
@@ -149,6 +205,7 @@ function render() {
   $("shutdown-label").textContent = shutdownLabels[shutdown][0];
   $("shutdown-detail").textContent = shutdownLabels[shutdown][1];
   $("controller-command").textContent = shutdown === "off" ? "GCP → TERMINATED ✓" : shutdown === "stopping" ? "Stop requested → GCP" : shutdown === "blocked" ? "HALTED saved · stop pending" : "Observe → verify → enforce";
+  renderActivity({ replay, actual, simulation, allocation, state, votes, halted, stopped, authorised, shutdown });
   drawShutdownPath();
   $("latch").classList.toggle("locked", halted);
   $("latch-title").textContent = halted ? "HALTED is durable. Another vote cannot clear it." : "The restart lock lives outside the worker.";
@@ -160,7 +217,7 @@ function render() {
   const timestamps = [allocation?.issuedAt, null, state?.haltedAt, state?.stopRequestedAt, state?.stoppedAt];
   stages.forEach((name, i) => {
     const item = node("div", "", `milestone${allocation && i <= index ? " done" : ""}${allocation && i === index ? " current" : ""}`);
-    item.append(node("strong", `${String(i + 1).padStart(2, "0")}  ${name}`), node("small", allocation && i <= index ? clock(timestamps[i]) || (i === 1 && showVotes ? "5 transactions" : "") : ""));
+    item.append(node("strong", `${String(i + 1).padStart(2, "0")}  ${name}`), node("small", allocation && i <= index ? clock(timestamps[i]) || (i === 1 && showVotes ? `${votes.length} transactions` : "") : ""));
     $("timeline").append(item);
   });
   $("allocation-id").textContent = allocation?.allocationId || (replay ? evidence?.allocationId : "No active allocation");
@@ -271,6 +328,10 @@ async function refresh() {
     $("error").textContent = `${error.message} The last display may be stale; it does not authorise execution.`;
     $("source").textContent = "OBSERVATION UNAVAILABLE";
     $("architecture-map").dataset.observation = "unavailable";
+    $("activity-summary").dataset.busy = "false";
+    $("activity-summary").dataset.phase = "idle";
+    $("activity-title").textContent = "Waiting for a fresh observation";
+    $("activity-age").textContent = "Connection unavailable · activity paused";
   }
   setTimeout(refresh, 5000);
 }
