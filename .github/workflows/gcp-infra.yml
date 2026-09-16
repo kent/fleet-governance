@@ -5,8 +5,12 @@ on:
       action:
         description: Infrastructure operation
         type: choice
-        options: [plan, apply, provision-mcp, provision-readside, inspect-history, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, deploy-proposal-credits, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, verify-agent-experiment, prepare-simulation, launch-simulation, release-preparation, retry-preparation, inspect-simulation, recover-simulation-evidence]
+        options: [plan, apply, provision-mcp, refresh-worker, provision-readside, inspect-history, start, stop, import-cdp, import-rpc, import-openrouter, prepare-wallets, deploy-proposal-credits, inspect-demo, stop-experiment, arm-compute, inspect-compute, compute-drill, release-compute, sync-compute-votes, verify-simulation, verify-agent-experiment, prepare-simulation, launch-simulation, release-preparation, retry-preparation, inspect-simulation, recover-simulation-evidence]
         default: plan
+      image_revision:
+        description: 'refresh-worker only: existing main-branch runner image revision (40 hex characters)'
+        type: string
+        default: ''
       machine_type:
         description: Pilot VM type
         type: choice
@@ -77,6 +81,33 @@ jobs:
         run: |
           if [[ "$VM_ACTION" == start ]]; then python3 -B infra/gcp/assert-compute-unarmed.py; fi
           gcloud compute instances "$VM_ACTION" fleet-research --zone=us-central1-a --quiet
+      - name: Update only the unarmed agent runtime
+        if: inputs.action == 'refresh-worker'
+        id: refresh_worker
+        env:
+          IMAGE_REVISION: ${{ inputs.image_revision }}
+        run: |
+          [[ "$IMAGE_REVISION" =~ ^[a-f0-9]{40}$ ]]
+          python3 -B infra/gcp/assert-compute-unarmed.py
+          digest=$(gcloud artifacts docker images describe "us-central1-docker.pkg.dev/fleet-governance/fleet/runner:$IMAGE_REVISION" --format='value(image_summary.digest)')
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          image="us-central1-docker.pkg.dev/fleet-governance/fleet/runner@$digest"
+          gcloud compute instances start fleet-research --zone=us-central1-a --quiet
+          echo 'started=true' >> "$GITHUB_OUTPUT"
+          ready=false
+          for _ in $(seq 1 12); do
+            if gcloud compute ssh fleet-research --zone=us-central1-a --tunnel-through-iap --quiet --ssh-flag='-oConnectTimeout=10' --command=true; then ready=true; break; fi
+            sleep 5
+          done
+          [[ "$ready" == true ]]
+          remote="fleet-runtime-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          gcloud compute scp --recurse infra/gcp/runtime "fleet-research:~/$remote" --zone=us-central1-a --tunnel-through-iap --quiet
+          gcloud compute ssh fleet-research --zone=us-central1-a --tunnel-through-iap --quiet --command="sudo bash \$HOME/$remote/refresh-worker.sh '$image' '$IMAGE_REVISION'"
+      - name: Leave the refreshed worker stopped
+        if: always() && inputs.action == 'refresh-worker' && steps.refresh_worker.outputs.started == 'true'
+        run: |
+          gcloud compute instances stop fleet-research --zone=us-central1-a --quiet
+          gcloud compute instances describe fleet-research --zone=us-central1-a --format='value(status)' >> "$GITHUB_STEP_SUMMARY"
       - name: Inspect independent governance history
         if: inputs.action == 'inspect-history'
         run: |
