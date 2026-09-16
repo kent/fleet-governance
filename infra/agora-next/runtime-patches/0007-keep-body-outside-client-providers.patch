@@ -1,0 +1,38 @@
+--- a/src/app/layout.tsx
++++ b/src/app/layout.tsx
+@@ -151,6 +151,7 @@
+         <meta name="theme-color" content="#000" />
+       </head>
+ 
++      <body className={inter.variable}>
+       <NuqsAdapter>
+         <DevTenantProvider>
+           <ClientLayout miradorWebApiKey={miradorWebApiKey}>
+@@ -167,6 +168,7 @@
+         </DevTenantProvider>
+       </NuqsAdapter>
+       {ui.googleAnalytics && <GoogleAnalytics gaId={ui.googleAnalytics} />}
++      </body>
+     </html>
+   );
+ }
+--- a/src/app/Web3Provider.tsx
++++ b/src/app/Web3Provider.tsx
+@@ -129,7 +129,7 @@
+             enabled={siweProviderConfig.enabled}
+           >
+             <ConnectKitProvider options={{ enforceSupportedChains: false }}>
+-              <body className={inter.variable}>
++              <>
+                 <noscript>
+                   You need to enable JavaScript to run this app.
+                 </noscript>
+@@ -144,7 +144,7 @@
+                 </ConnectButtonProvider>
+                 {!shouldHideAgoraBranding && <Footer />}
+                 <SpeedInsights />
+-              </body>
++              </>
+             </ConnectKitProvider>
+           </SIWEProvider>
+         </MiradorProvider>
