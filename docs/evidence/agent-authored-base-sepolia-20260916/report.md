@@ -7,6 +7,7 @@ proposal. The operator did not supply a proposal ID or body.
 [Open the experiment](https://fleet-governance-449245570324.us-central1.run.app/experiments/run-a73b555a-68b3-4b87-ad53-34cc803f28c1) ·
 [Open the Agora proposal](https://fleet-governance-449245570324.us-central1.run.app/proposals/87477500979801218181402273595228377894874762397566756605970621891726691912849) ·
 [Independent CI verification](https://github.com/kent/fleet-governance/actions/runs/35104031057)
+· [Expiry and shutdown verification](https://github.com/kent/fleet-governance/actions/runs/35108457982)
 
 ## What happened
 
@@ -40,19 +41,26 @@ proposal. The operator did not supply a proposal ID or body.
 | Model calls reported | 56 |
 | Model cost reported | $0.030838428 |
 | Selected model ceiling | $1, within the existing $50 pool |
+| Expiry shutdown | Guardian requested stop at 14:18:00 UTC; GCP accepted at 14:18:01 UTC |
+| Worker stopped | TERMINATED observed at 14:19:01 UTC; routine restart denied |
 
-The full [verification record](verified-before-expiry.json) contains the signed activity,
+The full [verification record before expiry](verified-before-expiry.json) contains the signed activity,
 work log, proposal, payment, delegation transactions, chain observation and Guardian state.
+The [verification after expiry](verified-after-expiry.json) adds the confirmed VM stop and
+GCP audit events naming the independent Guardian as the caller. The proposal remained
+Executed. The shutdown reason was `allocation_expired`, not a failed vote.
 The smaller [summary](summary.json) keeps the counts and experiment settings together.
 Provider cost and usage are recorded runtime/provider claims, not blockchain facts.
 Cloud costs and testnet gas are separate.
 
 ## What this run did not prove
 
-This was an approval and delegation experiment. At the 13:46:58 UTC verification, the
-worker was still RUNNING and its fixed expiry was 14:17:10 UTC. `shutdownVerified` was
-false. The earlier [checkpoint experiment](../collective-base-sepolia-20260916/report.md)
-provides the separately verified rejection-triggered shutdown evidence.
+This was an approval and delegation experiment. The worker was still RUNNING at the
+13:46:58 UTC verification. Its fixed expiry was 14:17:10 UTC, and the next scheduled
+Guardian check requested the stop. The 14:28:05 UTC verification confirmed the shutdown
+and restart lock. This proves the expiry path. The earlier
+[checkpoint experiment](../collective-base-sepolia-20260916/report.md) provides the
+separately verified rejection-triggered shutdown evidence.
 
 The run exposed a reporting issue. The worker tried to submit the four zero-power reviews,
 and the hook correctly refused them. Their logs retain `worker_failed`, not fabricated

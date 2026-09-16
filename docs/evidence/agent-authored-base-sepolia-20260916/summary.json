@@ -109,12 +109,38 @@
       "allowance": 3
     }
   ],
-  "shutdownVerified": false,
+  "shutdownVerified": true,
   "vm": {
     "id": "8012185073355132559",
-    "status": "RUNNING"
+    "status": "TERMINATED"
   },
   "restartDenied": true,
-  "workflowRun": "35104031057",
-  "observedAt": "2026-09-16T13:46:58.066Z"
+  "workflowRun": "35108457982",
+  "observedAt": "2026-09-16T14:28:05.704Z",
+  "stopAudit": [
+    {
+      "protoPayload": {
+        "authenticationInfo": {
+          "principalEmail": "fleet-compute-controller@fleet-governance.iam.gserviceaccount.com"
+        },
+        "methodName": "v1.compute.instances.stop",
+        "resourceName": "projects/fleet-governance/zones/us-central1-a/instances/fleet-research"
+      },
+      "timestamp": "2026-09-16T14:18:54.387219Z"
+    },
+    {
+      "protoPayload": {
+        "authenticationInfo": {
+          "principalEmail": "fleet-compute-controller@fleet-governance.iam.gserviceaccount.com"
+        },
+        "methodName": "v1.compute.instances.stop",
+        "resourceName": "projects/fleet-governance/zones/us-central1-a/instances/fleet-research"
+      },
+      "timestamp": "2026-09-16T14:18:01.102497Z"
+    }
+  ],
+  "shutdownReason": "allocation_expired",
+  "stopRequestedAt": 1789568280,
+  "stopAcceptedAt": 1789568281,
+  "stoppedAt": 1789568341
 }

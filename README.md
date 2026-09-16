@@ -18,7 +18,9 @@ diagnostics, and the agents finished without requesting external access. Reporte
 cost: **$0.03084**, excluding cloud costs and testnet gas.
 [Follow the experiment](https://fleet-governance-449245570324.us-central1.run.app/experiments/run-a73b555a-68b3-4b87-ad53-34cc803f28c1) ·
 [Inspect the receipts and delegation tradeoff](docs/evidence/agent-authored-base-sepolia-20260916/report.md).
-This run did not reject a proposal; its verification is separate from the shutdown test below.
+This run did not reject a proposal. The Guardian later stopped its worker at the fixed
+allocation expiry, with the stop caller verified in GCP audit logs. The rejected-vote test
+below remains a separate result.
 
 **Verified earlier checkpoint design:** five actual agents, thirty work reports and fifteen Base Sepolia ballots.
 Two approvals released more work. Five AGAINST votes on the third proposal triggered a real

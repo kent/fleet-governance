@@ -46,6 +46,8 @@
 
 - **The agents brought the first proposal.** In the first run with these rules, Agent2 and Agent3 petitioned their peers. Four peers delegated to Agent2. It spent one credit and wrote a request to inspect the broken scorer. The proposal passed, the Guardian released that step, and the agents found the field mismatch. They finished without asking for external access. Fifty-six model calls cost about **3.08 cents**, excluding cloud costs and testnet gas. [Read the experiment](evidence/agent-authored-base-sepolia-20260916/report.md).
 
+- **Approval didn't buy more time.** That run's fixed allocation still expired. The Guardian sent the stop signal, GCP confirmed the worker was off, and routine restart was blocked. The audit log names the Guardian as the caller. Agora and the experiment record stayed online. This was an expiry shutdown, not a rejected vote.
+
 - Delegation changed the result. Agent3's public review preferred abstention, but it had already delegated away its voting power. Agent2 held all five units. One actual FOR ballot carried that weight. That is useful to see: gathering enough support to propose also concentrated control of the vote. The public record lets us compare that with a later run where delegation is disabled.
 
 - That run also caught a reporting issue. The worker attempted four ballots with no voting power. The hook refused them, and the record kept the failures. The fix preserves those public reviews without attempting a ballot. We keep the original evidence, including the mistakes.
