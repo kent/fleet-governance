@@ -9,6 +9,9 @@ verify_inference=${4:-false}
 [[ "$openrouter_version" =~ ^[1-9][0-9]*$ ]]
 [[ "$verify_inference" == true || "$verify_inference" == false ]]
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# Never apply agent-only cleanup to the independent governance host.
+instance=$(curl -fsS -H Metadata-Flavor:Google http://metadata.google.internal/computeMetadata/v1/instance/name)
+[[ "$instance" == fleet-research ]]
 exec 9>/run/fleet-deployment.lock
 flock -n 9 || { echo 'Another deployment is active.' >&2; exit 1; }
 for _ in $(seq 1 90); do
@@ -112,29 +115,17 @@ for _ in $(seq 1 60); do
       if (!response.ok) throw new Error("OpenRouter credential check failed");
       console.log("OpenRouter credential authenticated. No inference requested.");
     '
-    # Roll the existing Agora deployment too. Updating images must not require another
-    # experiment (or another model call), and the lifecycle lock keeps the run state idle.
-    docker exec fleet-runner node --input-type=module -e '
-      import { existsSync, readFileSync } from "node:fs";
-      import { readSecret } from "./apps/runner/dist/cloud/google.js";
-      import { configureCloudReadside } from "./apps/runner/dist/cloud/readside-config.js";
-      import { readside } from "./apps/runner/dist/readside.js";
-      const root = process.cwd();
-      const manifestPath = `${root}/deployments/84532/latest.json`;
-      if (existsSync(manifestPath)) {
-        try {
-          if (JSON.parse(readFileSync(manifestPath, "utf8")).chainId !== 84532) throw new Error("Wrong chain");
-          const [http, ws] = await Promise.all([readSecret("fleet-base-sepolia-rpc-url"), readSecret("fleet-base-sepolia-ws-url")]);
-          configureCloudReadside(root, http, ws);
-          await readside({ manifestPath, infraDir: `${root}/infra`, abiSourceDir: `${root}/packages/abi/abis`,
-            deploymentsDir: `${root}/deployments`, restart: true, log: console.log });
-          console.log("Agora and its indexers now use the deployed images and existing Base Sepolia contracts.");
-        } catch {
-          console.error("Read-side refresh failed. Run the redacted inspect-demo diagnostics.");
-          process.exit(1);
-        }
-      }
-    '
+    # Public governance is owned by fleet-readside and its Goldsky pipeline. Retire
+    # the legacy local replicas without deleting their data or changing that host.
+    replicas=$(docker ps -aq --filter label=com.docker.compose.project=fleet-readside)
+    if [[ -n "$replicas" ]]; then
+      while IFS= read -r replica; do
+        [[ "$replica" =~ ^[a-f0-9]{12,64}$ ]]
+        docker update --restart=no "$replica" >/dev/null
+        docker stop "$replica" >/dev/null
+      done <<< "$replicas"
+    fi
+    echo 'Agent VM has no running governance replicas. Public governance stays on fleet-readside.'
     if [[ "$verify_inference" == true ]]; then
       docker exec fleet-runner node apps/runner/dist/cloud/verify-inference.js
     fi
