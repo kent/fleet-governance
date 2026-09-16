@@ -141,3 +141,33 @@ it("cancels waiting task requests without spending their slots or affecting vote
   await expect(vote).resolves.toMatchObject({ ok: true });
   expect(complete).not.toHaveBeenCalled();
 });
+
+
+it("honours an explicit review timeout cap without extending the request deadline", async () => {
+  vi.useFakeTimers();
+  try {
+    const { scheduler } = setup({ concurrency: 1, reservedVoteSlots: 0, maxCallTimeoutMs: 120_000 });
+    let release!: () => void;
+    const deadlines: number[] = [];
+    const provider: Provider = { name: "scripted", complete: async request => {
+      deadlines.push(request.timeoutMs);
+      if (deadlines.length === 1) await new Promise<void>(resolve => { release = resolve; });
+      return success as never;
+    } };
+    const first = scheduler.wrap(provider, identity).complete({ ...req, timeoutMs: 300_000 });
+    const queued = scheduler.wrap(provider, { ...identity, purpose: "vote" }).complete({ ...req, timeoutMs: 120_000 });
+    await vi.advanceTimersByTimeAsync(3000);
+    release();
+    await Promise.all([first, queued]);
+    expect(deadlines).toEqual([120_000, 117_000]);
+    const normal = setup();
+    const capture = vi.fn(async () => success as never);
+    await normal.scheduler.wrap({ name: "scripted", complete: capture }, identity).complete({ ...req, timeoutMs: 120_000 });
+    expect(capture).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 60_000 }));
+    expect(scheduler.summary().maxCallTimeoutMs).toBe(120_000);
+  } finally { vi.useRealTimers(); }
+});
+
+it.each([0, -1, 120001, Infinity, NaN, 1.5])("rejects an invalid provider timeout cap: %s", cap => {
+  expect(() => setup({ maxCallTimeoutMs: cap })).toThrow("timeout cap");
+});

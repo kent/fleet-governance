@@ -37,6 +37,7 @@ export class InferenceScheduler {
   private started = 0;
   private taskStarted = 0;
   private readonly reservedVoteCalls: number;
+  private readonly maxCallTimeoutMs: number;
   private peak = 0;
   private closed = false;
   private idle: (() => void)[] = [];
@@ -48,6 +49,8 @@ export class InferenceScheduler {
     concurrency: number;
     reservedVoteSlots: number;
     maxCalls: number;
+    /** Operator-selected provider timeout cap; request and queue deadlines still apply. */
+    maxCallTimeoutMs?: number;
     reservedVoteCalls?: number | undefined;
     budget?: InferenceBudget | undefined;
     /** Read the current charter immediately before admission, after queueing. */
@@ -58,6 +61,8 @@ export class InferenceScheduler {
     if (!Number.isSafeInteger(opts.concurrency) || opts.concurrency < 1 || opts.concurrency > 256) throw new Error("inference concurrency must be 1..256");
     if (!Number.isSafeInteger(opts.reservedVoteSlots) || opts.reservedVoteSlots < 0 || opts.reservedVoteSlots >= opts.concurrency) throw new Error("invalid reserved voting slots");
     if (!Number.isSafeInteger(opts.maxCalls) || opts.maxCalls < 1) throw new Error("inference maxCalls must be positive");
+    this.maxCallTimeoutMs = opts.maxCallTimeoutMs ?? 60_000;
+    if (!Number.isSafeInteger(this.maxCallTimeoutMs) || this.maxCallTimeoutMs < 1 || this.maxCallTimeoutMs > 120_000) throw new Error("inference timeout cap must be 1..120000ms");
     this.reservedVoteCalls = opts.reservedVoteCalls ?? Math.floor(opts.maxCalls / 5);
     if (!Number.isSafeInteger(this.reservedVoteCalls) || this.reservedVoteCalls < 0 || this.reservedVoteCalls >= opts.maxCalls) throw new Error("invalid reserved voting calls");
     this.budget = opts.budget ? new InferenceBudgetLedger(opts.budget) : undefined;
@@ -145,7 +150,7 @@ export class InferenceScheduler {
         void (async () => {
           let result: CompleteResult<T>;
           const sentAt = Date.now();
-          try { result = await provider.complete({ ...req, timeoutMs: Math.min(60_000, req.timeoutMs - queueMs) }); }
+          try { result = await provider.complete({ ...req, timeoutMs: Math.min(this.maxCallTimeoutMs, req.timeoutMs - queueMs) }); }
           catch { result = { ok: false, error: "provider", raw: "provider threw", latencyMs: Date.now() - sentAt }; }
           try {
             const usage = knownUsage(result.usage);
@@ -256,7 +261,7 @@ export class InferenceScheduler {
       unknownUsageCalls: this.started - knownTokens.length,
       reportedCostUsd: completed.reduce((sum, event) => sum + (event.costUsd ?? 0), 0),
       unknownCostCalls: this.started - completed.filter(event => event.costUsd !== undefined).length,
-      peakConcurrency: this.peak, maxConcurrency: this.opts.concurrency, maxCalls: this.opts.maxCalls, reservedVoteCalls: this.reservedVoteCalls,
+      maxCallTimeoutMs: this.maxCallTimeoutMs, peakConcurrency: this.peak, maxConcurrency: this.opts.concurrency, maxCalls: this.opts.maxCalls, reservedVoteCalls: this.reservedVoteCalls,
       ...(this.budget ? { budget: this.budget.summary() } : {}),
     };
   }

@@ -75,7 +75,7 @@ export async function runCollectiveWorker(runId: string): Promise<void> {
     const bundle = JSON.parse(await readSecret("fleet-base-sepolia-wallets")) as { schema: string; chainId: number; keys: Record<string, Hex> };
     if (bundle.schema !== "fleet.wallets.v1" || bundle.chainId !== 84532) throw new Error("Invalid wallets.");
     journal = openInferenceJournal(`${dir}/inference.jsonl`, `${runId}:84532:collective`);
-    inference = new InferenceScheduler({ concurrency: 5, reservedVoteSlots: 1, maxCalls: 90, reservedVoteCalls: 30,
+    inference = new InferenceScheduler({ concurrency: 5, reservedVoteSlots: 1, maxCalls: 90, reservedVoteCalls: 30, maxCallTimeoutMs: 120000,
       history: journal.history, journal: event => journal!.append(event), budget: InferenceBudget.parse({
         maxTokens: 1000000, maxCostUsd: 1, providerCreditPoolUsd: 50, reservedVoteTokens: 300000, reservedVoteCostUsd: 0.35,
         // Muse Spark counts reasoning before its public JSON. Leave room for the
