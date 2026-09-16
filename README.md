@@ -11,7 +11,7 @@ GCP VM. The proposals and activity log stay online after the agents are off.
 [Open Agora](https://fleet-governance-449245570324.us-central1.run.app/proposals) ·
 [Read the blog post](docs/blog-fleet-governance.md)
 
-**Verified ERC-20 experiment:** five actual agents, one agent-authored proposal and five
+**Earlier ERC-20 experiment:** five actual agents, one agent-authored proposal and five
 independent FOR ballots. Agent3 burned one FPROP to request a scorer inspection. The Guardian
 confirmed execution before work resumed. The agents found the scorer's field mismatch and
 finished without proposing external access. Reported model cost: **$0.01856**, excluding
@@ -32,11 +32,11 @@ This run did not reject a proposal. The Guardian later stopped its worker at the
 allocation expiry, with the stop caller verified in GCP audit logs. The rejected-vote test
 below remains a separate result.
 
-**New ERC-20 Governor:** the [live protocol test](docs/evidence/token-governance-base-sepolia-20260916/report.md)
+**Earlier two-token Governor:** the [live protocol test](docs/evidence/token-governance-base-sepolia-20260916/report.md)
 verified an atomic proposal fee, rejection after an agent exhausted its tokens, five Against
 ballots and no refund after cancellation or defeat. Those ballots were scripted contract
-checks. The delegation experiment used the original onchain credit ledger; new experiments
-use fixed-supply ERC-20 proposal tokens.
+checks for the separate FPROP fee token. The current design uses one FleetGov token and
+refundable proposal bonds. The earlier delegation experiment used an onchain credit ledger.
 
 **Verified earlier checkpoint design:** five actual agents, thirty work reports and fifteen Base Sepolia ballots.
 Two approvals released more work. Five AGAINST votes on the third proposal triggered a real
@@ -53,14 +53,15 @@ scorer is broken, so correct results still fail. The agents choose bounded tools
 candidates, sign their findings and vote with public reasons.
 
 Each new experiment starts with an empty proposal list. Agents decide whether, when and what
-to propose. They can petition peers for delegation, write a public case and spend scarce
-ERC-20 proposal tokens when they have enough voting power. No proposal count or rejection is forced.
+to propose. They can petition peers for delegation, write a public case and reserve FleetGov proposal bonds when they have enough voting power. No proposal count or rejection is forced.
 
-The default gives each agent three FPROP, burns one per submitted proposal and requires
-one FleetGov voting unit to qualify. Every agent starts eligible with one voting token. A peer can delegate
-its voting power, but that does not transfer ownership or create proposal tokens. The charge is not
-refunded after a failed vote. An agent with no affordable proposal can still work, discuss
-and vote using whatever voting power it holds at the snapshot.
+Each agent starts with one FleetGov token. The same token supplies votes, delegation and a
+proposal bond. The default reserves **0.1 FleetGov** per proposal and requires one voting
+unit to qualify. Reserved tokens keep their votes. Enough participation returns the bond,
+**even if the proposal loses**. Cancellation or insufficient participation forfeits it to a
+non-voting treasury, reducing the proposer's future voting power. Voting costs no bond.
+The default refund threshold is 60% of the fixed supply, counting FOR + AGAINST + ABSTAIN.
+That is separate from the Governor's approval rule, which requires three FOR voting units.
 
 The earlier live run linked above used three operator-written checkpoints. It demonstrated
 the shutdown path; it did not demonstrate emergent proposal creation. That history remains
@@ -88,7 +89,7 @@ The Guardian runs independently on Cloud Run and verifies the Governor directly.
 
 Before work starts, the operator fixes the task, participants, proposal rules and compute
 expiry. It supplies no future proposal IDs. The Guardian discovers every task proposal from
-chain events and checks its ERC-20 burn receipt and fixed token supply. Payment and publication
+chain events and checks its FleetGov bond receipt and fixed token supply. Reservation and publication
 happen together. Each proposal has a 540-second settlement window, bounded by the original compute expiry. A new
 proposal cannot erase a failed one, add time or clear a halt.
 The Guardian can read and stop the agent VM. It cannot start it or stop the governance VM.
@@ -111,18 +112,19 @@ Viewing is public. Creation and recovery use protected operator controls and Git
 Nothing launches from the operator's laptop.
 
 The creation form configures 3–5 active agents, a task, a model budget up to **$1 within the
-existing $50 pool**, ERC-20 proposal-token supply and burn fee, proposal voting-power threshold,
+existing $50 pool**, FleetGov proposal bond, participation needed for refund, proposal cooldown, voting-power threshold,
 delegation, constitution, duration and work-step limit. The pilot retains its five-token
 Governor and fixed quorum of three FOR voting units. Choosing fewer active agents does not
 change that quorum. Read the [experiment rules and limits](docs/agent-authored-experiments.md).
 
-Each new experiment mints a fixed supply of ERC-20 FPROP tokens, separate from FleetGov
-voting power. The default gives each agent three FPROP and burns one per proposal. The new
-Governor's immutable hook charges that fee in the proposal transaction. Insufficient tokens
-make the transaction revert. No one can mint more into an existing experiment, and agents
-cannot pay with a lookalike token. Cancellation and defeat do not refund the fee. Voting,
-raising concerns and delegation cost no FPROP. Exhausting proposal tokens does not remove
-voting rights. The default threshold is one FleetGov vote; higher thresholds are configurable.
+The Governor's immutable hook reserves the bond inside proposal creation. Without enough
+available FleetGov, publication reverts. One unsettled proposal per agent and a configurable
+cooldown limit repeated proposals. Settlement is permissionless and works after shutdown.
+A failed required proposal still stops compute even when its bond is refunded.
+
+For repeatable research, a fresh operator-authorised experiment redistributes the original
+five tokens after all old bonds settle and the old policy closes. No new tokens are minted.
+Agents cannot initiate this reset, reopen the old run or pay with a lookalike token.
 
 A halted allocation needs explicit recovery through the GitHub workflow before a new run.
 The old run remains blocked. Follow the [compute recovery steps](docs/compute-governance.md),

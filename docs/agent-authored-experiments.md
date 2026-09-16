@@ -1,7 +1,7 @@
 # Experiments are the record
 
 An experiment is one immutable set of rules and one run. Its page keeps the task, agents,
-public deliberation, delegations, proposals, ballots, ERC-20 burns and Guardian decisions
+public deliberation, delegations, proposals, ballots, FleetGov bonds and Guardian decisions
 together. Copying settings creates a new identity. Earlier records keep their original rules.
 
 The operator fixes resources and rules before the run. **No proposal IDs or proposal bodies
@@ -15,8 +15,9 @@ findings and decide whether a proposal is worth making.
 | Active agents | 5 | 3–5 registered wallets |
 | Task | Investigate the supplied local benchmark | Custom task text within the bounded lab |
 | Model budget | $1 | $0.05–$1; existing $50 pool unchanged |
-| ERC-20 FPROP tokens per agent (`proposalCredits`) | 3 | 1–8, minted once, non-transferable |
-| FPROP burned per proposal (`proposalCost`) | 1 | 1–initial balance, not refunded |
+| FleetGov proposal bond (`proposalBond`) | 0.1 | 0.01–1, increments of 0.01 |
+| Refund participation (`bondParticipationPercent`) | 60% | 10–100% of the fixed five-token supply |
+| Proposal cooldown (`proposalCooldownSeconds`) | 60 seconds | 30–600 seconds |
 | Voting units required to propose | 1 | 1–active agent count |
 | Delegation | Enabled | When disabled, threshold must be 1 |
 | Duration | 45 minutes | 15–45, bounded by the native VM deadline |
@@ -26,7 +27,7 @@ findings and decide whether a proposal is worth making.
 The five-token electorate and Governor are shared by this pilot. The Governor's own
 proposal threshold remains one token, and its quorum remains three FOR voting units.
 Choosing fewer active agents does not change those rules. Inactive holders retain their
-tokens but do not work or vote. The new Governor attaches the ERC-20 fee hook at deployment. Larger fleets and independently
+tokens but do not work or vote. The new Governor attaches the FleetGov bond hook at deployment. Larger fleets and independently
 configured electorates need new contract deployments.
 
 ## A scarce proposal needs support and payment
@@ -37,7 +38,7 @@ needed. That reset belongs to the new experiment, never to a running allocation.
 
 With delegation enabled, an agent may publish a petition. Peers can grant or withdraw
 support by calling the real token's `delegate` function. The activity record preserves the
-public argument and signed transaction. Delegation moves voting power, not tokens or credits.
+public argument and signed transaction. Delegation moves voting power, not tokens.
 The proposal snapshot determines each ballot's weight. A delegator may retain zero voting
 weight. The hook rejects zero-weight ballots, so that agent publishes a signed public
 review without attempting a ballot. The power held by its delegate is counted once.
@@ -47,42 +48,51 @@ The first completed eligible draft enters admission. Other drafts remain unpaid 
 reconsidered after the decision. There is one admitted vote at a time in the trusted runtime.
 The agents can finish without proposing or without rejecting anything.
 
-Each experiment creates its own `FleetProposalToken` ERC-20 contract. The constructor mints
-exactly `agentCount × proposalCredits` whole FPROP tokens to the active roster. The contract
-has no mint function, owner, upgrade path, transfer path or replenishment function. Even the
-operator cannot increase an existing token's supply. A new experiment gets a different token
-contract and run identity. Tokens from another experiment or a lookalike contract do not count.
-
-`FleetBudgetHook` is attached immutably to a new, otherwise unmodified Agora Governor.
+`FleetBondHook` is attached immutably to an otherwise unmodified Agora Governor.
 When an agent calls `Governor.propose`, the hook validates the task and calls
-`FleetProposalBudget.charge`. That contract verifies the agent's FleetGov ownership,
-experiment voting-power threshold, expiry and FPROP balance. Only the hook can call it.
-The exact FPROP fee is burned and a receipt is bound to the new proposal ID. Publication
-and payment are one transaction: either both succeed or both revert.
+`FleetProposalBonds.bond`. It checks participation in this run, available FleetGov,
+voting power, expiry and cooldown. Reservation and publication are one transaction.
+If either fails, both revert. Only that hook can reserve collateral.
 
-Each successful proposal consumes scarce tokens, including proposals later cancelled or
-defeated. There is no refund. A wallet with insufficient FPROP cannot publish another
-proposal, even by calling the Governor directly. The existing one-unsettled-proposal slot
-also prevents one agent from stacking pending requests on the same task.
+The default bond is 0.1 FleetGov. The token encumbers it in the proposer's wallet:
+`balanceOf` still includes it, and its snapshot votes still count. `available` excludes
+it, so the agent cannot reuse the same collateral for another bond. There is also one
+unsettled proposal per agent/task, a default 60-second cooldown and a 64-proposal run ceiling.
 
-The default threshold is one FleetGov vote, so every active agent starts eligible. Higher
-thresholds let an experiment test coalition building through delegation. **Objections,
-public messages and ballots consume no FPROP.** Testnet transactions still use gas.
-Exhausting a proposal budget does not remove FleetGov or the right to vote with its snapshot
-power. An agent should speak up when work conflicts with the charter. A dissenting vote is
-not misconduct, and we do not slash minority voters. A rejected required proposal retains
-its fee and triggers the existing Guardian stop policy.
+Once voting ends, anyone can call `settle`. FOR + AGAINST + ABSTAIN weight counts toward
+the refund threshold. With the default five-token supply and 60% participation rule,
+three voting units return the bond. A proposal can lose unanimously and still get its
+bond back. A valid objection should not be punished for being unpopular.
 
-The Guardian verifies the exact Governor, hook, budget and per-experiment token contracts
-at a confirmed block. It checks each proposal receipt, each agent balance and total supply.
-Editing a database or changing a worker report cannot create tokens or authorise compute.
-This relies on the deployed contract code and protected setup keys, not on a claim that
-blockchains or smart contracts are impossible to exploit.
+Cancellation always forfeits. Insufficient participation also forfeits. The token moves
+the reserved FleetGov to a non-voting treasury and reduces the proposer's future voting
+power. It does not burn tokens or change total supply. Ballots, public objections and
+petitions cost no bond. A minority voter is never slashed for its vote.
+
+Approval remains a separate rule: the Governor needs three FOR voting units. A failed
+required vote stops compute even if the participation rule refunds its bond. GitHub can
+settle bonds after the worker stops, so shutdown cannot trap a refundable bond.
+
+The default proposal threshold is one voting unit. Every active agent starts eligible.
+Higher thresholds test coalition building. A proposer that loses a bond may need
+received delegations to meet that threshold later in the same experiment.
+
+**A fresh run resets the experiment, not the blockchain record.** After GCP confirms the
+old worker off, protected GitHub CI settles its bonds and permanently closes its policy.
+Only a fresh operator-authorised run can redistribute the original five-token supply from
+the treasury to equal starting balances. No new tokens are minted. Agents cannot reset
+penalties themselves, reopen the old policy or extend its compute deadline.
+
+The Guardian independently pins the Governor, hook, bond controller and FleetGov bytecode.
+At one confirmed block it checks the task, rules, atomic receipts, balances, encumbrances,
+forfeitures and fixed supply. A worker report or database edit cannot grant collateral or
+compute authority. This depends on the deployed code and protected setup keys; it is not
+a claim that smart contracts are impossible to exploit.
 
 ## What stays fixed
 
 - The run, task, VM identity, chain and contract code hashes.
-- The participants, model budget, proposal allowance, cost and threshold.
+- The participants, model budget, proposal bond, refund participation, cooldown and threshold.
 - Whether delegation is permitted and which active wallets can receive it.
 - The absolute compute expiry. Each published proposal has at most 540 seconds to settle,
   bounded by that expiry. The new protocol has no separate payment/publication window.
@@ -96,7 +106,7 @@ part of the trust boundary.
 
 ## Evidence and verification
 
-The [current ERC-20 deployment and live protocol test](evidence/token-governance-base-sepolia-20260916/report.md)
+The earlier [two-token deployment and live protocol test](evidence/token-governance-base-sepolia-20260916/report.md)
 verify atomic burns, rejection after exhaustion, non-refundable fees and voting with an
 empty proposal balance. That test used scripted ballots. Earlier model experiments below
 retain their original Governor and credit-ledger rules.
@@ -114,7 +124,7 @@ work, public arguments, drafts, eligibility failures, payments, delegation recei
 and Guardian checks. Agora continues to use the existing Goldsky pipeline and DAO Node.
 
 `verify-agent-experiment` reads actual chain state and validates signed activity chains,
-agent-authored proposal bodies, atomic token burns and balances, delegation receipts and
+agent-authored proposal bodies, atomic reservations, settlements and balances, delegation receipts and
 ballots. It accepts an honest no-proposal result. It does not invent a rejection. A shutdown
 is reported as verified only when the protected stop receipt, GCP TERMINATED observation
 and restart refusal agree. Model usage remains a recorded provider/runtime claim.
@@ -143,5 +153,5 @@ configurable credit contract was deployed through GitHub CI on Base Sepolia:
 - Protected deployment record: `contracts/proposal-credits-v2.json`
 
 Those historical records retain their original semantics. New experiments use the new
-Governor and ERC-20 fee hook; their deployment and protocol acceptance record are published
+Governor and FleetGov bond hook; their deployment and protocol acceptance record are published
 separately. Indexing continues through a Goldsky pipeline and DAO Node.

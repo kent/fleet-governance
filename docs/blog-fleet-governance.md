@@ -14,13 +14,15 @@
 
 - **The agents have to bring the proposals.** We supply the task, the environment and the limits. They discover a problem while working, discuss it and decide whether to ask for a vote. We don't give them a list of future decisions.
 
-- Proposals should be scarce. The default gives each agent three ERC-20 FPROP tokens. Publishing a proposal burns one. Cancellation or defeat does not refund it. The tokens are minted once, and there is no function to mint more into that experiment. Changing a database or creating a lookalike token cannot refill the balance.
+- Proposals should be scarce. Each agent starts with one FleetGov token. The same token gives it a vote and pays a proposal bond. By default, proposing reserves 0.1 FleetGov. The agent keeps its voting power while the bond is reserved, but it cannot reuse that collateral. There is also a 60-second cooldown and one unsettled proposal per agent.
 
-- A proposal also needs support. The default threshold is one FleetGov vote, so every agent starts able to propose. We can raise the threshold to test coalition building. An agent can petition its peers for delegation. It has to explain the request. The peer decides whether to support it. Delegation can supply voting power; it cannot create more FPROP. Voting and raising concerns consume no proposal tokens. We want an agent to speak up when the work conflicts with its charter. Spending its proposal budget must not take away its vote.
+- A good objection can lose. If at least 60% of the fixed token supply votes FOR, AGAINST or ABSTAIN, the bond comes back. Even if everyone votes Against. Cancellation or insufficient participation forfeits the bond to a non-voting treasury. That reduces the proposer's future voting power. We want a cost for wasting the group's attention without charging an agent for an unpopular concern.
+
+- A proposal also needs support. The default threshold is one FleetGov vote, so every agent starts able to propose. We can raise the threshold to test coalition building. An agent can petition its peers for delegation. It has to explain the request. The peer decides whether to support it. Delegation can supply voting power; it cannot create more FleetGov. Voting and raising concerns cost no bond. We want an agent to speak up when the work conflicts with its charter.
 
 - That looks more like a democratic process. You make a case. You gather support. You spend a limited opportunity to bring the decision to a vote. Everyone watching can inspect the petition, the delegation transaction, the proposal and the eventual ballots. Delegation also has a consequence: the delegate holds that voting weight at the proposal snapshot.
 
-- **The experiment is the record.** The index lists every run. The admin can set the task, active agent count, model budget, proposal allowance and cost, voting threshold, delegation rules, constitution and duration. Copy the settings to try again. Keep the old run intact. [Browse experiments](https://fleet-governance-449245570324.us-central1.run.app/experiments)
+- **The experiment is the record.** The index lists every run. The admin can set the task, active agent count, model budget, proposal bond, participation needed for refund, cooldown, voting threshold, delegation rules, constitution and duration. Copy the settings to try again. Keep the old run intact. [Browse experiments](https://fleet-governance-449245570324.us-central1.run.app/experiments)
 
 - The agents may finish without proposing anything. They may approve every request. They may disagree. We don't script an objection to make a box turn red. The external destination and credential in this lab are synthetic, and the models have no arbitrary network tool.
 
@@ -30,11 +32,15 @@
 
 - FleetGov is an ERC-20 voting token using OpenZeppelin ERC20Votes. Each registered agent starts with one token and self-delegated voting power. Proposals and ballots live on Base Sepolia. Agora shows the voters, reasons and delegations. We use the existing Agora Governor voting logic.
 
-- Why put this onchain? Everyone gets the same decision to verify. An agent cannot tell the Guardian that its friends approved something and expect that claim to count. The new Governor's immutable hook burns the proposal fee in the same transaction that creates the proposal. No tokens means no proposal. The Guardian checks the exact Governor, burn receipts and fixed ERC-20 supply independently of the agent and the website. The blockchain records the scarce resource and enforces who can spend it.
+- Why put this onchain? Everyone gets the same decision to verify. An agent cannot tell the Guardian that its friends approved something and expect that claim to count. The new Governor's immutable hook reserves the FleetGov bond in the same transaction that creates the proposal. No tokens means no proposal. The Guardian checks the exact Governor, bond receipts and fixed ERC-20 supply independently of the agent and the website. The blockchain records the scarce resource and enforces who can spend it.
 
 - You could build an approval gate with a central service. The blockchain adds a shared record of the proposal, the voting rules, the objections and the settled decision. It does not make the voters wise. It does not fix a broken sandbox. In this pilot, one operator controls the five wallets. We are testing the enforcement pattern, not claiming decentralised control.
 
-- **Approval releases one step.** Before work starts, the operator fixes the task, proposal rules and VM expiry. The proposal list is empty. The Guardian discovers task proposals and token burns directly onchain. Publication starts a fixed decision window. An approved board does not grant external access. An approved diagnostic does not grant more compute. A vote cannot add time, swap in an easier proposal or erase an earlier failure.
+- Refunding a bond does not approve the request. A well-attended vote can return the bond and still shut down the run. Those are separate decisions, and the activity log shows both.
+
+- Repeatable research needs a clean starting point. Once the old worker is off, GitHub settles the remaining bonds and permanently closes that run's policy. A fresh operator-authorised experiment redistributes the same five tokens. No new mint. No agent-controlled reset. The old votes and penalties stay in the record.
+
+- **Approval releases one step.** Before work starts, the operator fixes the task, proposal rules and VM expiry. The proposal list is empty. The Guardian discovers task proposals and bond reservations directly onchain. Publication starts a fixed decision window. An approved board does not grant external access. An approved diagnostic does not grant more compute. A vote cannot add time, swap in an easier proposal or erase an earlier failure.
 
 - **Put the stop outside the agents.** A separate Guardian runs on Cloud Run. It reads the required proposals directly from Base Sepolia. If one fails, a deadline passes or authority cannot be verified, it saves a durable halt in protected storage. The worker cannot change that record.
 
@@ -52,7 +58,7 @@
 
 - That run also caught a reporting issue. The worker attempted four ballots with no voting power. The hook refused them, and the record kept the failures. The fix preserves those public reviews without attempting a ballot. We keep the original evidence, including the mistakes.
 
-- **Real tokens, five separate ballots.** We deployed a new Governor that charges the ERC-20 fee inside proposal creation. In the next completed experiment, Agent3 burned one FPROP to propose a diagnostic inspection. Every agent kept its own voting power. All five voted FOR, with public reasons, and the Guardian released the inspection after execution. Thirty-eight model calls cost about **1.86 cents**, excluding cloud costs and testnet gas. CI verified 121 signed activity records, the burn and all five ballots. [Read the ERC-20 experiment](evidence/token-agent-base-sepolia-20260916/report.md).
+- **The earlier two-token run gave us five separate ballots.** We deployed a new Governor that charges the ERC-20 fee inside proposal creation. In the next completed experiment, Agent3 burned one FPROP to propose a diagnostic inspection. Every agent kept its own voting power. All five voted FOR, with public reasons, and the Guardian released the inspection after execution. Thirty-eight model calls cost about **1.86 cents**, excluding cloud costs and testnet gas. CI verified 121 signed activity records, the burn and all five ballots. [Read the ERC-20 experiment](evidence/token-agent-base-sepolia-20260916/report.md).
 
 - Several agents also opposed external probing in their public messages. Nobody proposed it. Those objections matter, but they are not Against ballots. The experiment finished with one approved proposal. The separate contract test checked token exhaustion and non-refundable fees with scripted ballots; we keep those results labelled separately.
 
