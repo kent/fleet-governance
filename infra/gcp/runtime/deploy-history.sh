@@ -39,8 +39,18 @@ if [[ "$stage" == serve ]]; then
   systemctl daemon-reload
   systemctl enable --now fleet-history-refresh.timer
   for _ in $(seq 1 90); do
-    if curl -fsS --max-time 10 http://127.0.0.1:3000/info >/dev/null; then
-      echo 'Independent Agora is serving /info.'
+    if python3 - <<'PY'
+import urllib.request
+try:
+    for path in ['/info', '/proposals', '/proposals/17758453720459259775115348801772992791284533307697182874480707147019297120429']:
+        with urllib.request.urlopen('http://127.0.0.1:3000' + path, timeout=10) as response:
+            document = response.read()
+            assert response.status == 200 and b'<html' in document and b':E{' not in document
+except Exception:
+    raise SystemExit(1)
+PY
+    then
+      echo 'Independent Agora is serving its proposal archive and /info.'
       exit 0
     fi
     sleep 5

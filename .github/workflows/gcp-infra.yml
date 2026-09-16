@@ -80,6 +80,7 @@ jobs:
           gcloud compute instances list --filter='name=(fleet-research fleet-readside)' --format='table(name,status)'
           gcloud compute scp infra/gcp/runtime/inspect-vm.py fleet-readside:~/fleet-history-inspect.py --zone=us-central1-a --tunnel-through-iap --quiet
           gcloud compute ssh fleet-readside --zone=us-central1-a --tunnel-through-iap --quiet --command='sudo python3 "$HOME/fleet-history-inspect.py"'
+          python3 -B infra/gcp/verify-public-site.py
       - name: Prepare and fund five testnet agent wallets
         if: inputs.action == 'prepare-wallets'
         env:

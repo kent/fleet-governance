@@ -61,6 +61,9 @@ print(redact(command(['docker', 'image', 'ls', '--format', '{{.Repository}}\t{{.
 # Command names only: process arguments may contain credentials.
 print(command(['ps', '-eo', 'pid,etimes,comm']))
 print(redact(command(['journalctl', '-u', 'google-startup-scripts.service', '--no-pager', '-n', '30'])))
+if Path('/etc/systemd/system/fleet-history-refresh.timer').exists():
+    print(redact(command(['systemctl', 'list-timers', 'fleet-history-refresh.timer', '--no-pager'])))
+    print(redact(command(['journalctl', '-u', 'fleet-history-refresh.service', '--no-pager', '-n', '20'])))
 for port, path in [(3100, '/'), (3000, '/info'), (3000, '/proposals'), (8000, '/v1/progress'), (8001, '/health'), (8010, '/health')]:
     try:
         with urllib.request.urlopen(f'http://127.0.0.1:{port}{path}', timeout=15) as response:
