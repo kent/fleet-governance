@@ -25,7 +25,7 @@ export function publicProxyPath(pathname: string): boolean {
 export function publicSnapshot(value: unknown): unknown {
   // Evidence is intentionally public. Operator attribution and credentials are not.
   return JSON.parse(JSON.stringify(value, (key, entry: unknown) => {
-    if (/^(requestedBy|email|privateKey|privateKeys|secret|secrets|apiKey|accessToken|token|tokenHash|authorization|rpcUrl|rpcHttp|rpcWs)$/i.test(key)) return undefined;
+    if (/^(requestedBy|email|privateKey|privateKeys|secret|secrets|apiKey|accessToken|tokenHash|authorization|rpcUrl|rpcHttp|rpcWs)$/i.test(key)) return undefined;
     if (typeof entry !== "string") return entry;
     return entry.replace(/sk-or-v1-[a-zA-Z0-9_-]+|alch_[a-zA-Z0-9_-]+|fleet_mcp_[a-zA-Z0-9_-]+|Bearer\s+\S+/g, "[redacted]")
       .replace(/https?:\/\/[^\s"<>]*(?:alchemy\.com|alchemyapi\.io)\/[^\s"<>]*/gi, "[private RPC]");

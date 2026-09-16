@@ -5,7 +5,7 @@ revision=${2:?revision required}
 [[ "$image" =~ ^us-central1-docker\.pkg\.dev/fleet-governance/fleet/runner@sha256:[a-f0-9]{64}$ ]]
 [[ "$revision" =~ ^[a-f0-9]{40}$ ]]
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-# Preserve the installed governance image pins and all secret version selections.
+# Preserve the installed governance image pins and the selected OpenRouter secret version.
 # This is an agent-runtime update, not a governance/database deployment.
 python3 - "$script_dir/worker-config.json" "$revision" <<'PY'
 import json, sys

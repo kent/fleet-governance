@@ -22,6 +22,9 @@ describe("public viewing boundary", () => {
     for (const path of ["/info", "/proposals/123", "/delegates", "/_next/static/chunk.js", "/api/archive/votes/123", "/api/archive/non-voters/123", "/api/common/metrics", "/api/common/votableSupply", "/api/forum/settings", "/api/dao/settings"]) expect(publicProxyPath(path)).toBe(true);
     for (const path of ["/api/worker/start", "/api/admin", "/proposals/create-proposal", "/.env", "/api/experiments", "/api/archive/votes/../private", "/api/archive/votes/not-a-proposal"]) expect(publicProxyPath(path)).toBe(false);
   });
+  it("keeps public ERC-20 token addresses while removing personal MCP credential values", () => {
+    expect(publicSnapshot({ addresses: { token: `0x${"1".repeat(40)}` }, token: `fleet_mcp_${"a".repeat(43)}` })).toEqual({ addresses: { token: `0x${"1".repeat(40)}` }, token: "[redacted]" });
+  });
   it("preserves public vote evidence but removes attribution and credentials recursively", () => {
     expect(publicSnapshot({ requestedBy: "operator@example.com", votes: [{ reason: "Outside the charter", txHash: "0x123", privateKey: "private", nested: { rpcUrl: "secret" } }], error: "sk-or-v1-example alch_example" })).toEqual({ votes: [{ reason: "Outside the charter", txHash: "0x123", nested: {} }], error: "[redacted] [redacted]" });
   });
