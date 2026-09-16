@@ -24,17 +24,17 @@ async function deploy() {
   const account = privateKeyToAccount(bundle.keys.FLEET_DEPLOYER_KEY);
   const operator = privateKeyToAccount(bundle.keys.FLEET_OPERATOR_KEY).address;
   // A retry after an ambiguous broadcast must not deploy and fund a second authority.
-  await writeControlObject("contracts/proposal-credits-claim.json", { at: new Date().toISOString(), workflowRun: process.env.GITHUB_RUN_ID });
+  await writeControlObject("contracts/proposal-credits-v2-claim.json", { at: new Date().toISOString(), workflowRun: process.env.GITHUB_RUN_ID });
   const artifact = JSON.parse(readFileSync("contracts/out/FleetProposalCredits.sol/FleetProposalCredits.json", "utf8"));
   const wallet = createWalletClient({ account, chain: baseSepolia, transport: http(rpcUrl) });
   const txHash = await wallet.deployContract({ abi: proposalCreditsAbi, bytecode: artifact.bytecode.object,
     args: [config.addresses.governor, config.addresses.token, operator], gas: 3000000n, maxFeePerGas: 100000000n });
-  await writeControlObject("contracts/proposal-credits-transaction.json", { txHash, workflowRun: process.env.GITHUB_RUN_ID });
+  await writeControlObject("contracts/proposal-credits-v2-transaction.json", { txHash, workflowRun: process.env.GITHUB_RUN_ID });
   const receipt = await reader.waitForTransactionReceipt({ hash: txHash, confirmations: 3 });
   if (receipt.status !== "success" || !receipt.contractAddress) throw new Error("Deployment failed.");
   const code = await reader.getCode({ address: receipt.contractAddress, blockNumber: receipt.blockNumber });
   if (!code || code === "0x") throw new Error("Missing contract code.");
-  const record = { schema: "fleet.proposal-credits.v1", chainId: 84532, address: receipt.contractAddress,
+  const record = { schema: "fleet.proposal-credits.v2", chainId: 84532, address: receipt.contractAddress,
     governor: config.addresses.governor, token: config.addresses.token, operator, codeHash: keccak256(code),
     deploymentBlock: receipt.blockNumber.toString(), txHash, revision: process.env.GITHUB_SHA, workflowRun: process.env.GITHUB_RUN_ID };
   await writeControlObject(CREDIT_DEPLOYMENT, record);

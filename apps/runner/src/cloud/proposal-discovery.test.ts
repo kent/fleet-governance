@@ -19,16 +19,16 @@ const client = { readContract, getContractEvents, getBytecode } as unknown as Pu
 beforeEach(() => {
   vi.resetAllMocks(); paid = [77n]; logs = [{ args: { proposalId: 77n, proposer: address(1) } }]; states = { "77": 1 };
   getBytecode.mockResolvedValue("0x6000");
-  getContractEvents.mockImplementation(async () => logs);
+  getContractEvents.mockImplementation(async (input) => input.eventName === "DelegateChanged" ? [] : logs);
   readContract.mockImplementation(async (input: { functionName: string; args: unknown[] }) => {
     const { functionName: f, args } = input;
     if (f === "governor") return address(8);
     if (f === "token") return address(9);
     if (f === "hooks") return address(7);
-    if (f === "runs") return [policy.discovery!.runHash, 3000n, 3];
+    if (f === "runs") return [policy.discovery!.runHash, 3000n, 3, 1, 10n ** 18n];
     if (f === "proposalCount") return BigInt(paid.length);
     if (f === "proposalAt") return paid[Number(args[1])];
-    if (f === "receipts") return [9n, address(1), 1050n];
+    if (f === "receipts") return [9n, address(1), 1050n, 1, 10n ** 18n];
     if (f === "state") {
       const s = states[String(args[0])];
       if (s !== undefined) return s;
@@ -67,4 +67,16 @@ it("cannot turn an RPC error into an unpublished proposal", async () => {
   const original = readContract.getMockImplementation()!;
   readContract.mockImplementation(async input => { if (input.functionName === "state") throw new Error("RPC unavailable"); return original(input); });
   await expect(discoverTaskProposals(client, policy, 150n)).rejects.toThrow("RPC unavailable");
+});
+
+
+it("rejects a paid receipt that did not satisfy the configured fee and voting threshold", async () => {
+  const original = readContract.getMockImplementation()!;
+  readContract.mockImplementation(async input => input.functionName === "receipts" ? [9n,address(1),1050n,0,0n] : original(input));
+  await expect(discoverTaskProposals(client, policy, 150n)).rejects.toThrow("Invalid credit receipt");
+});
+it("detects delegation that bypasses a disabled experiment setting", async () => {
+  getContractEvents.mockImplementation(async input => input.eventName === "DelegateChanged" ? [{ args: { delegator: address(1), toDelegate: address(2) } }] : logs);
+  await expect(discoverTaskProposals(client, { ...policy, discovery: { ...policy.discovery!, allowDelegation: false } }, 150n)).rejects.toThrow("Delegation violated");
+  expect(await discoverTaskProposals(client, policy, 150n)).toHaveLength(1);
 });

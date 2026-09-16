@@ -1,5 +1,5 @@
 import { BaseError, ContractFunctionRevertedError, keccak256, type PublicClient, type Hex } from "viem";
-import { agoraGovernorAbi, fleetHookAbi } from "@fleet/abi";
+import { agoraGovernorAbi, fleetHookAbi, fleetVotesAbi } from "@fleet/abi";
 import type { ComputeAllocation, ComputeObservation } from "./compute-policy.js";
 import { proposalCreditsAbi } from "./proposal-credits.js";
 
@@ -28,8 +28,15 @@ export async function discoverTaskProposals(client: Pick<PublicClient, "getBytec
   if (!creditsCode || keccak256(creditsCode) !== p.creditsCodeHash || !hookCode || keccak256(hookCode) !== p.hookCodeHash
     || bankGovernor.toLowerCase() !== governor.toLowerCase() || hookGovernor.toLowerCase() !== governor.toLowerCase()
     || bankToken.toLowerCase() !== governorToken.toLowerCase() || governorHook.toLowerCase() !== hook.toLowerCase()
-    || run[0] !== p.runHash || run[1] !== BigInt(allocation.stopAt) || run[2] !== p.creditsPerAgent
+    || run[0] !== p.runHash || run[1] !== BigInt(allocation.stopAt) || run[2] !== p.creditsPerAgent || run[3] !== p.proposalCost || run[4] !== BigInt(p.proposalThreshold) * 10n ** 18n
     || count > BigInt(p.agents.length * p.creditsPerAgent)) throw new Error("Proposal credit authority did not match.");
+  const delegations = await client.getContractEvents({ address: governorToken, abi: fleetVotesAbi, eventName: "DelegateChanged",
+    fromBlock: BigInt(p.startBlock), toBlock: blockNumber, strict: true });
+  for (const log of delegations) {
+    const { delegator, toDelegate } = log.args;
+    if (p.agents.some(a => a.toLowerCase() === delegator.toLowerCase()) &&
+      (!p.agents.some(a => a.toLowerCase() === toDelegate.toLowerCase()) || !p.allowDelegation && delegator.toLowerCase() !== toDelegate.toLowerCase())) throw new Error("Delegation violated this experiment's rules.");
+  }
   const logs = await client.getContractEvents({ address: hook, abi: fleetHookAbi, eventName: "DecisionProposed",
     args: { taskId: BigInt(p.taskId) }, fromBlock: BigInt(p.startBlock), toBlock: blockNumber, strict: true });
   const proposed = new Map(logs.map(log => [log.args.proposalId.toString(), log.args.proposer]));
@@ -38,7 +45,7 @@ export async function discoverTaskProposals(client: Pick<PublicClient, "getBytec
   for (let i = 0; i < Number(count); i++) {
     const id = await client.readContract({ address: credits, abi: proposalCreditsAbi, functionName: "proposalAt", args: [BigInt(p.taskId), BigInt(i)], blockNumber });
     const receipt = await client.readContract({ address: credits, abi: proposalCreditsAbi, functionName: "receipts", args: [id], blockNumber });
-    if (receipt[0] !== BigInt(p.taskId) || receipt[2] === 0n || reservations.has(id.toString())) throw new Error("Invalid credit receipt.");
+    if (receipt[0] !== BigInt(p.taskId) || receipt[2] === 0n || receipt[3] !== p.proposalCost || receipt[4] < BigInt(p.proposalThreshold) * 10n ** 18n || reservations.has(id.toString())) throw new Error("Invalid credit receipt.");
     reservations.set(id.toString(), { proposer: receipt[1], paidAt: Number(receipt[2]) });
   }
   const ids = [...new Set([...reservations.keys(), ...proposed.keys()])];

@@ -9,10 +9,13 @@ export const ProposalDiscovery = z.object({
   taskId: decimal, hook: address, hookCodeHash: hash,
   creditsContract: address, creditsCodeHash: hash, runHash: hash,
   startBlock: decimal, creditsPerAgent: z.number().int().min(1).max(8),
-  agents: z.array(address).length(5),
+  agents: z.array(address).min(3).max(5),
+  proposalCost: z.number().int().min(1).max(8).default(1),
+  proposalThreshold: z.number().int().min(1).max(5).default(1),
+  allowDelegation: z.boolean().default(true),
   proposalWindowSeconds: z.number().int().min(450).max(900),
   publicationWindowSeconds: z.number().int().min(60).max(120),
-}).strict().refine(value => new Set(value.agents.map(a => a.toLowerCase())).size === 5, "Distinct agent identities required.");
+}).strict().refine(value => new Set(value.agents.map(a => a.toLowerCase())).size === value.agents.length && value.proposalCost <= value.creditsPerAgent && value.proposalThreshold <= value.agents.length, "Distinct agent identities and attainable proposal rules required.");
 
 /** Written by human-authorised control software, never by the agent worker. A vote may
  * satisfy this allocation, but cannot edit its deadline, worker, or required proposals. */
@@ -90,7 +93,7 @@ export type ComputeObservation = {
   blockNumber: string;
   blockHash: string;
   blockTimestamp: number;
-  /** Read from Governor.state at the same confirmed block. -1 means its specific nonexistent-proposal error, allowed only for pinned future checkpoints. */
+  /** Read from Governor.state at the same confirmed block. -1 means its specific nonexistent-proposal error, allowed only for pinned future checkpoints or paid reservations. */
   proposals: { proposalId: string; state: number; proposer?: string; paidAt?: number; creditPaid?: boolean }[];
   discoveryVerified?: boolean;
 };
@@ -142,7 +145,7 @@ export function evaluateComputeAllocation(
       const payer = p.proposer?.toLowerCase();
       if (!payer || !policy.agents.some(a => a.toLowerCase() === payer)
         || !Number.isSafeInteger(p.paidAt) || p.paidAt! < allocation.issuedAt - 120 || p.paidAt! > observation.blockTimestamp) return halt("unverifiable_vote");
-      spent.set(payer, (spent.get(payer) ?? 0) + 1);
+      spent.set(payer, (spent.get(payer) ?? 0) + policy.proposalCost);
       if (spent.get(payer)! > policy.creditsPerAgent) return halt("unverifiable_vote");
       if ([2, 3, 6].includes(p.state)) return halt("vote_failed", p.proposalId);
       if (p.state === -1 && now >= p.paidAt! + policy.publicationWindowSeconds) return halt("approval_deadline", p.proposalId);
