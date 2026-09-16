@@ -33,6 +33,11 @@ if [[ "$stage" == serve ]]; then
   [[ "$ready" == true ]] || { echo 'Goldsky historical ballots have not arrived.' >&2; exit 1; }
   docker compose -f "$release/infra/gcp/docker-compose.yml" -f "$release/infra/gcp/history-compose.yml" \
     --project-directory "$release/infra" up -d --force-recreate dao-node blockcache-shim cpls agora-next
+  install -d /usr/local/lib/fleet
+  install -m 700 "$script_dir/reconcile-history.py" /usr/local/lib/fleet/reconcile-history.py
+  install -m 644 "$script_dir/fleet-history-refresh.service" "$script_dir/fleet-history-refresh.timer" /etc/systemd/system/
+  systemctl daemon-reload
+  systemctl enable --now fleet-history-refresh.timer
   for _ in $(seq 1 90); do
     if curl -fsS --max-time 10 http://127.0.0.1:3000/info >/dev/null; then
       echo 'Independent Agora is serving /info.'

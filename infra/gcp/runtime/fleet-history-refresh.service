@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh Fleet governance history independently of agents
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/lib/fleet/reconcile-history.py
+TimeoutStartSec=180

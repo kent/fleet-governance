@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh Fleet governance history after new pipeline events
+
+[Timer]
+OnBootSec=30
+OnUnitInactiveSec=15
+Unit=fleet-history-refresh.service
+
+[Install]
+WantedBy=timers.target

@@ -120,6 +120,9 @@ async def ingest(request: Request):
                             await conn.execute('DELETE FROM fleet.votes WHERE transaction_hash=$1 AND contract=$2', removed, GOVERNOR)
                             reorgs += 1
                         continue
+                    previous_hash = await conn.fetchval('SELECT block_hash FROM fleet.raw_logs WHERE id=$1', key)
+                    if previous_hash and previous_hash != log['blockHash']:
+                        reorgs += 1
                     await conn.execute('''INSERT INTO fleet.raw_logs VALUES ($1,$2,$3,$4,$5,$6::jsonb)
                         ON CONFLICT (id) DO UPDATE SET block_number=EXCLUDED.block_number,
                         block_hash=EXCLUDED.block_hash,payload=EXCLUDED.payload''',
