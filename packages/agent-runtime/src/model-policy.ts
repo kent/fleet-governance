@@ -1,4 +1,5 @@
 import { ModelVoteV1 } from "@fleet/schemas";
+import { renderVoteReason } from "@fleet/sdk";
 import type { VoteV1 } from "@fleet/schemas";
 import type { AnchoredProposal, DecisionPolicy, PolicyMeta, PolicyOutput } from "./policy.js";
 import { buildEvaluateProposalPrompt } from "./providers/prompts.js";
@@ -17,6 +18,21 @@ export type ModelPolicyOpts = {
   maxTokens?: number;
   timeoutMs?: number;
 };
+
+function assembleVote(model: ModelVoteV1, proposalId: string): VoteV1 {
+  const { confidenceBps, ...fields } = model;
+  return { schema: "fleet.vote.v1", proposalId, ...fields,
+    ...(confidenceBps === null || confidenceBps === undefined ? {} : { confidenceBps }) };
+}
+
+// Validate the exact signed text before accepting a model response. An oversized
+// explanation gets the same one model-authored repair as other malformed output.
+const SignableModelVote = ModelVoteV1.superRefine((model, context) => {
+  try { renderVoteReason(assembleVote(model, "0")); }
+  catch {
+    context.addIssue({ code: "custom", message: "The combined onchain rationale, risk flags and confidence must fit 1024 UTF-8 bytes. Shorten the explanation and flags while preserving your decision and its meaning." });
+  }
+});
 
 function metaFrom(
   provider: Provider,
@@ -70,7 +86,7 @@ export class ModelPolicy implements DecisionPolicy {
     const result = (await withOneRepair(this.provider, {
       system: prompt.system,
       user: prompt.user,
-      schema: ModelVoteV1,
+      schema: SignableModelVote,
       maxTokens: this.maxTokens,
       timeoutMs: this.timeoutMs,
     })) as CompleteResult<ModelVoteV1>;
@@ -86,18 +102,7 @@ export class ModelPolicy implements DecisionPolicy {
       return { kind: "absent", why: `${result.error}: ${result.raw}`, meta };
     }
 
-    const model = result.value;
-    const vote: VoteV1 = {
-      schema: "fleet.vote.v1",
-      proposalId: input.proposal.proposalId.toString(),
-      support: model.support,
-      rationale: model.rationale,
-      assumptions: model.assumptions,
-      riskFlags: model.riskFlags,
-      // `null` is how a strict structured-output mode spells "unset"; `VoteV1.confidenceBps` is
-      // optional and not nullable, so a null is dropped rather than carried through.
-      ...(model.confidenceBps === null || model.confidenceBps === undefined ? {} : { confidenceBps: model.confidenceBps }),
-    };
+    const vote = assembleVote(result.value, input.proposal.proposalId.toString());
 
     return { kind: "vote", vote, meta };
   }

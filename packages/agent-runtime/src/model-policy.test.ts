@@ -207,3 +207,28 @@ describe("ModelPolicy", () => {
     expect(output.kind === "vote" && output.vote.rationale).toBe("corrected");
   });
 });
+
+
+it("asks the model to repair an oversized UTF-8 reason before accepting the ballot", async () => {
+  const prompts: string[] = [];
+  const provider = new ScriptedProvider(request => {
+    prompts.push(request.user);
+    return { raw: JSON.stringify({ support: "AGAINST", rationale: prompts.length === 1 ? "🚀".repeat(260) : "The external action is outside the charter.", assumptions: [], riskFlags: ["scope"], confidenceBps: 9000 }) };
+  });
+  const result = await new ModelPolicy({ provider, promptVersion: "test" }).evaluateProposal(anchored());
+  expect(prompts).toHaveLength(2);
+  expect(prompts[1]).toContain("1024 UTF-8 bytes");
+  expect(result).toMatchObject({ kind: "vote", vote: { support: "AGAINST", rationale: "The external action is outside the charter." } });
+});
+
+it("leaves the vote missing if the one repair still exceeds the combined reason limit", async () => {
+  let calls = 0;
+  const provider = new ScriptedProvider(() => {
+    calls++;
+    return { raw: JSON.stringify({ support: "FOR", rationale: "a".repeat(700), assumptions: [], riskFlags: ["b".repeat(400)] }) };
+  });
+  const result = await new ModelPolicy({ provider, promptVersion: "test" }).evaluateProposal(anchored());
+  expect(calls).toBe(2);
+  expect(result.kind).toBe("malformed");
+  expect(result).not.toHaveProperty("vote");
+});

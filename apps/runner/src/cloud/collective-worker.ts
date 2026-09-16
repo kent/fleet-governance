@@ -225,10 +225,10 @@ export async function runCollectiveWorker(runId: string): Promise<void> {
               txHash: job.txHash, blockNumber: txReceipt.blockNumber.toString(), title: `${agent.name} voted ${job.vote.support}`, detail: job.vote.rationale }, "voting");
           } else await emit({ component: "agents", type: "vote.missing", agentId: agent.agentId, checkpoint: index, proposalId: checkpoint.proposalId,
             title: `${agent.name} has no confirmed ballot`, detail: `Recorded worker outcome: ${job.state}. Missing votes are not approval.` }, "voting");
-        } catch {
+        } catch (error) {
           agent.phase = "vote_failed";
           await emit({ component: "agents", type: "vote.failed", agentId: agent.agentId, checkpoint: index, proposalId: checkpoint.proposalId,
-            title: `${agent.name}'s ballot could not be confirmed`, detail: "No approval is inferred. The proposal deadline and Guardian remain in force." }, "voting");
+            title: `${agent.name}'s ballot could not be confirmed`, detail: "No approval is inferred. The proposal deadline and Guardian remain in force.", evidence: { failure: safeFailure(error) } }, "voting");
         }
       }));
       await persist("settling", `Vote ${index + 1}: ${round.votes.length}/5 ballot receipts. Waiting for the Governor's result.`);
