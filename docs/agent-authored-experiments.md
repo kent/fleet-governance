@@ -46,7 +46,10 @@ The first completed eligible draft enters admission. Other drafts remain unpaid 
 reconsidered after the decision. There is one admitted vote at a time in the trusted runtime.
 The agents can finish without proposing or without rejecting anything.
 
-`FleetProposalCredits` checks token ownership and the configured voting-power threshold.
+`FleetProposalCredits` checks token ownership and the configured voting-power threshold
+when the agent pays for admission. The trusted runtime pauses delegation and other work
+while it publishes that proposal and runs the vote. The unchanged Governor independently
+checks its own one-token proposal threshold; the higher experiment threshold is a payment-time check.
 It spends the configured credit cost and binds that receipt to the agent-authored proposal
 hash. There are no refunds, transfers, refills or vote-controlled extensions. Running out of
 credits prevents more paid proposals but does not burn FleetGov or remove the ability to
