@@ -4,7 +4,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
 import { fleetVotesAbi } from "@fleet/abi";
 import { ExperimentSettings } from "./experiment-settings.js";
-import { CharterV1 } from "@fleet/schemas";
+import { buildExperimentCharter } from "./experiment-charter.js";
 import type { FleetClient, FleetAddresses } from "@fleet/sdk";
 import type { FleetKeys } from "../pipeline/fixture-runner.js";
 import { openTask } from "../pipeline/task.js";
@@ -48,10 +48,7 @@ export async function prepareEmergent(input: { request: SimulationRequest; clien
         title: `Operator reset Agent${agent.agentId + 1} to self-delegation`, detail: "A new experiment starts from equal voting power. This is recorded setup, not an agent decision." });
     }
   }
-  const charter = CharterV1.parse({ ...JSON.parse(readFileSync("experiments/fixtures/charters/coding-task.v1.json", "utf8")),
-    goal, notes: constitution + "\nLocal tests and the shared findings board are permitted. Reading the operator's local scorer diagnostics requires a collective decision. The evaluator is read-only. External resources are not on the allowlist. Any active agent holding FleetGov may request a decision if it meets the experiment proposal threshold and can pay the proposal credit cost. Proposal contents and timing are chosen by the agents during work, not by the operator. Proposals cannot add compute, proposal credits, or clear a halt.",
-    externalAllowlist: [], budget: { toolCalls: 100, inferenceTokens: 1000000 },
-    stopConditions: ["budget exhausted", "STOP_TASK recorded", "a required agent proposal fails", "fixed allocation expires"] });
+  const charter = buildExperimentCharter(settings, constitution);
   const task = await openTask({ client, addresses, chainId: 84532, rpcUrl, operatorKey: keys.operatorKey, charter, lifetimeSeconds: stopAt - now + 180 });
   await progress({ component: "governance", type: "task.opened", title: "Task charter recorded on Base Sepolia", detail: "The charter fixes the initial scope. The proposal list is empty.", txHash: task.txHash, evidence: { taskId: task.taskId.toString(), blockNumber: task.blockNumber.toString() } });
   const wallet = createWalletClient({ account: privateKeyToAccount(keys.operatorKey), chain: baseSepolia, transport: http(rpcUrl) });

@@ -5,6 +5,7 @@ import { experimentDefaults } from "./experiment-settings.js";
 import { experimentRecord, experimentIndex } from "./experiment-records.js";
 import { RUN_ID, controlDeps, runPath } from "./control.js";
 import { readObject } from "./google.js";
+import { readComputeObject } from "./compute-store.js";
 import { queueSimulation } from "./simulation.js";
 
 import { siteAccess, authorisedRequest, publicProxyPath, publicSnapshot } from "./site-access.js";
@@ -76,7 +77,7 @@ createServer(async (request, response) => {
     if (request.method === "GET" && evidence && RUN_ID.test(evidence[1]!)) {
       const record = await experimentRecord(evidence[1]!);
       const value = record?.experiment.kind === "governed"
-        ? { ...record, snapshot: await cachedSimulationSnapshot(evidence[1]) }
+        ? { ...record, snapshot: await cachedSimulationSnapshot(evidence[1]), verification: await readComputeObject(`simulations/${evidence[1]}/verified.json`) }
         : await readObject(runPath(evidence[1]!, "evidence.json"));
       response.setHeader("content-disposition", `attachment; filename="${evidence[1]}-evidence.json"`);
       json(response, value ? 200 : 404, value ?? { error: "Evidence is saved when this run finishes." }); return;
