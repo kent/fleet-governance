@@ -85,6 +85,14 @@ also passed. Its [Agora results](shutdown-agora-browser-evidence.json) and
 [experiment-page results](shutdown-experiment-browser-evidence.json) preserve the visible
 votes and public history. Governance runs on separate compute.
 
+The [retirement workflow](https://github.com/kent/fleet-governance/actions/runs/35144109746)
+released only this halted allocation and restored the Guardian. The
+[following batch update](https://github.com/kent/fleet-governance/actions/runs/35144464173)
+cleared the completed request without launching another run. The
+[post-retirement public check](post-retirement-public.json) confirms that the worker remains
+off, the archived run retains all 121 signed records, and the experiment, proposal, `/info`
+and new-experiment pages load without a viewing login. A fresh experiment can now be created.
+
 ## The democratic tradeoff
 
 Every submitted proposal costs tokens, whether it passes, fails or is cancelled. A failed

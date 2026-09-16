@@ -1,0 +1,51 @@
+{
+  "observedAt": "2026-09-16T20:07:03.928904+00:00",
+  "runId": "run-bceb26c5-b769-47dd-aca1-cd6e7c7b3e80",
+  "workerAvailable": true,
+  "currentVm": {
+    "id": "8012185073355132559",
+    "status": "TERMINATED",
+    "machineType": "e2-standard-8"
+  },
+  "archivedRun": {
+    "isCurrentRun": false,
+    "phase": "completed",
+    "guardianPhase": "halted",
+    "guardianReason": "allocation_expired",
+    "vm": {
+      "status": "TERMINATED"
+    },
+    "signedActivityRecords": 121,
+    "proposals": 1
+  },
+  "pages": [
+    {
+      "path": "/experiments/run-bceb26c5-b769-47dd-aca1-cd6e7c7b3e80",
+      "status": 200,
+      "seconds": 0.237,
+      "html": true,
+      "loginRedirect": false
+    },
+    {
+      "path": "/proposals/78743921121441527380328444167356700182120936887588592338316719776215708983416",
+      "status": 200,
+      "seconds": 0.549,
+      "html": true,
+      "loginRedirect": false
+    },
+    {
+      "path": "/info",
+      "status": 200,
+      "seconds": 0.227,
+      "html": true,
+      "loginRedirect": false
+    },
+    {
+      "path": "/experiments/new",
+      "status": 200,
+      "seconds": 0.126,
+      "html": true,
+      "loginRedirect": false
+    }
+  ]
+}
