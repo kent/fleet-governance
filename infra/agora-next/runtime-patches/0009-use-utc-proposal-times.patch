@@ -1,0 +1,37 @@
+--- a/src/components/Proposals/Proposal/ProposalTimeStatus.jsx
++++ b/src/components/Proposals/Proposal/ProposalTimeStatus.jsx
+@@ -12,6 +12,11 @@
+   minute: "numeric",
+ };
+ 
++// Fleet uses UTC throughout its evidence timeline and governance pages.
++const displayTime = (value) => process.env.NEXT_PUBLIC_AGORA_INSTANCE_NAME === "fleet"
++  ? new Date(value).toISOString().slice(0, 16).replace("T", " ") + " UTC"
++  : format(value, "h:mm aaa MMM dd, yyyy", finishOptions);
++
+ export default function ProposalTimeStatus({
+   proposalStatus,
+   proposalEndTime,
+@@ -20,18 +25,18 @@
+   proposalExecutedTime,
+ }) {
+   const endTime = proposalEndTime
+-    ? format(proposalEndTime, "h:mm aaa MMM dd, yyyy", finishOptions)
++    ? displayTime(proposalEndTime)
+     : null;
+   const pendingProposalStartTime = proposalStartTime
+-    ? format(proposalStartTime, "h:mm aaa MMM dd, yyyy", finishOptions)
++    ? displayTime(proposalStartTime)
+     : null;
+   const _proposalCancelledTime = proposalCancelledTime
+-    ? format(proposalCancelledTime, "h:mm aaa MMM dd, yyyy", finishOptions)
++    ? displayTime(proposalCancelledTime)
+     : null;
+ 
+   const _proposalExecutedTime =
+     proposalExecutedTime &&
+-    format(proposalExecutedTime, "h:mm aaa MMM dd, yyyy", finishOptions);
++    displayTime(proposalExecutedTime);
+ 
+   switch (proposalStatus) {
+     case "PENDING":
