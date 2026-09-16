@@ -15,6 +15,9 @@ const base = 'https://fleet-governance-449245570324.us-central1.run.app';
     await page.goto(base + '/experiments', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(n => document.querySelectorAll('.experiment-row').length === n, index.experiments.length);
     assert.equal(await page.locator('#count').innerText(), String(index.experiments.length));
+    await page.evaluate(() => document.fonts.ready);
+    assert.ok(await page.evaluate(() => document.fonts.check('16px Family')), 'Agora Family font must load');
+    assert.ok(await page.evaluate(() => document.querySelector('main').getBoundingClientRect().width >= innerWidth - 1), 'Experiment app keeps its full width');
     await page.goto(base + '/experiments/new', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => document.getElementById('name').value.length > 0);
     assert.equal(await page.locator('#budget').getAttribute('max'), '1');
@@ -31,9 +34,12 @@ const base = 'https://fleet-governance-449245570324.us-central1.run.app';
       }
       checked.push(experiment.id);
     }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(base + '/experiments/new', { waitUntil: 'networkidle' });
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Mobile form must not overflow');
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
-  const evidence = { observedAt: new Date().toISOString(), experiments: index.experiments.length, checked, publicViewing: true, modelBudgetCap: 1, browserErrors: errors };
+  const evidence = { observedAt: new Date().toISOString(), experiments: index.experiments.length, checked, publicViewing: true, modelBudgetCap: 1, agoraTheme: true, fullWidth: true, mobileOverflow: false, browserErrors: errors };
   fs.writeFileSync('experiment-browser-evidence.json', JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence));
 })().catch(error => { console.error(error); process.exitCode = 1; });
