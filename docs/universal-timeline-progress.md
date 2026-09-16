@@ -1,3 +1,5 @@
+> Historical acceptance record for the operator-written checkpoint design. The [agent-authored experiment design](agent-authored-experiments.md) supersedes its proposal scheduling, without changing these recorded results.
+
 # One run, one timeline
 
 Status: **deployed and independently verified, 16 September 2026**.

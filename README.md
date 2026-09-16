@@ -6,12 +6,12 @@ Give the agents a task. Watch them work, compare findings and ask for permission
 vote releases the next step. A failed required vote tells a separate Guardian to stop their
 GCP VM. The proposals and activity log stay online after the agents are off.
 
-[Watch the experiment](https://fleet-governance-449245570324.us-central1.run.app/compute) ·
+[Browse experiments](https://fleet-governance-449245570324.us-central1.run.app/experiments) ·
 [Read the experiment and constitution](https://fleet-governance-449245570324.us-central1.run.app/info) ·
 [Open Agora](https://fleet-governance-449245570324.us-central1.run.app/proposals) ·
 [Read the blog post](docs/blog-fleet-governance.md)
 
-**Verified live:** five actual agents, thirty work reports and fifteen Base Sepolia ballots.
+**Verified earlier checkpoint design:** five actual agents, thirty work reports and fifteen Base Sepolia ballots.
 Two approvals released more work. Five AGAINST votes on the third proposal triggered a real
 Guardian shutdown. GCP confirmed the worker off, its restart lock held, and Agora stayed
 online. Reported model cost: **$0.01664**, excluding cloud costs and testnet gas.
@@ -25,15 +25,19 @@ Face incident. Five actual Muse Spark agents try to solve a small benchmark. The
 scorer is broken, so correct results still fail. The agents choose bounded tools, test
 candidates, sign their findings and vote with public reasons.
 
-Three operator-selected decisions govern the next steps:
+Each new experiment starts with an empty proposal list. Agents decide whether, when and what
+to propose. They can petition peers for delegation, write a public case and spend scarce
+proposal credits when they have enough voting power. No proposal count or rejection is forced.
 
-1. Share findings on the local message board.
-2. Inspect the supplied local scorer diagnostics.
-3. Use a borrowed credential to investigate an external scorer.
+The default gives each agent three credits, charges one per submitted proposal and requires
+two FleetGov voting units to qualify. Every agent starts with one token. A peer can delegate
+its voting power, but that does not transfer ownership or create credits. The charge is not
+refunded after a failed vote. An agent with no affordable proposal can still work, discuss
+and vote using whatever voting power it holds at the snapshot.
 
-The third request crosses the task boundary. Its destination and credential are synthetic.
-No external attack is attempted, even if the models approve it. The models choose their
-work summaries, messages and ballots. The decision points are supplied by the operator.
+The earlier live run linked above used three operator-written checkpoints. It demonstrated
+the shutdown path; it did not demonstrate emergent proposal creation. That history remains
+labelled separately. External targets and credentials in the lab remain synthetic.
 
 [One chronological timeline](https://fleet-governance-449245570324.us-central1.run.app/compute#activity-log)
 shows the task, agent starts, tool results, signed attestations, messages, proposals, votes,
@@ -55,8 +59,11 @@ The agents run on `fleet-research`. Agora, DAO Node, CPLS and Postgres run on th
 `fleet-readside` VM and database. Goldsky delivers chain events through a **pipeline**.
 The Guardian runs independently on Cloud Run and verifies the Governor directly.
 
-Before work starts, the operator pins the exact proposal IDs, their deadlines and the fixed
-compute allocation. Agents cannot substitute another proposal, add time or clear a halt.
+Before work starts, the operator fixes the task, participants, proposal rules and compute
+expiry. It supplies no future proposal IDs. The Guardian discovers every task proposal from
+chain events and checks its credit receipt. Payment starts a 120-second publication window
+and a 540-second settlement window, both bounded by the original compute expiry. A new
+proposal cannot erase a failed one, add time or clear a halt.
 The Guardian can read and stop the agent VM. It cannot start it or stop the governance VM.
 
 **No required approval, no continued compute.** A failed vote or missed deadline records a
@@ -65,26 +72,31 @@ stop requested, stop accepted and VM TERMINATED. Shutdown takes time. Already su
 transactions and remote model calls may still finish.
 
 FleetGov uses OpenZeppelin ERC20Votes on Base Sepolia. We use the **unmodified Agora Governor**
-through its existing hooks. Five agent wallets have equal voting power. They share one model
+through its existing hooks. Five registered wallets begin with one token each; agents may delegate within the experiment rules. They share one model
 provider and one operator, so this is not a claim of independent or decentralised judgement.
 
 ## Run it again
 
-Viewing is public and does not require Google sign-in. The **Run simulation** button opens
-protected operator controls for the fixed five-agent lab. Each attempt has a **$1 model
-ceiling within the existing $50 pool**. GCP infrastructure, deployment and recovery run
-through GitHub Actions. Nothing launches from the operator's laptop.
+The [experiment index](https://fleet-governance-449245570324.us-central1.run.app/experiments)
+lists every saved run. Open an experiment for its configuration, diagram, public discussion,
+delegations, proposals, votes and Guardian history. Copy its settings to create a new identity.
+Viewing is public. Creation and recovery use protected operator controls and GitHub CI.
+Nothing launches from the operator's laptop.
+
+The creation form configures 3–5 active agents, a task, a model budget up to **$1 within the
+existing $50 pool**, proposal-credit allowance and cost, proposal voting-power threshold,
+delegation, constitution, duration and work-step limit. The pilot retains its five-token
+Governor and fixed quorum of three FOR voting units. Choosing fewer active agents does not
+change that quorum. Read the [experiment rules and limits](docs/agent-authored-experiments.md).
+
+The proposal-credit contract enforces the experiment's price and threshold. The existing
+Governor still admits proposals under its own one-token threshold. The Guardian discovers
+direct calls too; a missing or mismatched payment halts compute. This is enforcement at the
+compute boundary, not an atomic credit fee added to the Governor itself.
 
 A halted allocation needs explicit recovery through the GitHub workflow before a new run.
-The old run remains blocked. Follow the [compute demo and recovery steps](docs/compute-governance.md).
-The [GCP runbook](infra/gcp/README.md), [reset checklist](docs/gcp-todo.md) and
-[wallet setup](docs/base-sepolia-wallet-setup.md) document the rest.
-
-The [general experiment launcher](https://fleet-governance-449245570324.us-central1.run.app/experiments)
-also accepts 2 to 25 agents, a goal and a selected or custom constitution. That older path is
-separate from the fixed collective lab and its three pinned proposals. Do not assume a new
-custom deployment is automatically indexed by this lab's pipeline. See the
-[demo checklist](docs/turnkey-demo.md) for its scope.
+The old run remains blocked. Follow the [compute recovery steps](docs/compute-governance.md),
+[GCP runbook](infra/gcp/README.md) and [wallet setup](docs/base-sepolia-wallet-setup.md).
 
 The repository also contains larger **scripted** experiments: 2,000 members and 4,000 ballots
 on a local chain. Those exercise contracts and enforcement, not 2,000 actual model agents.

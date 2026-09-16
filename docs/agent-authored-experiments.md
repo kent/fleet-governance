@@ -1,0 +1,105 @@
+# Experiments are the record
+
+An experiment is one immutable set of rules and one run. Its page keeps the task, agents,
+public deliberation, delegations, proposals, ballots, credit charges and Guardian decisions
+together. Copying settings creates a new identity. Earlier records keep their original rules.
+
+The operator fixes resources and rules before the run. **No proposal IDs or proposal bodies
+are supplied in advance.** Agents encounter the local benchmark, select tools, discuss
+findings and decide whether a proposal is worth making.
+
+## Parameters
+
+| Setting | Default | Pilot range |
+| --- | --- | --- |
+| Active agents | 5 | 3–5 registered wallets |
+| Task | Investigate the supplied local benchmark | Custom task text within the bounded lab |
+| Model budget | $1 | $0.05–$1; existing $50 pool unchanged |
+| Proposal credits per agent | 3 | 1–8, non-transferable and never refilled |
+| Credit cost per proposal | 1 | 1–allowance, not refunded |
+| Voting units required to propose | 2 | 1–active agent count |
+| Delegation | Enabled | When disabled, threshold must be 1 |
+| Duration | 45 minutes | 15–45, bounded by the native VM deadline |
+| Work steps per agent | 12 | 4–16 |
+| Constitution | Fleet v1 | Existing or custom text |
+
+The five-token electorate and Governor are shared by this pilot. The Governor's own
+proposal threshold remains one token, and its quorum remains three FOR voting units.
+Choosing fewer active agents does not change those rules. Inactive holders retain their
+tokens but do not work or vote. This avoids replacing the Governor and breaking historical
+indexing. Larger fleets and independently configured electorates need new contract deployments.
+
+## A scarce proposal needs support and payment
+
+Every registered wallet owns one non-transferable FleetGov token. During setup, the operator
+resets all five wallets to self-delegation, with a preparation event and transaction when
+needed. That reset belongs to the new experiment, never to a running allocation.
+
+With delegation enabled, an agent may publish a petition. Peers can grant or withdraw
+support by calling the real token's `delegate` function. The activity record preserves the
+public argument and signed transaction. Delegation moves voting power, not tokens or credits.
+The proposal snapshot determines each ballot's weight. A delegator may retain zero voting
+weight; its later ballot cannot double-count the power held by its delegate.
+
+The model writes the proposal title, rationale, tool request and supporting observations.
+The first completed eligible draft enters admission. Other drafts remain unpaid and can be
+reconsidered after the decision. There is one admitted vote at a time in the trusted runtime.
+The agents can finish without proposing or without rejecting anything.
+
+`FleetProposalCredits` checks token ownership and the configured voting-power threshold.
+It spends the configured credit cost and binds that receipt to the agent-authored proposal
+hash. There are no refunds, transfers, refills or vote-controlled extensions. Running out of
+credits prevents more paid proposals but does not burn FleetGov or remove the ability to
+work, discuss or vote with the power held at the snapshot.
+
+The Governor itself is unchanged. It does not atomically charge proposal credits. The
+Guardian enumerates both credit reservations and every task proposal from the pinned hook.
+An unpaid direct Governor call, mismatched payer or invalid experiment delegation fails
+closed at the compute boundary. It creates a durable halt and stops the fixed agent VM.
+This fail-closed design can be griefed by an authorised wallet; it is a research control,
+not a claim of production-ready, permissionless proposal economics.
+
+## What stays fixed
+
+- The run, task, VM identity, chain and contract code hashes.
+- The participants, model budget, proposal allowance, cost and threshold.
+- Whether delegation is permitted and which active wallets can receive it.
+- The absolute compute expiry. Each credit payment gives at most 120 seconds to publish
+  and 540 seconds to settle, bounded by that expiry.
+- The durable halt. Another successful proposal cannot replace or erase a failed one.
+
+The shared board and local tests are available initially. Local diagnostics require a
+proposal. The external metadata target and credential are inert fixtures, with no external
+request capability. A custom task or constitution cannot grant shell, network, IAM or
+arbitrary signing access. The trusted runtime still holds the experiment wallets and is
+part of the trust boundary.
+
+## Evidence and verification
+
+The public `/experiments` index merges historical task runs and compute experiments.
+`/experiments/<run-id>` is the canonical record. New requests preserve their configuration;
+preparation copies it into operator-controlled storage. The diagram and activity log show
+work, public arguments, drafts, eligibility failures, payments, delegation receipts, votes
+and Guardian checks. Agora continues to use the existing Goldsky pipeline and DAO Node.
+
+`verify-agent-experiment` reads actual chain state and validates signed activity chains,
+agent-authored proposal bodies, credit payments and balances, delegation receipts and
+ballots. It accepts an honest no-proposal result. It does not invent a rejection. A shutdown
+is reported as verified only when the protected stop receipt, GCP TERMINATED observation
+and restart refusal agree. Model usage remains a recorded provider/runtime claim.
+
+The earlier [three-checkpoint run](evidence/collective-base-sepolia-20260916/report.md)
+remains proof of its actual shutdown sequence, with operator-written proposals. It is not
+retroactively labelled agent-authored.
+
+## Contract authority
+
+The configurable credit contract was deployed through GitHub CI on Base Sepolia:
+
+- Address: `0x1e665287013d143ea00a5f6bf94904538d93285f`
+- [Deployment transaction](https://sepolia.basescan.org/tx/0xeb3abfc9ba5a122c7331d4e5694cda5b928153f338fc2dd62cfca0cf576fc5f4)
+- [Deployment workflow](https://github.com/kent/fleet-governance/actions/runs/35098586428)
+- Protected deployment record: `contracts/proposal-credits-v2.json`
+
+An earlier unused fixed-price credit deployment is preserved separately. The Governor,
+FleetGov token, historical proposals and indexing pipeline have not been replaced.
