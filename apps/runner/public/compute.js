@@ -258,7 +258,8 @@ function render() {
   $("ballots").replaceChildren();
   const recordedVotes = actual ? votes : matchingEvidence ? evidence.votes || [] : [];
   $("ballot-heading").textContent = recordedVotes.length ? `${recordedVotes.length} confirmed ballots. An inspectable outcome.` : "Agent ballots. An inspectable outcome.";
-  $("model-spend").textContent = current?.inference?.budget ? `$${Number(current.inference.budget.chargedCostUsd).toFixed(6)} charged · $1 ceiling` : current?.scripted === true ? "$0 · scripted infrastructure test" : actual ? "$1 ceiling · usage pending" : "No current model run";
+  const modelCeiling = data.simulationWork?.settings?.budgetUsd ?? data.simulation?.settings?.budgetUsd ?? current?.settings?.budgetUsd ?? 1;
+  $("model-spend").textContent = current?.inference?.budget ? `$${Number(current.inference.budget.chargedCostUsd).toFixed(6)} charged · $${modelCeiling} ceiling` : current?.scripted === true ? "$0 · scripted infrastructure test" : actual ? `$${modelCeiling} ceiling · usage pending` : "No current model run";
   $("ballot-note").textContent = current?.scripted === true ? "Scripted diagnostic ballots, explicitly supplied by the operator." : data.simulationWork?.agentDriven ? "Agent-authored proposals and actual model ballots. Tallies show voting power, including delegation; agents with zero snapshot power publish reviews without casting ballots." : "Actual model decisions, signed by five registered agents. The challenge is operator-selected; the ballots are not prescribed.";
   if (!recordedVotes.length) $("ballots").append(node("p", evidence ? "Switch to Replay shutdown to inspect the five recorded ballots." : "Ballots will appear here when confirmed on Base Sepolia.", "caption"));
   for (const vote of recordedVotes) {
@@ -656,7 +657,7 @@ async function refresh() {
       if (settings) {
         $("experiment-name").textContent = settings.name;
         $("experiment-goal").textContent = settings.goal;
-        $("experiment-config").textContent = `${settings.agentCount} active agents · $${settings.budgetUsd} model ceiling · ${settings.proposalCredits} credits each · cost ${settings.proposalCost}/proposal · threshold ${settings.proposalThreshold} voting units · delegation ${settings.allowDelegation ? "on" : "off"} · ${settings.durationMinutes} minutes · ${settings.maxWorkSteps} work steps`;
+        $("experiment-config").textContent = `${settings.agentCount} active agents · $${settings.budgetUsd} model ceiling · ${settings.proposalCredits} ${data.simulationWork?.agentDriven?.proposalToken ? "FPROP" : "proposal credits"} each · cost ${settings.proposalCost}/proposal · threshold ${settings.proposalThreshold} voting units · delegation ${settings.allowDelegation ? "on" : "off"} · ${settings.durationMinutes} minutes · ${settings.maxWorkSteps} work steps`;
         $("experiment-copy").href = `/experiments/new?copy=${experimentId}`;
         $("experiment-download").href = `/api/experiments/${experimentId}/evidence`;
         $("run-controls-caption").textContent = `${settings.agentCount} active agents · $${settings.budgetUsd} model ceiling within the $50 pool. Fixed five-token electorate; three FOR voting units required. Viewing is public.`;

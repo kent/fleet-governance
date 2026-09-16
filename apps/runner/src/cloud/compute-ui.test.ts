@@ -19,6 +19,13 @@ const click = (id: string) => document.getElementById(id)!.click();
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); document.documentElement.innerHTML = ""; });
 describe("compute evidence display", () => {
+  it("shows the protected experiment's model cap and identifies its ERC-20 proposal allowance", async () => {
+    const settings = { name: "Token experiment", budgetUsd: 0.25, agentCount: 5, proposalCredits: 3, proposalCost: 1, proposalThreshold: 1, allowDelegation: true, durationMinutes: 15, maxWorkSteps: 8 };
+    await load({ allocation, simulation: { runId: "actual" }, simulationWork: { settings, agentDriven: { proposalToken: `0x${"a".repeat(40)}` } },
+      simulationStatus: { settings: { ...settings, budgetUsd: 999 }, inference: { budget: { chargedCostUsd: 0.01 } }, agents: [] }, vm: { status: "RUNNING" } });
+    expect(document.getElementById("model-spend")?.textContent).toBe("$0.010000 charged · $0.25 ceiling");
+    expect(document.getElementById("experiment-config")?.textContent).toContain("3 FPROP each");
+  });
   it("shows an expired allocation as the stop cause even when a previous proposal passed", async () => {
     await load({ allocation, state: { ...controller, reason: "allocation_expired", stoppedAt: now, observations: [{
       at: now, phase: "halted", proposals: [], checks: [
