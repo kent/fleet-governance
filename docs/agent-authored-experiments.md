@@ -101,6 +101,12 @@ verify atomic burns, rejection after exhaustion, non-refundable fees and voting 
 empty proposal balance. That test used scripted ballots. Earlier model experiments below
 retain their original Governor and credit-ledger rules.
 
+The [completed ERC-20 agent experiment](evidence/token-agent-base-sepolia-20260916/report.md)
+used five actual agents. Agent3 authored one proposal and burned one FPROP. All five agents
+cast separate FOR ballots, the Guardian confirmed execution, and work resumed. CI verified
+121 signed records, the proposal body, atomic payment and all five ballots. No agent delegated
+or proposed external access. The run cost $0.018559708 in reported model usage.
+
 The public `/experiments` index merges historical task runs and compute experiments.
 `/experiments/<run-id>` is the canonical record. New requests preserve their configuration;
 preparation copies it into operator-controlled storage. The diagram and activity log show
