@@ -43,5 +43,9 @@ try {
   console.log(JSON.stringify({ runId: work.runId, ...result.verified, shutdownVerified, guardianReason: state?.value.reason ?? null }));
 } catch (error) {
   console.error(error instanceof Error ? error.message.replace(/https?:\/\/\S+/g, "[private endpoint]") : "Experiment verification failed.");
+  // Frame locations diagnose verification failures without dumping RPC bodies.
+  if (error instanceof Error) for (const frame of (error.stack ?? "").split("\n").filter(line => /^\s+at /.test(line))) {
+    console.error(frame.replace(/https?:\/\/\S+/g, "[private endpoint]"));
+  }
   process.exitCode = 1;
 }
