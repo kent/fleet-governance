@@ -1,6 +1,7 @@
 import { createPublicClient, createWalletClient, http, keccak256, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
+import { logBoundedHttp } from "@fleet/sdk";
 import type { ComputeAllocation } from "./compute-policy.js";
 import { readComputeObject } from "./compute-store.js";
 import { writeControlObject } from "./compute-admin.js";
@@ -16,7 +17,7 @@ export async function retireExperimentBonds(allocation: ComputeAllocation) {
   const path = `simulations/${allocation.runId}/bonds.json`;
   if (await readComputeObject(path)) return;
   const rpcUrl = await readSecret("fleet-base-sepolia-rpc-url");
-  const reader = createPublicClient({ chain: baseSepolia, transport: http(rpcUrl) });
+  const reader = createPublicClient({ chain: baseSepolia, transport: logBoundedHttp(rpcUrl, BigInt(allocation.discovery.startBlock)) });
   const bundle = JSON.parse(await readSecret("fleet-base-sepolia-wallets"));
   if (bundle.schema !== "fleet.wallets.v1" || bundle.chainId !== 84532 || await reader.getChainId() !== 84532) throw new Error("Wrong bond retirement chain or wallets.");
   const wallet = createWalletClient({ account: privateKeyToAccount(bundle.keys.FLEET_OPERATOR_KEY as Hex), chain: baseSepolia, transport: http(rpcUrl) });
