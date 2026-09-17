@@ -15,12 +15,13 @@ try {
   const rpcUrl = await readSecret("fleet-base-sepolia-rpc-url");
   const client = new FleetClient({ rpcUrl, chainId: 84532, addresses: work.addresses, deploymentBlock: BigInt(work.startBlock) });
   await client.assertChain();
-  // Consume the VM response before waiting for the longer chain-history scan.
-  // Leaving its body unread lets the request's 30-second deadline cancel it.
-  const [observation, state, progress, vm] = await Promise.all([observeComputeApproval(allocation, rpcUrl), readComputeState(allocation.allocationId),
-    readObject<Record<string, any>>(simulationPath(request.runId)),
-    googleRequest("compute", COMPUTE_TARGET).then(response => response.json() as Promise<NativeVm>)]);
+  const [observation, progress] = await Promise.all([observeComputeApproval(allocation, rpcUrl),
+    readObject<Record<string, any>>(simulationPath(request.runId))]);
   const result = await verifyAgentExperiment({ work, allocation, observation, client, progress: progress ?? {} });
+  // The chain-history scan can outlast the shutdown. Read its final evidence
+  // afterwards, consuming the VM body immediately within the request deadline.
+  const [state, vm] = await Promise.all([readComputeState(allocation.allocationId),
+    googleRequest("compute", COMPUTE_TARGET).then(response => response.json() as Promise<NativeVm>)]);
   let restartDenied = false;
   try { await assertComputeStartAllowed(); } catch { restartDenied = true; }
   const shutdownVerified = state?.value.phase === "halted" && !!state.value.stopRequestedAt && !!state.value.stopAcceptedAt && !!state.value.stoppedAt
