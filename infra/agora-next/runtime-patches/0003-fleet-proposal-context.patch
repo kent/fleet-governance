@@ -1,17 +1,19 @@
 --- a/src/app/proposals/[proposal_id]/page.tsx
 +++ b/src/app/proposals/[proposal_id]/page.tsx
-@@ -4,6 +4,7 @@
+@@ -4,6 +4,8 @@
    fetchProposal,
    fetchProposalUnstableCache,
  } from "@/app/api/common/proposals/getProposals";
++import FleetProposalRefresh from "@/components/Proposals/ProposalPage/FleetProposalRefresh";
 +import FleetProposalContext from "@/components/Proposals/ProposalPage/FleetProposalContext";
  import { Proposal } from "@/app/api/common/proposals/proposal";
  import { fetchVotableSupplyUnstableCache } from "@/app/api/common/votableSupply/getVotableSupply";
  import type { Vote } from "@/app/api/common/votes/vote";
-@@ -207,6 +208,7 @@
+@@ -207,6 +209,8 @@
    return (
      <div className="flex justify-between mt-12">
        <div>
++        <FleetProposalRefresh />
 +        <FleetProposalContext proposalId={proposal_id} />
          <RenderComponent proposal={loadedProposal} />
        </div>

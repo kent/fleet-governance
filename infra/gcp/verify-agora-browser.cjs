@@ -47,9 +47,19 @@ const historical = pilot.verification?.proposalId || '17758453720459259775115348
         const displayed = String(Number(weight) / 1e18).replace('.', '\\.');
         assert.match(content, new RegExp(label + '\\s*-\\s*' + displayed + '(?![0-9.])'));
       }
+      if (proposalId === historical) {
+        // An open tab must ask for fresh votes and server-rendered state without
+        // requiring a manual navigation or discarding the reader's UI state.
+        await Promise.all([
+          page.waitForResponse(response => response.url() === base + '/api/archive/votes/' + proposalId
+            && response.status() === 200, { timeout: 25000 }),
+          page.waitForRequest(request => request.headers().rsc === '1'
+            && new URL(request.url()).pathname === '/proposals/' + proposalId, { timeout: 25000 }),
+        ]);
+      }
       assert.deepEqual(errors, [], 'Hydrated proposal must not throw browser errors');
       verified.push({ proposalId, indexedBallots: votes.length, visibleReasons: votes.length,
-        tallyMatchesIndexedWeights: true, browserErrors: errors });
+        tallyMatchesIndexedWeights: true, ...(proposalId === historical ? { automaticRefreshVerified: true } : {}), browserErrors: errors });
       await page.close();
     }
     for (const [address, reasons] of reasonsByVoter) {

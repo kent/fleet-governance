@@ -1,0 +1,24 @@
+--- a/src/hooks/useArchiveProposalVotes.ts
++++ b/src/hooks/useArchiveProposalVotes.ts
+@@ -85,7 +85,9 @@
+     queryKey: [ARCHIVE_VOTES_QK, proposalId, proposalType, startBlockString],
+     queryFn: ({ signal }) =>
+       fetchArchiveVotes({ proposalId, proposalType, startBlock, signal }),
+-    staleTime: 5 * 60 * 1000, // 5 minutes
++    staleTime: Tenant.current().namespace === "fleet" ? 10_000 : 5 * 60 * 1000,
++    refetchInterval: Tenant.current().namespace === "fleet" ? 15_000 : false,
++    refetchIntervalInBackground: false,
+     gcTime: 10 * 60 * 1000, // 10 minutes
+     retry: 2,
+   });
+@@ -192,7 +194,9 @@
+     initialPageParam: 0,
+     getNextPageParam: (lastPage) =>
+       lastPage.meta.has_next ? lastPage.meta.next_offset : undefined,
+-    staleTime: 5 * 60 * 1000, // 5 minutes
++    staleTime: Tenant.current().namespace === "fleet" ? 10_000 : 5 * 60 * 1000,
++    refetchInterval: Tenant.current().namespace === "fleet" ? 15_000 : false,
++    refetchIntervalInBackground: false,
+     gcTime: 10 * 60 * 1000, // 10 minutes
+     retry: 2,
+   });
