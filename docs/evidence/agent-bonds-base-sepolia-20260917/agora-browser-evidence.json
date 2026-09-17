@@ -1,0 +1,27 @@
+{
+  "observedAt": "2026-09-17T01:15:55.408Z",
+  "verified": [
+    {
+      "proposalId": "105876239536817791697190251002797392229471859259602692229134181320801892892472",
+      "indexedBallots": 5,
+      "visibleReasons": 5,
+      "tallyMatchesIndexedWeights": true,
+      "automaticRefreshVerified": true,
+      "browserErrors": []
+    },
+    {
+      "proposalId": "22679869702928433332229050275690706512351982045012435459820168973845793157382",
+      "indexedBallots": 5,
+      "visibleReasons": 5,
+      "tallyMatchesIndexedWeights": true,
+      "browserErrors": []
+    }
+  ],
+  "verifiedAgentProfiles": [
+    "0x2c95b4fd4d3680b122d0cdebe2d1fd321072584c",
+    "0x5b71a4c4e3e83e31d306d11079e312893b437ac5",
+    "0x77e096edd2c9ee88ec1d9d7cd84848ddb618eaf3",
+    "0x8133b3a639b6209cee829ae61a2d74f6d0f5666f",
+    "0xf60340ed67fa1b1195dbeffe825455f7ea365150"
+  ]
+}

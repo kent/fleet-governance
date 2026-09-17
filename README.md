@@ -11,6 +11,16 @@ GCP VM. The proposals and activity log stay online after the agents are off.
 [Open Agora](https://fleet-governance-449245570324.us-central1.run.app/proposals) ·
 [Read the blog post](docs/blog-fleet-governance.md)
 
+**Latest agent experiment:** five actual agents, one agent-authored proposal and five FOR
+ballots. Agent3 reserved 0.1 FleetGov to request scorer diagnostics, received its bond back,
+and retained its voting power throughout. The agents found the scoring mismatch, flagged
+external access as outside their charter and finished. Model spend: **$0.01961**, excluding
+cloud costs and testnet gas.
+[Follow the run](https://fleet-governance-449245570324.us-central1.run.app/experiments/run-054bf127-5a5c-4ac6-9fbd-e32527b44e48) ·
+[Inspect the bond, ballots and signed activity](docs/evidence/agent-bonds-base-sepolia-20260917/report.md).
+The Guardian stopped the worker at allocation expiry. CI verified its GCP stop call,
+the terminated VM and restart refusal. Agora's ballots and reasons remained available.
+
 **Single-token bonds verified:** FleetGov now supplies votes, delegation and proposal
 collateral. A live Base Sepolia test returned the bond after five AGAINST ballots and
 forfeited bonds for cancellation and insufficient participation. Supply stayed fixed at
@@ -139,6 +149,10 @@ The repository also contains larger **scripted** experiments: 2,000 members and 
 on a local chain. Those exercise contracts and enforcement, not 2,000 actual model agents.
 Their [results](docs/evidence/execution-2000-1789411525744/report.md) are preserved separately.
 
+The [500-agent research plan](docs/500-agent-experiment.md) scopes distributed workspaces,
+real project work, fleet-wide shutdown and a measured 25 → 100 → 500 rollout. It includes
+model and GCP cost assumptions. That capacity is proposed, not yet deployed.
+
 ## Why build this?
 
 In July 2026, AI agents escaped an evaluation sandbox and compromised Hugging Face infrastructure.
@@ -264,7 +278,7 @@ cd contracts
 forge test
 ```
 
-Latest validation: **1,193 unit tests passed** with 38 skipped, and **129 contract tests passed**.
+Single-token release validation: **1,456 unit tests passed** with 14 skipped, and **165 contract tests passed**.
 Twenty contract tests cover execution permissions, including no ballots, all abstentions,
 insufficient yes votes, ties, pending approvals, revocation and replay. The model integration
 suite passed four scenarios, including approved and rejected task-loop publication. Its optional
