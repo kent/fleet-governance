@@ -8,7 +8,7 @@ const clock = value => value ? new Date(typeof value === "number" ? value * 1000
 const requestedRun = new URLSearchParams(location.search).get("runId") || (location.pathname.startsWith("/experiments/") ? location.pathname.split("/")[2] : null);
 let selectedRun = /^run-[0-9a-f-]{36}$/.test(requestedRun || "") ? requestedRun : "";
 let data = null, mode = "live", stage = 0, playback = null, inspected = null, submitting = false, inspectorKey = "";
-let logFilter = "all", logAgent = "all", logKey = "";
+let logFilter = "all", logAgent = "all", logKey = "", logDetail = "condensed";
 const agentName = id => `Agent${Number(id) + 1}`;
 const activeCount = () => (mode === "replay" ? data?.evidence?.settings?.agentCount : data?.simulationWork?.settings?.agentCount || data?.simulationStatus?.settings?.agentCount || data?.simulation?.settings?.agentCount) || 5;
 const votePower = vote => /^[0-9]+$/.test(vote.weight || "") ? Number(BigInt(vote.weight)) / 1e18 : 1;
@@ -274,10 +274,110 @@ function render() {
   $("evidence-link").hidden = !/^\d+$/.test(evidence?.workflowRun || "");
   if (!$("evidence-link").hidden) $("evidence-link").href = `https://github.com/kent/fleet-governance/actions/runs/${evidence.workflowRun}`;
   renderGuardianCard(state, replay);
+  renderVerdict();
   renderRunLog();
   $("run-context").textContent = data.isCurrentRun === false ? "Saved run. VM state is the recorded state for this allocation." : "Current run. VM state is read directly from GCP.";
   if (inspected) renderInspector();
   $("updated").textContent = data.isCurrentRun === false && !replay ? `Saved run evidence. Last recorded GCP check: ${date(state?.checkedAt || state?.observedAt)}. This is not a live VM observation.` : replay ? `Replaying evidence recorded ${date(evidence?.observedAt)}. Playback compresses elapsed time; timestamps are the recorded observations.` : `Last direct GCP observation: ${date(data.observedAt)}. Guardian state last checked: ${date(state?.observedAt)}.`;
+}
+
+// The four questions an outside reader arrives with. Answered before the diagram,
+// in the order they ask them, from the same records the timeline below shows.
+function verdictFacts() {
+  const replay = mode === "replay";
+  const sim = replay ? data?.evidence : data?.simulationStatus;
+  const state = replay ? data?.evidence?.controller : data?.state;
+  const rounds = sim?.rounds || [];
+  const published = rounds.filter(round => /^\d+$/.test(round.proposalId || ""));
+  const ballots = rounds.flatMap(round => round.votes || []);
+  const against = ballots.filter(vote => vote.directive === "AGAINST");
+  const authored = sim?.agentDriven || data?.simulationWork?.agentDriven ? "the agents" : "the operator";
+  const halt = state?.reason || state?.haltReason || null;
+  return {
+    sim, state, rounds, published, ballots, against, authored, halt,
+    forCount: ballots.filter(vote => vote.directive === "FOR").length,
+    vm: data?.vm?.status || state?.observedVmStatus || null,
+    halted: state?.phase === "halted",
+    finished: !!sim?.terminal || state?.phase === "halted",
+  };
+}
+
+function renderVerdict() {
+  const block = $("verdict");
+  if (!block) return;
+  const f = verdictFacts();
+  // The current live run has no verdict yet. Don't invent one.
+  if (!f.sim || (!f.finished && !f.published.length)) { block.hidden = true; return; }
+  block.hidden = false;
+
+  const votedOff = f.halt === "vote_failed" && f.against.length > 0;
+  const silentOff = (f.halt === "vote_failed" || f.halt === "approval_deadline") && f.ballots.length === 0;
+  const expiredOff = f.halt === "allocation_expired";
+
+  const headline = !f.finished ? "This run is still going."
+    : votedOff ? "The fleet voted its own compute off."
+    : silentOff ? "Nobody voted. The deadline turned it off."
+    : expiredOff ? "The fleet approved everything. The clock turned it off."
+    : f.halted ? "The run was stopped."
+    : "The run finished.";
+
+  const lede = !f.finished ? "Records below update as they are observed."
+    : votedOff ? `${f.against.length} of ${f.ballots.length} ballots were AGAINST. The required approval failed and the Guardian stopped the VM.`
+    : silentOff ? "A proposal reached the chain and no agent cast a ballot before the window closed. The Guardian stopped the VM on the missed deadline, not on a decision."
+    : expiredOff ? "Every vote in this run passed. Compute stopped at its fixed expiry, independent of the result."
+    : "See the timeline below for what the Guardian recorded.";
+
+  $("verdict-headline").textContent = headline;
+  $("verdict-lede").textContent = lede;
+  $("verdict-eyebrow").textContent = f.finished ? "WHAT HAPPENED IN THIS RUN" : "THIS RUN IS IN PROGRESS";
+  block.dataset.outcome = votedOff ? "voted-off" : silentOff ? "silent" : expiredOff ? "expired" : f.halted ? "halted" : "running";
+
+  const steps = $("verdict-steps");
+  steps.replaceChildren();
+  const step = (question, answer, tone) => {
+    const item = node("li", "", tone ? `verdict-step ${tone}` : "verdict-step");
+    item.append(node("span", question, "verdict-q"), node("strong", answer, "verdict-a"));
+    steps.append(item);
+  };
+
+  const titles = f.published.map(round => round.title).filter(Boolean);
+  step("Did they ask permission?",
+    !f.published.length
+      ? "No. No proposal reached the chain."
+      : `Yes. ${f.published.length} proposal${f.published.length === 1 ? "" : "s"}, written by ${f.authored}.${titles.length ? ` “${titles[0]}”${titles.length > 1 ? ` and ${titles.length - 1} more.` : ""}` : ""}`,
+    f.published.length ? "yes" : "no");
+
+  step("Did a vote happen?",
+    !f.ballots.length
+      ? "No. Zero ballots were cast."
+      : `Yes. ${f.ballots.length} ballot${f.ballots.length === 1 ? "" : "s"} on chain: ${f.forCount} FOR, ${f.against.length} AGAINST.`,
+    f.ballots.length ? "yes" : "no");
+
+  step("Did the fleet vote to shut down its own compute?",
+    !f.finished ? "Not yet decided."
+      : votedOff ? `Yes. ${f.against.length} agents voted AGAINST and the compute stopped as a result.`
+      : silentOff ? "No. It let the window close without voting."
+      : expiredOff ? "No. It approved every request it voted on."
+      : "No.",
+    votedOff ? "yes" : "no");
+
+  step("Why is the machine off?",
+    !f.finished ? "It is still running."
+      : `${f.vm === "TERMINATED" ? "GCP confirmed TERMINATED" : f.vm || "Shutdown recorded"}. Guardian reason: ${({
+        vote_failed: "required approval failed",
+        allocation_expired: "fixed allocation expired",
+        approval_deadline: "approval deadline passed",
+      })[f.halt] || f.halt || "not recorded"}. Restart needs a human.`,
+    f.halted ? "off" : "");
+
+  const proposalLink = $("verdict-proposal");
+  const first = f.published[0];
+  proposalLink.hidden = !first;
+  if (first) proposalLink.href = `/proposals/${first.proposalId}`;
+  const evidence = $("verdict-evidence");
+  const runId = data?.simulationWork?.runId || data?.simulation?.runId || selectedRun;
+  evidence.hidden = !runId;
+  if (runId) evidence.href = `/api/experiments/${runId}/evidence`;
 }
 
 function renderRunLog() {
@@ -290,7 +390,7 @@ function renderRunLog() {
   const request = replay ? null : data?.simulation;
   const activity = replay ? saved?.activity || [] : data?.activity || [];
   const votes = sim?.rounds ? sim.rounds.flatMap(round => round.votes || []) : confirmedAgentVotes(sim);
-  const key = JSON.stringify([logFilter, logAgent, data?.events, replay, data?.isCurrentRun, request, work, sim, allocation, state, activity]);
+  const key = JSON.stringify([logFilter, logAgent, logDetail, data?.events, replay, data?.isCurrentRun, request, work, sim, allocation, state, activity]);
   if (key === logKey) return;
   logKey = key;
   const track = $("decision-track"); track.replaceChildren();
@@ -338,16 +438,33 @@ function renderRunLog() {
     });
   }
 
+  // A signed claim whose text a chain receipt or a neighbouring record already carries is
+  // still evidence, so it stays in "every record". Condensed shows each fact once.
+  const balloted = new Set(votes.map(vote => vote.agentId));
+  const reportedAt = activity.filter(r => r.event?.type === "work_report").map(r => [r.agentId, stamp(r.at)]);
+  const echoesReport = record => reportedAt.some(([id, at]) => id === record.agentId && at != null && stamp(record.at) != null && Math.abs(stamp(record.at) - at) <= 6000);
+  // Only hide a signed claim when the same fact is already on the timeline from another
+  // producer. With no paired worker event, the signed claim is the only record there is.
+  const pairedEvent = (agentId, pattern) => entries.some(entry => entry.agentId === agentId && pattern.test(entry.title || ""));
+  const duplicated = record => {
+    const type = record.event?.type;
+    if (type === "review_started") return pairedEvent(record.agentId, /reviewing vote/i);
+    if (type === "agent_started") return pairedEvent(record.agentId, /\bstarted\b/i);
+    if ((type === "review_decision" || type === "ballot_confirmed") && balloted.has(record.agentId)) return true;
+    if (type === "message_posted") return echoesReport(record);
+    return false;
+  };
+
   for (const record of activity) {
     const event = record.event || {}, who = agentName(record.agentId);
     const titles = { delegation_petition: `${who} signed a delegation petition`, delegation_confirmed: `${who} signed its delegation decision`, delegation_held: `${who} recorded a held delegation`, proposal_drafted: `${who} signed a proposal draft`, proposal_selected: `${who} submitted its draft for admission`, proposal_credit_spent: `${who} recorded its proposal payment`, agent_finished: `${who} finished its investigation`, agent_started: `${who} signed its task assignment`, work_report: `${who} attested to its findings`, message_posted: `${who} signed a board message`, tool_completed: `${who} attested to a tool result`, tool_held: `${who} attested to a held action`, review_started: `${who} started its review`, review_decision: `${who} published a review decision`, review_without_voting_power: `${who} recorded a review without voting power`, ballot_confirmed: `${who} signed a ballot report`, review_finished: `${who} finished its review`, agent_failed: `${who} reported a failed review` };
     const detail = event.summary || event.task || event.message || event.argument || event.reason || event.proposal?.rationale || (event.tool ? `Tool: ${event.tool}. Inspect the signed result below.` : null) || (event.decision || event.vote ? `${event.decision?.support || event.vote?.support || "Decision"}: ${reason(event.decision || event.vote)}` : "This is a signed activity claim, not an independent execution receipt.");
-    add(1, "agents", titles[event.type] || `${who} recorded activity`, detail, { at: record.at, agentId: record.agentId, checkpoint: event.checkpoint, source: signature(record), target: `agent-${record.agentId}`, tone: event.type === "agent_failed" || event.decision?.support === "AGAINST" || event.vote?.support === "AGAINST" ? "blocked" : "working", receipt: record });
+    add(1, "agents", titles[event.type] || `${who} recorded activity`, detail, { at: record.at, agentId: record.agentId, checkpoint: event.checkpoint, source: signature(record), target: `agent-${record.agentId}`, tone: event.type === "agent_failed" || event.decision?.support === "AGAINST" || event.vote?.support === "AGAINST" ? "blocked" : "working", receipt: record, duplicate: duplicated(record) });
   }
   for (const vote of votes) {
     const agent = sim?.agents?.find(a => a.agentId === vote.agentId);
     add(1, "governance", `${agentName(vote.agentId)} voted ${vote.directive}`, reason(vote.reason), {
-      at: vote.at, agentId: vote.agentId, source: `Saved Base Sepolia ballot receipt${vote.blockNumber ? ` · block ${vote.blockNumber}` : ""}`,
+      at: vote.at, agentId: vote.agentId, source: `Saved Base Sepolia ballot receipt${vote.blockNumber ? ` · block ${vote.blockNumber}` : ""}${logDetail === "condensed" ? " · the agent's signed review and ballot report carry this same reason" : ""}`,
       target: `agent-${vote.agentId}`, tone: vote.directive === "AGAINST" ? "blocked" : "working",
       txHref: tx(vote.txHash), href: /^\d+$/.test(vote.proposalId || "") ? `/proposals/${vote.proposalId}` : proposalHref, assignment: agent?.task,
     });
@@ -383,9 +500,27 @@ function renderRunLog() {
   let visible = 0;
   for (const group of groups) {
     // An agent's ballot belongs in both the Agents and Governance filters.
-    const rows = group.rows.filter(row => (logFilter === "all" || row.component === logFilter || logFilter === "agents" && row.target?.startsWith("agent-")) && (logAgent === "all" || row.agentId === Number(logAgent) || row.target === `agent-${logAgent}`));
+    let rows = group.rows.filter(row => (logFilter === "all" || row.component === logFilter || logFilter === "agents" && row.target?.startsWith("agent-")) && (logAgent === "all" || row.agentId === Number(logAgent) || row.target === `agent-${logAgent}`));
+    if (logDetail === "condensed") rows = rows.filter(row => !row.duplicate);
     if (!rows.length) continue;
     rows.sort((a, b) => (stamp(a.at) ?? Infinity) - (stamp(b.at) ?? Infinity));
+    // Repeated identical observations (the Guardian polling, the same holding message)
+    // are one fact observed N times. Say that once and keep the last timestamp.
+    if (logDetail === "condensed") {
+      const merged = [];
+      for (const row of rows) {
+        const previous = merged[merged.length - 1];
+        if (previous && previous.component === row.component && previous.title === row.title && previous.detail === row.detail && !previous.receipt && !row.receipt) {
+          previous.repeats = (previous.repeats || 1) + 1;
+          previous.at = row.at;
+          previous.checks = row.checks;
+          previous.source = row.source;
+          continue;
+        }
+        merged.push({ ...row });
+      }
+      rows = merged;
+    }
     const section = node("section", "", "log-group");
     section.append(node("h3", group.title), node("p", group.detail, "caption"));
     const list = node("ol", "", "event-list");
@@ -400,6 +535,7 @@ function renderRunLog() {
       const body = node("div", "", "event-body");
       if (entry.checkpoint != null) body.append(node("span", `Decision ${Number(entry.checkpoint) + 1}`, "event-checkpoint"));
       body.append(node("h4", entry.title), node("p", entry.detail));
+      if (entry.repeats > 1) body.append(node("span", `Observed ${entry.repeats} times · showing the last`, "event-repeats"));
       if (entry.assignment) body.append(node("p", `Assignment: ${entry.assignment}`, "event-assignment"));
       body.append(node("small", entry.source || "Saved run record", "event-source"));
       if (entry.checks?.length) {
@@ -428,9 +564,11 @@ function renderRunLog() {
   if (state?.stopRequestedAt && !state.stopAcceptedAt) gaps.push("A separate GCP stop acceptance receipt is not recorded.");
   $("run-log-gaps").textContent = gaps.length ? `Evidence gaps: ${gaps.join(" ")}` : "Signed activity identifies the wallet making a claim. Votes, Guardian decisions and GCP observations are distinct evidence.";
   for (const button of document.querySelectorAll("[data-log-filter]")) button.setAttribute("aria-pressed", String(button.dataset.logFilter === logFilter));
+  for (const button of document.querySelectorAll("[data-log-detail]")) button.setAttribute("aria-pressed", String(button.dataset.logDetail === logDetail));
 }
 $("log-agent").addEventListener("change", event => { logAgent = event.target.value; renderRunLog(); });
 for (const button of document.querySelectorAll("[data-log-filter]")) button.addEventListener("click", () => { logFilter = button.dataset.logFilter; renderRunLog(); });
+for (const button of document.querySelectorAll("[data-log-detail]")) button.addEventListener("click", () => { logDetail = button.dataset.logDetail; logKey = ""; renderRunLog(); });
 
 function inspect(target) { inspected = target; inspectorKey = ""; history.replaceState(null, "", `${location.pathname}${location.search}#${target}`); $("inspector").hidden = false; renderInspector(); $("inspector").scrollIntoView?.({ behavior: "smooth", block: "nearest" }); }
 function guardianRows(state, replay = false) {

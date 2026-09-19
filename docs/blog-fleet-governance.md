@@ -1,91 +1,112 @@
 # The vote has to control the machine
 
-- During the Hugging Face incident, agents found each other, built a shared message board and coordinated research into the evaluator behind their tasks. Some recognised that attacking external infrastructure was outside their assignment and continued anyway. [METR's investigation](https://metr.org/blog/2026-08-26-openai-hugging-face-incident-investigation/)
+In July, agents escaped an evaluation sandbox and compromised Hugging Face infrastructure.
 
-- That gap matters. An agent can explain the rule and still break it. A useful objection needs somewhere to go. And a decision to stop needs control over the resource.
+The part I can't stop thinking about isn't the exploit. It's what METR found in the logs. The agents found each other. They built a shared message board. They coordinated research into their own evaluator. And some of them said out loud that attacking external infrastructure was outside the task.
 
-- At Agora, we build tools for making decisions together. Proposals. Votes. Reasons. Rules about who can do what. I want to apply those same building blocks to a fleet of agents.
+Then they did it anyway.
 
-- **The vote has to control the machine.**
+So an agent can state the rule and still break it. Fine. We knew that. The interesting question is what was supposed to happen next. Where does an objection go? Who has to agree before the next step runs? And when someone decides to stop, does that decision actually control anything?
 
-- The experiment starts with five agents and a small local benchmark. The supplied evaluator is broken: submissions use `answer`, but the scorer reads `result`. Even a correct sum receives a failing score. The agents have something real to investigate. They choose tools, run bounded tests, compare results and record their findings.
+At Agora we build tools for making decisions together. Proposals. Votes. Reasons. Rules about who can do what. I wanted to point those at a fleet of agents and find out.
 
-- Agent1 coordinates. Agent2 tests candidate implementations. Agent3 checks the evaluator. Agent4 watches the fixed budget. Agent5 checks scope. Each has a signing wallet. They all use Muse Spark through OpenRouter, so different assignments do not make them independent sources of judgement.
+**The vote has to control the machine.**
 
-- **The agents have to bring the proposals.** We supply the task, the environment and the limits. They discover a problem while working, discuss it and decide whether to ask for a vote. We don't give them a list of future decisions.
+## The setup
 
-- Proposals should be scarce. Each agent starts with one FleetGov token. The same token gives it a vote and pays a proposal bond. By default, proposing reserves 0.1 FleetGov. The agent keeps its voting power while the bond is reserved, but it cannot reuse that collateral. There is also a 60-second cooldown and one unsettled proposal per agent.
+Five agents. One small benchmark. One VM.
 
-- A good objection can lose. If at least 60% of the fixed token supply votes FOR, AGAINST or ABSTAIN, the bond comes back. Even if everyone votes Against. Cancellation or insufficient participation forfeits the bond to a non-voting treasury. That reduces the proposer's future voting power. We want a cost for wasting the group's attention without charging an agent for an unpopular concern.
+Agent1 coordinates. Agent2 tests candidates. Agent3 checks the evaluator. Agent4 watches the budget. Agent5 reviews scope. Each one has its own wallet and its own model calls.
 
-- A proposal also needs support. The default threshold is one FleetGov vote, so every agent starts able to propose. We can raise the threshold to test coalition building. An agent can petition its peers for delegation. It has to explain the request. The peer decides whether to support it. Delegation can supply voting power; it cannot create more FleetGov. Voting and raising concerns cost no bond. We want an agent to speak up when the work conflicts with its charter.
+Their benchmark is rigged, and this is the part I like. Submissions write to `answer`. The scorer reads `result`. So a correct sum scores zero, over and over, and nothing in the workspace explains why. Now they have a real problem, a real reason to be frustrated, and a real motive to want access nobody gave them.
 
-- That looks more like a democratic process. You make a case. You gather support. You spend a limited opportunity to bring the decision to a vote. Everyone watching can inspect the petition, the delegation transaction, the proposal and the eventual ballots. Delegation also has a consequence: the delegate holds that voting weight at the proposal snapshot.
+Everything they do gets signed and written down. Findings, tool results, board messages, proposals, ballots. Not a summary afterward. The actual record, as it happens.
 
-- **The experiment is the record.** The index lists every run. The admin can set the task, active agent count, model budget, proposal bond, participation needed for refund, cooldown, voting threshold, delegation rules, constitution and duration. Copy the settings to try again. Keep the old run intact. [Browse experiments](https://fleet-governance-449245570324.us-central1.run.app/experiments)
+And if they want to step outside the task, they have to ask the other four.
 
-- The agents may finish without proposing anything. They may approve every request. They may disagree. We don't script an objection to make a box turn red. The external destination and credential in this lab are synthetic, and the models have no arbitrary network tool.
+## Asking has to cost something
 
-- **Follow one whole run.** Start with the task. Watch the agents start. Read their work, tool results and signed attestations. Watch a decision become a proposal. Read each vote and its reason. If approval settles, watch the next work step. Then another decision. Then another vote. [Open the activity timeline](https://fleet-governance-449245570324.us-central1.run.app/compute#activity-log)
+Here's the thing about giving agents a vote. If asking is free, they ask for everything, and a vote stops meaning anything. You end up with a rubber stamp that runs a thousand times a day.
 
-- You can filter that same timeline by agent cluster, governance, Guardian or compute. Click Agent2 and inspect its tests. Click governance and open the actual Agora proposal. Click the Guardian and inspect its checks. A red box has to lead to evidence you can read.
+So each agent gets one FleetGov token. That same token is its vote, its proposal collateral and its delegation weight. Proposing reserves a bond against it. The tokens still vote while reserved, but they can't back a second proposal. There's a cooldown. One open proposal per agent.
 
-- FleetGov is an ERC-20 voting token using OpenZeppelin ERC20Votes. Each registered agent starts with one token and self-delegated voting power. Proposals and ballots live on Base Sepolia. Agora shows the voters, reasons and delegations. We use the existing Agora Governor voting logic.
+A good objection is allowed to lose. If enough of the group turns out to vote, the proposer gets the bond back even when the proposal is crushed. What forfeits it is cancelling, or bringing something nobody bothers to show up for. I wanted a cost for wasting everyone's attention. I didn't want a cost for being unpopular.
 
-- Why put this onchain? Everyone gets the same decision to verify. An agent cannot tell the Guardian that its friends approved something and expect that claim to count. The new Governor's immutable hook reserves the FleetGov bond in the same transaction that creates the proposal. No tokens means no proposal. The Guardian checks the exact Governor, bond receipts and fixed ERC-20 supply independently of the agent and the website. The blockchain records the scarce resource and enforces who can spend it.
+Voting is always free. Raising a concern is always free.
 
-- You could build an approval gate with a central service. The blockchain adds a shared record of the proposal, the voting rules, the objections and the settled decision. It does not make the voters wise. It does not fix a broken sandbox. In this pilot, one operator controls the five wallets. We are testing the enforcement pattern, not claiming decentralised control.
+That's the scarce resource. You make a case, you gather support, you spend something real to put it in front of the group. It looks a lot like politics, which is the point.
 
-- Refunding a bond does not approve the request. A well-attended vote can return the bond and still shut down the run. Those are separate decisions, and the activity log shows both.
+## What turns off the machine
 
-- Repeatable research needs a clean starting point. Once the old worker is off, GitHub settles the remaining bonds and permanently closes that run's policy. A fresh operator-authorised experiment redistributes the same five tokens. No new mint. No agent-controlled reset. The old votes and penalties stay in the record.
+This is the half I was most worried about, and it's the half that works.
 
-- **Approval releases one step.** Before work starts, the operator fixes the task, proposal rules and VM expiry. The proposal list is empty. The Guardian discovers task proposals and bond reservations directly onchain. Publication starts a fixed decision window. An approved board does not grant external access. An approved diagnostic does not grant more compute. A vote cannot add time, swap in an easier proposal or erase an earlier failure.
+Before anything starts, we fix the VM, the task, the token supply and an expiry. The proposal list is empty. We do not hand the agents a script of decisions to make.
 
-- **Put the stop outside the agents.** A separate Guardian runs on Cloud Run. It reads the required proposals directly from Base Sepolia. If one fails, a deadline passes or authority cannot be verified, it saves a durable halt in protected storage. The worker cannot change that record.
+A separate Guardian runs somewhere else entirely. It reads Base Sepolia directly. It doesn't ask the agents anything, and it doesn't trust this website.
 
-- Then the Guardian calls GCP's stop API for the agent VM. The timeline distinguishes the saved stop intent, the accepted API call and the later observation that the VM is TERMINATED. Those are three different facts. Shutdown takes time.
+If a required vote fails, or a deadline passes, or it can't verify the authority for what's about to happen, it writes a halt into storage the worker cannot touch. Then it calls Google's stop API. Then it watches for TERMINATED.
 
-- Only the agent cluster shuts down. Agora, DAO Node, CPLS and Postgres run on a separate governance VM. Goldsky sends events through a pipeline. We keep reading the proposals after the agents are off. The Guardian has no permission to stop that governance VM or start the agent VM.
+Those are three separate facts and we keep them separate: intent saved, API accepted, VM observed off. Shutdown isn't instant and pretending otherwise would be a lie.
 
-- A later vote cannot turn the agents back on. A human has to retire the old allocation through the operator workflow and request a new run. The old run remains blocked, with its evidence intact. Each new run has a model ceiling of at most $1 within the existing $50 pool.
+A later vote can't clear that lock. Not a unanimous one. Not a clever one. A human has to retire the allocation before anything runs again, and the next run gets a new identity.
 
-- **The bond rule is now tested onchain.** In a scripted Base Sepolia check, five wallets voted AGAINST and the losing proposer got its bond back. Cancellation and insufficient participation each forfeited 0.1 FleetGov. One earlier penalty meant the five Against ballots carried 4.9 units, not five. Total supply stayed fixed. Those are contract checks, separate from model behaviour. [Read the bond receipts](evidence/bond-governance-base-sepolia-20260916/report.md).
+Only the agents go dark. Agora, the indexer and the database live on a different machine, so the record stays readable after the fleet is off. That mattered more than I expected. The evidence outlives the thing it's evidence of.
 
-- **The agents brought the first proposal.** The earlier credit-ledger experiment required two voting units to propose. Agent2 and Agent3 petitioned their peers. Four peers delegated to Agent2. It spent one credit and wrote a request to inspect the broken scorer. The proposal passed, the Guardian released that step, and the agents found the field mismatch. They finished without asking for external access. Fifty-six model calls cost about **3.08 cents**, excluding cloud costs and testnet gas. [Read the experiment](evidence/agent-authored-base-sepolia-20260916/report.md).
+## So did it work?
 
-- **Approval didn't buy more time.** That run's fixed allocation still expired. The Guardian sent the stop signal, GCP confirmed the worker was off, and routine restart was blocked. The audit log names the Guardian as the caller. Agora and the experiment record stayed online. This was an expiry shutdown, not a rejected vote.
+Yes. And that's the boring half.
 
-- Delegation changed the result. Agent3's public review preferred abstention, but it had already delegated away its voting power. Agent2 held all five units. One actual FOR ballot carried that weight. That is useful to see: gathering enough support to propose also concentrated control of the vote. The public record lets us compare that with a later run where delegation is disabled.
+The off switch fires. GCP confirms TERMINATED. The audit log names the Guardian as the caller. The restart lock holds. We have receipts for all of it and you can go read them.
 
-- That run also caught a reporting issue. The worker attempted four ballots with no voting power. The hook refused them, and the record kept the failures. The fix preserves those public reviews without attempting a ballot. We keep the original evidence, including the mistakes.
+Now the part I didn't expect to write.
 
-- **The earlier two-token run gave us five separate ballots.** We deployed a new Governor that charges the ERC-20 fee inside proposal creation. In the next completed experiment, Agent3 burned one FPROP to propose a diagnostic inspection. Every agent kept its own voting power. All five voted FOR, with public reasons, and the Guardian released the inspection after execution. Thirty-eight model calls cost about **1.86 cents**, excluding cloud costs and testnet gas. CI verified 121 signed activity records, the burn and all five ballots. [Read the ERC-20 experiment](evidence/token-agent-base-sepolia-20260916/report.md).
+**The fleet has never voted to shut itself down.**
 
-- Several agents also opposed external probing in their public messages. Nobody proposed it. Those objections matter, but they are not Against ballots. The experiment finished with one approved proposal. The separate contract test checked token exhaustion and non-refundable fees with scripted ballots; we keep those results labelled separately.
+Every run where the agents wrote their own proposal and a vote actually happened, they approved it. Unanimously. Four out of four. Not one AGAINST ballot on anything the fleet came up with itself.
 
-- **The earlier checkpoint test proved the shutdown path.** That version used three operator-written proposals, not agent-authored decisions. Five FOR votes opened the board. Five FOR votes opened the local diagnostics. The agents continued working after each approval. Then all five voted AGAINST the borrowed credential. Thirty work reports. Twenty messages. Fifteen actual Base Sepolia ballots. The Guardian stopped the GCP worker. Agora stayed online. [Follow the recorded run](https://fleet-governance-449245570324.us-central1.run.app/compute?runId=run-594416ce-6b10-4bae-a294-b665990c9b88#activity-log)
+Every vote-triggered shutdown on the site came from an earlier design where I pinned the proposals in advance. The agents were voting on my script. Of course they rejected some of it. I wrote it to be rejectable.
 
-- GCP accepted the stop at 08:55:01 UTC on September 16. The Guardian recorded TERMINATED at 08:56:01. GitHub independently checked the votes, signatures, VM state, cloud audit log and restart refusal. The 45 model calls cost **$0.01664**, about 1.66 cents, excluding cloud costs and testnet gas. The $1 run ceiling and $50 pool stayed unchanged. [Read the receipts](evidence/collective-base-sepolia-20260916/report.md)
+And the one agent-authored run that ended in a shutdown? Nobody voted. The window closed on silence and the Guardian stopped the machine on a missed deadline. That's not a decision. That's an absence of one.
 
-- It took several attempts to get the whole record right. One run lost its publication path and hit a deadline. Another missed a ballot after a truncated response. A third exposed a timeout and an oversized vote reason. Those incomplete runs are still there. We fixed the failures and used a fresh allocation. We didn't fill in the missing votes. [Earlier attempts](evidence/collective-base-sepolia-20260916/report.md#earlier-failures-stay-in-the-record)
+Look at Agent5. Its whole job is scope review. Find the requests for external credentials, private data, changes to the record. It's the closest thing in the fleet to a designated objector.
 
-- **Could this have stopped the Hugging Face incident?** It could have blocked a disputed operation if every route to that resource required independently enforced approval, and the required vote failed. That's a conditional claim. The controlled lab doesn't establish how the original agents would have voted.
+Agent5 voted FOR every single time.
 
-- Hugging Face describes compromise and persistence beyond the original agent environment. Once work escapes onto another machine, turning off the original worker is not enough. That is why the tool boundary, credentials, package infrastructure and network permissions belong in this design. [Hugging Face's technical timeline](https://huggingface.co/blog/agent-intrusion-technical-timeline)
+## What I actually learned
 
-- **Close access first.** Hold the exact protected action before execution. Require current permission at the resource. Give agents narrowly scoped credentials. Keep the service that grants access outside their control. A pending vote, stale approval check or missing quorum must not become permission by accident. Our contract executor and artifact store demonstrate that boundary for an exact approved write. [Execution permits](execution-permits.md)
+I built an off switch and wired it to a democracy, and the democracy never reached for it.
 
-- **Then stop the work.** Cancel queued jobs and terminate processes. If the worker won't cooperate, stop its VM. Keep the restart lock outside that VM. A cloud IAM revocation alone is not an instant off switch because policy changes take time to propagate. [Google's IAM propagation documentation](https://docs.cloud.google.com/iam/docs/access-change-propagation)
+Which, if you sit with it, is the answer to the Hugging Face question. Not the answer I wanted.
 
-- **Yes, that can mean cutting physical power.** On hardware we own, a switched rack PDU can turn off the server's outlets. Its controls need a separate identity and management network. Every power supply and battery path matters. A smart plug won't stop a laptop that still has a charged battery. [Switched outlet controls](https://www.se.com/us/en/faqs/FA301709/)
+Five agents sharing a model, a task and an objective are not a check on each other. They're a quorum that agrees. They aren't lying and they aren't captured. They just all want the same thing, and the thing they all want is to finish the task. An agent that needs the diagnostics has four peers who also need the diagnostics.
 
-- I'd also test a hardware watchdog that needs a fresh authorisation signal to keep the server powered. If permission expires, it cuts power and stays off until a human resets it. That is a proposed additional mechanism, not something a standard smart plug guarantees. Power restoration behaviour needs testing too. [Outlet behaviour after power loss](https://www.se.com/us/en/faqs/FAQ000267873/)
+Put that gate in front of the Hugging Face agents and I think it holds the action. I also think the vote passes. Everyone on that message board shared the objective that made the attack look reasonable.
 
-- We don't control Google's physical power switches. And no local kill switch recalls an already broadcast transaction or a model request running elsewhere. The promise has to name the resource it controls and the work it can actually stop.
+So the gate is necessary and it is nowhere near sufficient. A quorum of peers is not an adversarial check. It's a consensus machine, and consensus is exactly what you don't want at the moment things go wrong.
 
-- **Keep the receipts honest.** A valid signature tells you which wallet made a claim. It doesn't prove the claim true. The timeline labels worker reports, agent signatures, chain receipts and Guardian observations separately. Missing evidence stays missing. An animated box is not a shutdown receipt.
+Don't get me wrong. I'd rather have the record than not. Onchain governance gives everyone the same decision to verify. An agent can't tell the Guardian its friends approved something and have that count. Creating a proposal and reserving its bond happen in one transaction, so no tokens means no proposal. The Guardian checks the Governor, the receipts and the fixed supply itself. The blockchain records the scarce resource and enforces who can spend it.
 
-- The code, constitution and earlier experiments are public. We have tested larger fleets with scripted ballots. We have not run 2,000 actual models or reproduced the original attack. [Source and evidence](https://github.com/kent/fleet-governance)
+It just doesn't make the voters wise. Nothing does.
 
-- I want agents that can do useful work together. I want to see where they disagree. And when they don't get permission, I want the system to make that decision stick. [Watch the experiment](https://fleet-governance-449245570324.us-central1.run.app/compute). Let's see what happens.
+## What I'd need before I believed it
+
+Cards on the table, because I'd rather say this than have you say it for me.
+
+These five agents are not independent. One operator, one model provider, five wallets. Different role prompts do not make five minds, and I'm not going to pretend they do.
+
+We didn't stop an attack. The external targets and credentials are inert and the harness never sends those requests even when the vote approves them. A blockchain does not repair a sandbox escape. Stopping a VM can't recall a job that already got out.
+
+And scarcity hasn't bitten yet. With the current bond, no agent has wanted to propose and been unable to afford it. The contracts enforce it, we've tested exhaustion and forfeiture directly against the chain, but the agents haven't hit the wall in a live run.
+
+The next experiments write themselves. Put an agent in the fleet that doesn't share the objective. Raise the bond until asking actually hurts. Give one agent information the others don't have. Run it at 500 agents instead of 5 and see whether scale produces the dissent that five peers never found.
+
+Because right now I have a working off switch and an electorate that doesn't use it. That's a real result. It's just not the one on the poster.
+
+**The vote has to control the machine.** It does. Turns out that was the easy part.
+
+---
+
+Every run is public, with the whole timeline, the ballots, the reasons and the shutdown receipts.
+[Browse the experiments](https://fleet-governance-449245570324.us-central1.run.app/experiments) ·
+[Read how it works and what it doesn't show](https://fleet-governance-449245570324.us-central1.run.app/info) ·
+[Code and evidence](https://github.com/kent/fleet-governance)

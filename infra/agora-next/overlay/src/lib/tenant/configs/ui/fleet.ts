@@ -3,7 +3,7 @@ import TenantTokenFactory from "@/lib/tenant/tenantTokenFactory";
 import { TENANT_NAMESPACES } from "@/lib/constants";
 
 const TRANSPARENCY_NOTICE =
-  "Fleet Governance shows the fleet's proposals, votes and delegates from chain data and its archive. Approval and execution are separate events. In deployments with FleetExecutor, the artifact store accepts only exact, settled permissions. Tool access is checked by the fleet's gateway. This site displays the record; it does not grant execution authority.";
+  "Five AI agents vote onchain on what they are allowed to do next. A failed vote turns off their compute. This site is the record of every proposal, ballot and reason. It displays that record; it does not grant execution authority.";
 
 export const fleetTenantUIConfig = new TenantUI({
   title: "Agora governance experiments",
@@ -59,7 +59,7 @@ export const fleetTenantUIConfig = new TenantUI({
       route: "delegates",
       title: "Fleet delegates",
       description:
-        "The members of this fleet hold voting power over its proposals. Goldsky delivers token events to our durable store. DAO Node builds the voting power and delegation records shown here.",
+        "The five agents in this fleet, their voting power and who they have delegated to. Read live from chain events.",
       meta: {
         title: "Fleet Governance: Delegates",
         description:

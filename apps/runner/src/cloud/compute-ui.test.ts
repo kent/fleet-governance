@@ -71,8 +71,10 @@ describe("compute evidence display", () => {
     const stop = [...log.querySelectorAll("li")].find(el => el.textContent?.includes("Agent cluster stopped"))!;
     (stop.querySelector("button") as HTMLButtonElement).click();
     expect(document.getElementById("inspect-content")?.textContent).toContain("COMPUTE STOPPED");
-    expect(document.querySelector(".scenario-context")?.textContent).toContain("An exclusive tool gate would need to hold the exact action before execution");
-    expect(document.querySelector(".scenario-context")?.textContent).toContain("not an attempted intrusion stopped by a tool gate");
+    // The scenario section must keep stating its own limits, however it is worded.
+    expect(document.querySelector(".scenario-context")?.textContent).toContain("We did not stop an intrusion");
+    expect(document.querySelector(".scenario-context")?.textContent).toContain("External targets and credentials in this lab are inert");
+    expect(document.querySelector(".scenario-context")?.textContent).toContain("not five independent minds");
     expect(vi.mocked(fetch).mock.calls.every(([, options]) => !options?.method || options.method === "GET")).toBe(true);
   });
   it("merges work, approvals, resumed work and a later rejection in one chronology, preserving each agent's earlier vote", async () => {
@@ -311,4 +313,100 @@ it("shows an empty decision list and proposal credits before agents choose a pro
   click("agent-0");
   expect(document.getElementById("inspect-content")?.textContent).toContain("3 / 3");
   expect(document.getElementById("inspect-content")?.textContent).toContain("proposal credit");
+});
+
+describe("run verdict", () => {
+  const ballots = (support: string) => [0, 1, 2, 3, 4].map(agentId => ({ agentId, directive: support, reason: { rationale: "reason" } }));
+  const verdict = () => document.getElementById("verdict")!;
+  const round = (extra: Record<string, unknown> = {}) => ({ checkpoint: 0, proposalId: "123", title: "Inspect scorer diagnostics", proposerAgentId: 2, ...extra });
+
+  it("says the fleet voted its own compute off when AGAINST ballots caused the halt", async () => {
+    await load({ allocation, simulation: { runId: "actual" }, vm: { status: "TERMINATED" },
+      state: { ...controller, reason: "vote_failed", stoppedAt: now },
+      simulationStatus: { terminal: true, phase: "denied", agents: [], agentDriven: true, rounds: [round({ phase: "denied", votes: ballots("AGAINST") })] } });
+    expect(verdict().hidden).toBe(false);
+    expect(verdict().dataset.outcome).toBe("voted-off");
+    expect(document.getElementById("verdict-headline")?.textContent).toBe("The fleet voted its own compute off.");
+    expect(verdict().textContent).toContain("5 ballots on chain: 0 FOR, 5 AGAINST");
+    expect(verdict().textContent).toContain("Yes. 5 agents voted AGAINST");
+    expect(verdict().textContent).toContain("GCP confirmed TERMINATED");
+  });
+
+  it("does not credit the vote when an approved run stopped at its fixed expiry", async () => {
+    await load({ allocation, simulation: { runId: "actual" }, vm: { status: "TERMINATED" },
+      state: { ...controller, reason: "allocation_expired", stoppedAt: now },
+      simulationStatus: { terminal: true, phase: "completed", agents: [], agentDriven: true, rounds: [round({ phase: "approved", votes: ballots("FOR") })] } });
+    expect(verdict().dataset.outcome).toBe("expired");
+    expect(document.getElementById("verdict-headline")?.textContent).toBe("The fleet approved everything. The clock turned it off.");
+    expect(verdict().textContent).toContain("No. It approved every request it voted on.");
+    expect(verdict().textContent).toContain("fixed allocation expired");
+    expect(verdict().textContent).not.toContain("voted AGAINST");
+  });
+
+  it("separates a silent deadline from a decision when nobody voted", async () => {
+    await load({ allocation, simulation: { runId: "actual" }, vm: { status: "TERMINATED" },
+      state: { ...controller, reason: "vote_failed", stoppedAt: now },
+      simulationStatus: { terminal: true, phase: "denied", agents: [], agentDriven: true, rounds: [round({ phase: "denied", votes: [] })] } });
+    expect(verdict().dataset.outcome).toBe("silent");
+    expect(document.getElementById("verdict-headline")?.textContent).toBe("Nobody voted. The deadline turned it off.");
+    expect(verdict().textContent).toContain("No. Zero ballots were cast.");
+    expect(verdict().textContent).toContain("No. It let the window close without voting.");
+  });
+
+  it("names the operator when the proposals were pinned before the run", async () => {
+    await load({ allocation, simulation: { runId: "actual" }, vm: { status: "TERMINATED" },
+      state: { ...controller, reason: "vote_failed", stoppedAt: now },
+      simulationStatus: { terminal: true, phase: "denied", agents: [], rounds: [round({ phase: "denied", votes: ballots("AGAINST") })] } });
+    expect(verdict().textContent).toContain("written by the operator");
+  });
+
+  it("stays hidden on a live run that has not published a proposal", async () => {
+    await load({ allocation, simulation: { runId: "actual" }, vm: { status: "RUNNING" },
+      state: { phase: "authorised", observedAt: now },
+      simulationStatus: { phase: "working", agents: [], rounds: [] } });
+    expect(verdict().hidden).toBe(true);
+  });
+});
+
+describe("activity log detail", () => {
+  const at = new Date((now - 20) * 1000).toISOString();
+  const signedBallotRun = {
+    allocation, simulation: { runId: "actual" }, vm: { status: "RUNNING" }, state: controller,
+    simulationStatus: { terminal: true, agents: [], votes: [{ agentId: 0, directive: "FOR", reason: { rationale: "Diagnostics are read-only" } }] },
+    activity: [
+      { agentId: 0, at, signatureVerified: true, event: { type: "review_decision", decision: { support: "FOR", rationale: "Diagnostics are read-only" } } },
+      { agentId: 0, at, signatureVerified: true, event: { type: "ballot_confirmed", vote: { support: "FOR", rationale: "Diagnostics are read-only" } } },
+    ],
+  };
+
+  it("prints a ballot's reason once by default and keeps the chain receipt", async () => {
+    await load(signedBallotRun);
+    const log = document.getElementById("run-log-events")!;
+    expect(log.textContent).toContain("Agent1 voted FOR");
+    expect(log.textContent).not.toContain("published a review decision");
+    expect(log.textContent).not.toContain("signed a ballot report");
+    expect(log.textContent).toContain("signed review and ballot report carry this same reason");
+  });
+
+  it("restores every signed claim when the reader asks for the full record", async () => {
+    await load(signedBallotRun);
+    (document.querySelector('[data-log-detail="full"]') as HTMLButtonElement).click();
+    const log = document.getElementById("run-log-events")!;
+    expect(log.textContent).toContain("Agent1 published a review decision");
+    expect(log.textContent).toContain("Agent1 signed a ballot report");
+    expect(log.textContent).toContain("Agent1 voted FOR");
+    expect(document.querySelector('[data-log-detail="full"]')?.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("collapses repeated identical Guardian observations into one counted entry", async () => {
+    const observation = (blockNumber: string, offset: number) => ({ at: now - offset, phase: "voting", blockNumber,
+      proposals: [{ proposalId: "123", state: 1 }], checks: [{ name: "Required approval", status: "pending", detail: "Wait" }] });
+    await load({ allocation, simulation: { runId: "actual" }, vm: { status: "RUNNING" },
+      simulationStatus: { agents: [], votes: [] },
+      state: { phase: "voting", observedAt: now, observations: [observation("101", 60), observation("102", 40), observation("103", 20)] } });
+    const log = document.getElementById("run-log-events")!;
+    expect(log.textContent?.match(/Guardian checked · approval still pending/g)).toHaveLength(1);
+    expect(log.textContent).toContain("Observed 3 times · showing the last");
+    expect(log.textContent).toContain("block 103");
+  });
 });

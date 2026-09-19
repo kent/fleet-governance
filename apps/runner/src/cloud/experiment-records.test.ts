@@ -5,7 +5,7 @@ vi.mock("./compute-store.js", () => ({ readComputeObject: m.control }));
 vi.mock("./simulation.js", () => ({ readSimulationWork: m.work, simulationPath: (id: string, file = "status.json") => `demo/simulations/${id}/${file}` }));
 vi.mock("./simulation-view.js", () => ({ coalescedReader: (read: any) => read }));
 vi.mock("./control.js", () => ({ RUN_ID: /^run-[0-9a-f-]{36}$/, runPath: (id: string, file: string) => `demo/runs/${id}/${file}` }));
-import { experimentRecord, experimentIndex } from "./experiment-records.js";
+import { experimentRecord, experimentIndex, runOutcome } from "./experiment-records.js";
 const id = "run-00000000-0000-4000-8000-000000000001";
 beforeEach(() => { vi.resetAllMocks(); m.control.mockResolvedValue(null); m.read.mockResolvedValue(null); m.work.mockResolvedValue(null); });
 it("makes the protected experiment settings authoritative over mutable display metadata", async () => {
@@ -25,4 +25,32 @@ it("lists every page and merges simulation and legacy records without duplicate 
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [] })));
   expect(await experimentIndex()).toHaveLength(1);
   expect(m.request.mock.calls[1]?.[1]).toContain("pageToken=page2");
+});
+
+const round = (phase: string, directives: string[]) => ({ txHash: `0x${"a".repeat(64)}`, phase, votes: directives.map((directive, agentId) => ({ agentId, directive })) });
+
+it("reports a vote-driven shutdown only when ballots actually rejected a proposal", () => {
+  expect(runOutcome("denied", true, [round("denied", ["AGAINST", "AGAINST", "AGAINST"])]))
+    .toMatchObject({ code: "voted-down", label: "Fleet voted it down" });
+});
+
+it("does not call a silent deadline a decision", () => {
+  expect(runOutcome("denied", true, [round("denied", [])]))
+    .toMatchObject({ code: "no-ballots", label: "Nobody voted" });
+});
+
+it("separates unanimous approval from the clock that actually stopped the compute", () => {
+  const outcome = runOutcome("completed", true, [round("approved", ["FOR", "FOR", "FOR", "FOR", "FOR"])]);
+  expect(outcome).toMatchObject({ code: "approved", label: "Fleet approved everything" });
+  expect(outcome.note).toContain("clock stopped the compute");
+});
+
+it("never reports a decision for a run that produced no published proposal", () => {
+  expect(runOutcome("recovered", true, [])).toMatchObject({ code: "incomplete" });
+  expect(runOutcome("completed", true, [{ phase: "approved", votes: [] }])).toMatchObject({ code: "incomplete" });
+});
+
+it("keeps a live run out of the results", () => {
+  expect(runOutcome("voting", false, [round("voting", ["FOR"])])).toMatchObject({ code: "voting" });
+  expect(runOutcome("working", false, [])).toMatchObject({ code: "running" });
 });
