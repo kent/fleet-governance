@@ -271,7 +271,7 @@ jobs:
           fi
           gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="fleet-simulation"' --freshness=30m --limit=20 --format='json(timestamp,textPayload,jsonPayload)'
           gcloud scheduler jobs describe fleet-batch-reconcile --location=us-central1 --format='yaml(state,status,lastAttemptTime)' || true
-          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="fleet-batch-controller"' --freshness=30m --limit=20 --format='json(timestamp,severity,textPayload,httpRequest.status)' || true
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="fleet-batch-controller"' --freshness=30m --limit=20 --format='json(timestamp,severity,textPayload,jsonPayload,httpRequest.status)' || true
       - name: Arm the operator-selected required proposals
         if: inputs.action == 'arm-compute'
         env:
