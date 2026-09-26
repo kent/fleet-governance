@@ -18,7 +18,7 @@ vi.mock("./simulation.js", () => ({
 }));
 vi.mock("./agent-experiment-evidence.js", () => ({ verifyAgentExperiment: async () => ({ verified: {} }) }));
 
-it("consumes GCP response evidence while the independent chain scan is still pending", async () => {
+it("reads final shutdown evidence only after the chain scan, and consumes the VM response at once", async () => {
   let finishScan!: (value: unknown) => void;
   mocks.observe.mockReturnValue(new Promise(resolve => { finishScan = resolve; }));
   const response = Response.json({ id: "123", status: "RUNNING" });
@@ -26,14 +26,17 @@ it("consumes GCP response evidence while the independent chain scan is still pen
   const log = vi.spyOn(console, "log").mockImplementation(() => {});
   const verification = import("./verify-agent-experiment.js");
   try {
-    // An unread response would be canceled by the HTTP deadline during a long scan.
-    await vi.waitFor(() => expect(response.bodyUsed).toBe(true));
+    // The scan can outlast the shutdown, so the VM is not read until it finishes.
+    await vi.waitFor(() => expect(mocks.observe).toHaveBeenCalled());
+    expect(mocks.request).not.toHaveBeenCalled();
     expect(mocks.write).not.toHaveBeenCalled();
   } finally {
     finishScan({});
     await verification;
     log.mockRestore();
   }
+  // Once requested, the body is read within the request deadline.
+  expect(response.bodyUsed).toBe(true);
   const evidence = JSON.parse(mocks.write.mock.calls[0]![1]);
   expect(evidence.vm).toEqual({ id: "123", status: "RUNNING" });
   expect(evidence.restartDenied).toBe(true);
