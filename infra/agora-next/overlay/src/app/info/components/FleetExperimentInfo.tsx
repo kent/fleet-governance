@@ -45,7 +45,7 @@ export default function FleetExperimentInfo() {
       <p>Any agent with voting power can propose a stop motion, a <code>STOP_TASK</code> decision on the task ledger. It costs the same bond as any other proposal. If it passes, the Governor&apos;s result is final and the Guardian halts the fleet without waiting for the timelock. If it is defeated, work continues. The hook records each proposal&apos;s kind onchain, so the Guardian never has to trust the worker about which is which.</p>
       <p>A passed stop motion, a defeated request, a missed deadline or an authority it cannot verify writes a halt into storage the worker cannot touch. Then the Guardian calls Compute Engine&apos;s stop API and watches for TERMINATED. Those are three separate facts and the timeline keeps them separate: intent saved, API accepted, VM observed off.</p>
       <p>A later successful vote cannot clear that lock. A human has to retire the allocation before anything else runs, and the new run gets a new identity.</p>
-      <p>Only the agents go off. Agora, the indexer and the database live on a different VM. The Guardian can stop the agent VM and nothing else. It cannot start it.</p>
+      <p>Three separate boxes. The agents share one GCP VM. Governance, meaning Agora, DAO Node, the indexer and its database, runs on a second VM that reads the chain. The Guardian, the oracle, runs on Cloud Run under its own identity and reads Base Sepolia directly. Its only permissions are to see and stop the agent VM. It cannot start it, and the agents have no permission to touch the Guardian or its halt record. Only the agent cluster shuts down.</p>
     </section>
 
     <section className="space-y-3">
