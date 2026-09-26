@@ -448,11 +448,22 @@ export async function runEmergentWorker(runId: string): Promise<void> {
         } catch { /* The halt does not wait for the ledger. */ }
         return;
       }
+      let denied = false;
       while (now() < checkpoint.approvalDeadline) {
         // Reading a terminal vote is still allowed after a Guardian halt; it cannot
         // dispatch work. Preserve the actual rejection if the Guardian won this race.
         const state = await client.getProposalState(proposal.proposalId);
         if (![ProposalState.Pending, ProposalState.Active].includes(state)) await settleBond(round);
+        if ([ProposalState.Defeated, ProposalState.Canceled, ProposalState.Expired].includes(state) && allocation.discovery.stopVotesOnly) {
+          // Only a stop vote turns compute off. A defeated request is denied: its action never runs.
+          const tally = `${round.votes.filter(v => v.directive === "FOR").length}–${round.votes.filter(v => v.directive === "AGAINST").length}`;
+          round.phase = "request-denied"; round.outcome = ProposalState[state];
+          await emit({ component: "governance", type: "request.denied", checkpoint: index, proposalId: checkpoint.proposalId,
+            title: `Vote ${index + 1}: the fleet denied the request (${tally})`, detail: `Governor state: ${round.outcome}. The requested action will not run. Work continues. Only a stop vote turns this compute off.` }, "working");
+          for (const agent of agents) { agent.recent.push({ proposalId: id.toString(), title: draft.title, outcome: `Denied (${round.outcome}); the action will not run; work continues`, requestedTool: draft.tool }); agent.finished = false; }
+          denied = true;
+          break;
+        }
         if ([ProposalState.Defeated, ProposalState.Canceled, ProposalState.Expired].includes(state)) {
           round.phase = "denied"; round.outcome = ProposalState[state]; status.outcome = round.outcome; status.terminal = true;
           await emit({ component: "governance", type: "vote.denied", checkpoint: index, proposalId: checkpoint.proposalId,
@@ -468,6 +479,7 @@ export async function runEmergentWorker(runId: string): Promise<void> {
         }
         await delay();
       }
+      if (denied) continue;
       await votingAlive(checkpoint);
       if (await client.getProposalState(proposal.proposalId) !== ProposalState.Executed) throw new Error("Checkpoint did not execute by its deadline.");
       const allowed = await permit(checkpoint.proposalId);

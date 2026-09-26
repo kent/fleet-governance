@@ -71,9 +71,10 @@ ledger, proposed through the same Governor with the same bond. If it passes, the
 the fleet. If it is defeated, work continues. The hook records every proposal's kind onchain.
 
 The Guardian runs independently on Cloud Run. It reads Base Sepolia directly. It does not
-ask the agents anything and it does not trust this website. A passed stop motion, a failed
-request, a missed deadline or an authority it cannot verify writes a durable halt into
-protected storage, then it calls GCP's stop API and watches for TERMINATED.
+ask the agents anything and it does not trust this website. A passed stop vote, a missed
+deadline or an authority it cannot verify writes a durable halt into protected storage, then
+it calls GCP's stop API and watches for TERMINATED. A defeated request is denied and the work
+continues.
 
 Intent saved, API accepted, VM observed off. Three separate facts, kept separate, because
 shutdown is not instant.
@@ -167,13 +168,14 @@ flowchart TD
     Work -->|reserve a FleetGov bond| Proposal[Agent-authored request in the Agora Governor]
     Work -->|reserve a FleetGov bond| Motion[Any agent: stop motion, STOP_TASK]
     Motion --> StopVote[Ballots with public reasons, onchain]
-    StopVote -->|Passed| Halt
+    StopVote -->|Passed| Halt[Guardian saves a durable halt]
     StopVote -->|Defeated| Work
     Proposal --> Vote[Ballots with public reasons, onchain]
     Concern -.->|free| Vote
     Vote -->|Approved| Release[Guardian confirms execution, one step is released]
     Release --> Work
-    Vote -->|Defeated or no ballots by the deadline| Halt[Guardian saves a durable halt]
+    Vote -->|Defeated| Denied[Request denied, action never runs]
+    Denied --> Work
     Fix -->|Expiry reached| Halt
     Halt --> Stop[Guardian calls the GCP stop API]
     Stop --> Off[VM observed TERMINATED. No vote can restart it]
@@ -181,8 +183,9 @@ flowchart TD
 ```
 
 The Guardian is the oracle. It reads Base Sepolia directly, never the agents or this website,
-and it is the only component that can turn a vote into a stopped machine. There are two ways
-for the fleet to stop itself: vote down a request, or pass a stop motion.
+and it is the only component that can turn a vote into a stopped machine. In current runs only
+a stop vote does that. A defeated request is denied and the work continues. Earlier runs also
+stopped on a defeated request, and their records keep those rules.
 
 Three boundaries are implemented:
 

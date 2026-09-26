@@ -19,6 +19,9 @@ export const ProposalDiscovery = z.object({
   allowDelegation: z.boolean().default(true),
   proposalWindowSeconds: z.number().int().min(450).max(900),
   publicationWindowSeconds: z.number().int().min(60).max(120),
+  // Newer runs: only a passed stop vote turns compute off. A defeated request is denied
+  // and work continues. Absent on historical allocations, which keep the rules they ran under.
+  stopVotesOnly: z.literal(true).optional(),
 }).strict().refine(value => new Set(value.agents.map(a => a.toLowerCase())).size === value.agents.length && value.proposalCost <= value.creditsPerAgent && value.proposalThreshold <= value.agents.length, "Distinct agent identities and attainable proposal rules required.").refine(value => !value.proposalBonds || !value.proposalToken && BigInt(value.proposalBonds.totalSupply) === 5n * 10n ** 18n && BigInt(value.proposalBonds.amount) > 0n && BigInt(value.proposalBonds.amount) <= 10n ** 18n, "Use one fixed-supply FleetGov bond policy.");
 
 /** Written by human-authorised control software, never by the agent worker. A vote may
@@ -164,6 +167,13 @@ export function evaluateComputeAllocation(
         if ([4, 5, 7].includes(p.state)) return halt("fleet_voted_stop", p.proposalId);
         continue;
       }
+      if (policy.stopVotesOnly) {
+        // Denied, not stopped: the action never runs and the fleet keeps working.
+        if ([2, 3, 6].includes(p.state)) continue;
+        // A vote that has neither failed nor executed by its window is stuck. Fail closed.
+        if (p.state !== 7 && now >= Math.min(allocation.stopAt, p.paidAt! + policy.proposalWindowSeconds)) return halt("approval_deadline", p.proposalId);
+        continue;
+      }
       if ([2, 3, 6].includes(p.state)) return halt("vote_failed", p.proposalId);
       if (now >= Math.min(allocation.stopAt, p.paidAt! + policy.proposalWindowSeconds)
         && !previous?.approvedProposalIds?.includes(p.proposalId)) return halt("approval_deadline", p.proposalId);
@@ -171,7 +181,8 @@ export function evaluateComputeAllocation(
     const approved = observation.proposals.filter(p => !isStopMotion(p) && p.state === 7).map(p => p.proposalId);
     if (previous?.approvedProposalIds?.some(id => proposals.get(id) !== 7)) return halt("unverifiable_vote");
     // An open stop motion pauses work like any open vote. A defeated one is settled.
-    const pending = observation.proposals.some(p => isStopMotion(p) ? [-1, 0, 1].includes(p.state) : p.state !== 7);
+    const pending = observation.proposals.some(p => isStopMotion(p) ? [-1, 0, 1].includes(p.state)
+      : policy.stopVotesOnly ? ![2, 3, 6, 7].includes(p.state) : p.state !== 7);
     return { allocationId: allocation.allocationId, phase: pending ? "voting" : "authorised", observedAt: now,
       approvedProposalIds: approved, observedProposalIds: observation.proposals.map(p => p.proposalId),
       waitingForProposal: !pending, ...(approved.length ? { authorisedAt: previous?.authorisedAt ?? now } : {}),

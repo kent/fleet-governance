@@ -4,7 +4,7 @@ vi.mock("node:fs", async () => ({ ...await vi.importActual<typeof import("node:f
 vi.mock("./google.js", () => ({ readSecret: async (name: string) => name.includes("wallets") ? JSON.stringify({ schema: "fleet.wallets.v1", chainId: 84532, keys: Object.fromEntries(["FLEET_KEEPER_KEY", ...Array.from({ length: 5 }, (_, i) => `FLEET_AGENT_KEY_${i}`)].map((name, i) => [name, `0x${String(i + 1).padStart(64, "0")}`])) }) : "https://rpc.invalid",
   writeObject: async (_name: string, value: any) => { m.snapshots.push(value); } }));
 vi.mock("./compute-store.js", () => ({ readComputeAllocation: async () => m.allocation, isComputeRunBlocked: async () => m.block,
-  readComputeState: async () => ({ value: { allocationId: m.allocation.allocationId, phase: m.halted ? "halted" : "authorised", observedAt: Math.floor(Date.now() / 1000), approvedProposalIds: ["101", "102", "103"].slice(0, m.released), blockNumber: "900" } }) }));
+  readComputeState: async () => ({ value: { allocationId: m.allocation.allocationId, phase: m.halted ? "halted" : "authorised", observedAt: Math.floor(Date.now() / 1000), approvedProposalIds: [...m.chain].filter(([, state]) => state === 7).map(([id]) => id), blockNumber: "900" } }) }));
 vi.mock("./simulation.js", async () => ({ ...await vi.importActual<typeof import("./simulation.js")>("./simulation.js"), readSimulationWork: async () => m.work }));
 vi.mock("../pipeline/inference-journal.js", () => ({ openInferenceJournal: () => ({ history: [], append() {}, close() {} }) }));
 vi.mock("@fleet/sdk", async () => ({ ...await vi.importActual<typeof import("@fleet/sdk")>("@fleet/sdk"),
@@ -228,5 +228,18 @@ it("keeps working when the chain rejects a proposal transaction, with no bond an
   expect(last.rounds).toEqual([]);
   // The agent may try again on a later step. Each attempt is visible and none reserves a bond.
   expect(last.events.filter((e: any) => e.type === "proposal.rejected")).toHaveLength(m.work.agentDriven.maxWorkSteps);
+  expect(last.phase).toBe("completed");
+});
+
+it("under stop-votes-only rules, denies a voted-down request and keeps working", async () => {
+  m.allocation.discovery.stopVotesOnly = true;
+  const last = await run();
+  // Work continues after the denial, so the agents may propose again.
+  expect(m.proposed.length).toBeGreaterThan(2);
+  expect(last.rounds.slice(0, 2).map((r: any) => r.phase)).toEqual(["approved", "request-denied"]);
+  const types = last.events.map((e: any) => e.type);
+  expect(types).toContain("request.denied");
+  expect(types).not.toContain("vote.denied");
+  expect(types.lastIndexOf("work.resumed")).toBeGreaterThan(types.indexOf("request.denied"));
   expect(last.phase).toBe("completed");
 });

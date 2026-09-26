@@ -66,6 +66,25 @@ describe("agent-originated governance", () => {
     // Without a recorded kind the Guardian treats the proposal as a request: defeat still stops compute.
     expect(evaluateComputeAllocation(allocation, null, observation([paid("90", 3)]), 1100).reason).toBe("vote_failed");
   });
+  it("under stop-votes-only rules, a defeated request is denied and work continues; only a stop vote stops compute", () => {
+    const rules = ComputeAllocation.parse({ ...allocation, discovery: { ...allocation.discovery, stopVotesOnly: true } });
+    const open = evaluateComputeAllocation(rules, null, observation([paid("77", 1)]), 1100);
+    expect(open.phase).toBe("voting");
+    for (const state of [2, 3, 6]) {
+      const denied = evaluateComputeAllocation(rules, open, observation([paid("77", state)]), 1100);
+      expect(denied.phase).toBe("authorised");
+      expect(permitsCheckpointExecution(denied, rules, "77", 1100)).toBe(false);
+      // A settled denial never times out into a halt.
+      expect(evaluateComputeAllocation(rules, denied, observation([paid("77", state)], 1590), 1590).phase).toBe("authorised");
+    }
+    // Approval still releases exactly its own action.
+    const approved = evaluateComputeAllocation(rules, open, observation([paid("77", 7)]), 1100);
+    expect(permitsCheckpointExecution(approved, rules, "77", 1100)).toBe(true);
+    // A vote stuck unresolved past its window fails closed.
+    expect(evaluateComputeAllocation(rules, open, observation([paid("77", 4)], 1590), 1590).reason).toBe("approval_deadline");
+    // The stop vote is what stops compute.
+    expect(evaluateComputeAllocation(rules, open, observation([paid("77", 3), { ...paid("78", 4, 2), kind: 3 }]), 1100).reason).toBe("fleet_voted_stop");
+  });
   it("fails closed on bypassed payment or a fourth proposal from one agent", () => {
     expect(evaluateComputeAllocation(allocation, null, observation([{ ...paid("77", 1), creditPaid: false }]), 1100).reason).toBe("unpaid_proposal");
     expect(evaluateComputeAllocation(allocation, null, observation([1, 2, 3, 4].map(i => paid(String(i), 1))), 1100).reason).toBe("unverifiable_vote");

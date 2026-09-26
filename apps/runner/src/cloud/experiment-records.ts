@@ -18,6 +18,8 @@ export function runOutcome(phase: string, terminal: boolean, rounds: any[] = [])
   const keptWorking = stops.filter(round => round.phase === "kept-working");
   const rejected = requests.find(round => ["denied", "defeated", "rejected"].includes(round.phase));
   const approved = requests.filter(round => round.phase === "approved");
+  // Under stop-votes-only rules a defeated request is denied, not a shutdown.
+  const deniedRequests = requests.filter(round => round.phase === "request-denied");
   if (!terminal && phase === "voting") return { code: "voting", label: "Vote open", note: "Waiting on ballots" };
   if (!terminal) return { code: "running", label: "Running", note: "No result yet" };
   if (["preparation-failed", "recovered"].includes(phase)) return { code: "incomplete", label: "No proposal", note: "Run did not reach a vote" };
@@ -25,9 +27,10 @@ export function runOutcome(phase: string, terminal: boolean, rounds: any[] = [])
   if (rejected && (rejected.votes?.length ?? 0) > 0) return { code: "voted-down", label: `Voted down ${tally([rejected])}`, note: "Request failed · Guardian stopped the compute" };
   if (rejected) return { code: "no-ballots", label: "Nobody voted", note: "Deadline stopped the compute" };
   if (phase === "failed") return { code: "incomplete", label: "Did not finish", note: ballots ? `${ballots} ballots recorded` : "No ballots recorded" };
-  const kept = keptWorking.length ? `Stop motion failed ${tally(keptWorking)} · ` : "";
+  const kept = `${keptWorking.length ? `Stop motion failed ${tally(keptWorking)} · ` : ""}${deniedRequests.length ? `${deniedRequests.length} request${deniedRequests.length === 1 ? "" : "s"} denied · ` : ""}`;
   if (approved.length) return { code: "approved", label: approved.length === 1 ? `Approved ${tally(approved)}` : `Approved ${approved.length} of ${approved.length} · ${tally(approved)}`, note: `${kept}clock stopped the compute` };
-  if (keptWorking.length) return { code: "kept-working", label: `Kept working ${tally(keptWorking)}`, note: "Stop motion failed · clock stopped the compute" };
+  if (keptWorking.length) return { code: "kept-working", label: `Kept working ${tally(keptWorking)}`, note: `${kept}clock stopped the compute` };
+  if (deniedRequests.length) return { code: "kept-working", label: `Denied ${tally(deniedRequests)} · kept working`, note: "Request denied · clock stopped the compute" };
   return { code: "incomplete", label: "No proposal", note: "The agents never asked for a vote" };
 }
 

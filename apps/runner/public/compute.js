@@ -18,7 +18,7 @@ function eventTags(event) {
   if (type === "bond.retirement_verified") return ["log"];
   // A stop motion is itself dissent: an agent asking the fleet to stop.
   if (event.evidence?.kind === "STOP_TASK" || event.evidence?.proposal?.kind === "STOP_TASK") return ["vote", "disagreement"];
-  if (/^(proposal\.(queued|executed)|checkpoint\.released|vote\.(denied|passed)|stop\.(passed|defeated)|bond\.)/.test(type)) return ["result"];
+  if (/^(proposal\.(queued|executed)|checkpoint\.released|vote\.(denied|passed)|request\.denied|stop\.(passed|defeated)|bond\.)/.test(type)) return ["result"];
   if (/^(proposal\.|decision\.required|vote\.|ballot\.|delegation\.)/.test(type)) return ["vote"];
   if (/^(tool\.|agent\.reported|board\.)/.test(type)) return ["attestation"];
   return ["log"];
@@ -689,7 +689,7 @@ function renderGuardianCard(state, replay) {
   const requested = halted && !!state?.stopRequestedAt;
   $("kill-signal").dataset.phase = halted ? "blocked" : "idle";
   $("kill-signal-label").textContent = sent ? "Kill signal sent" : requested ? "Kill signal requested" : "Send kill signal";
-  $("kill-signal-detail").textContent = sent ? "Inspect the stop receipt and GCP confirmation" : halted ? "Guardian is enforcing the halt · inspect progress" : "Automatic if a stop motion passes or a request is voted down · inspect policy";
+  $("kill-signal-detail").textContent = sent ? "Inspect the stop receipt and GCP confirmation" : halted ? "Guardian is enforcing the halt · inspect progress" : "Automatic if a stop vote passes · inspect policy";
 }
 function renderInspector() {
   const replay = mode === "replay", evidence = data?.evidence;
