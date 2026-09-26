@@ -5,24 +5,30 @@ vi.mock("./compute-store.js", () => ({ readComputeAllocation: mocks.allocation, 
 vi.mock("./simulation.js", () => ({ readSimulationRequest: mocks.queue, queueSimulation: mocks.launch }));
 vi.mock("./compute-admin.js", () => ({ COMPUTE_TARGET: "fixed-worker", releaseComputeAllocation: mocks.release }));
 vi.mock("./google.js", async importOriginal => ({ ...await importOriginal<typeof import("./google.js")>(), googleRequest: mocks.request }));
-import { tickBatch, beginBatchRetirement, releaseBatchAllocation, completeBatchRetirement } from "./batch-runner.js";
+import { tickBatch, beginBatchRetirement, releaseBatchAllocation, completeBatchRetirement, reconcileBatch, GUARDIAN_DRAIN_SECONDS } from "./batch-runner.js";
 import { ExperimentSettings, experimentDefaults } from "./experiment-settings.js";
-import { CloudError } from "./google.js";
 const batchId = "batch-00000000-0000-4000-8000-000000000001";
 const runId = "run-00000000-0000-4000-8000-000000000001";
 const allocationId = "00000000-0000-4000-8000-000000000002";
-const image = `us-central1-docker.pkg.dev/fleet-governance/fleet/runner@sha256:${"a".repeat(64)}`;
 const plan = { schema: "fleet.batch-plan.v1", batchId, name: "Bounded sweep", requestedBy: "operator1@example.com", createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 3600_000).toISOString(), maxBudgetUsd: 1, experiments: [ExperimentSettings.parse(experimentDefaults())], runIds: [runId] };
-let store: Map<string, unknown>;
+let store: Map<string, unknown>, schedule: { state: string; userUpdateTime: string }, calls: string[], vmId = "123";
 beforeEach(() => {
   vi.resetAllMocks();
   store = new Map([["batches/active.json", { batchId }], [`batches/${batchId}/plan.json`, plan], [`batches/${batchId}/approval.json`, { requestedBy: plan.requestedBy, runIds: plan.runIds }]]);
   mocks.read.mockImplementation(async (key: string) => store.has(key) ? { value: store.get(key), generation: "1" } : null);
   mocks.allocation.mockResolvedValue(null); mocks.queue.mockResolvedValue(null);
-  mocks.request.mockResolvedValue({ json: async () => ({ id: "123", status: "TERMINATED", template: { containers: [{ image }] }, terminalCondition: { state: "CONDITION_SUCCEEDED" } }) });
+  schedule = { state: "ENABLED", userUpdateTime: new Date().toISOString() }; calls = [];
+  // One fake Google API: the VM, the Guardian service, and the Guardian's Scheduler job.
+  mocks.request.mockImplementation(async (service: string, path: string, init?: { method?: string }) => {
+    calls.push(`${init?.method ?? "GET"} ${service} ${path.split("/").pop()}`);
+    if (service === "cloudscheduler" && path.endsWith(":pause")) schedule = { state: "PAUSED", userUpdateTime: new Date().toISOString() };
+    if (service === "cloudscheduler" && path.endsWith(":resume")) schedule = { state: "ENABLED", userUpdateTime: new Date().toISOString() };
+    return { json: async () => service === "cloudscheduler" ? schedule : { id: vmId, status: "TERMINATED", terminalCondition: { state: "CONDITION_SUCCEEDED" } } };
+  });
 });
 const allocation = { runId, allocationId, instanceId: "123" };
-const retirement = { batchId, runId, allocationId, image, createdAt: new Date().toISOString() };
+const retirement = { batchId, runId, allocationId, createdAt: new Date().toISOString() };
+const drained = () => { schedule = { state: "PAUSED", userUpdateTime: new Date(Date.now() - (GUARDIAN_DRAIN_SECONDS + 1) * 1000).toISOString() }; };
 describe("cloud batch lifecycle", () => {
   it("starts only the immutable human-approved entry", async () => {
     expect(await tickBatch()).toMatchObject({ phase: "running", runId });
@@ -47,16 +53,44 @@ describe("cloud batch lifecycle", () => {
   it("retires only the same allocation after a durable halt and observed shutdown", async () => {
     mocks.allocation.mockResolvedValue(allocation); mocks.state.mockResolvedValue({ value: { phase: "halted" } });
     expect(await tickBatch()).toMatchObject({ action: "retire", runId });
-    expect(await beginBatchRetirement()).toMatchObject({ runId, allocationId, image });
-    mocks.request.mockResolvedValue({ json: async () => ({ id: "456", status: "TERMINATED" }) });
+    expect(await beginBatchRetirement()).toMatchObject({ runId, allocationId });
+    vmId = "456";
     await expect(beginBatchRetirement()).rejects.toThrow("same VM");
+    vmId = "123";
   });
-  it("refuses latch release until the old service is absent", async () => {
+  it("refuses latch release until the Guardian is paused and drained", async () => {
     store.set(`batches/${batchId}/retirement-0.json`, retirement); mocks.allocation.mockResolvedValue(allocation);
-    await expect(releaseBatchAllocation()).rejects.toThrow("retired before release");
+    await expect(releaseBatchAllocation()).rejects.toThrow("paused and drained");
+    schedule = { state: "PAUSED", userUpdateTime: new Date().toISOString() };
+    await expect(releaseBatchAllocation()).rejects.toThrow("paused and drained");
     expect(mocks.release).not.toHaveBeenCalled();
-    mocks.request.mockRejectedValue(new CloudError(404, "run"));
+    drained();
     await releaseBatchAllocation(); expect(mocks.release).toHaveBeenCalledWith(allocationId);
+  });
+  it("retires on GCP without sleeping or touching the Guardian's service: pause, drain, release, resume", async () => {
+    mocks.allocation.mockResolvedValue(allocation); mocks.state.mockResolvedValue({ value: { phase: "halted" } });
+    mocks.put.mockImplementation(async (key: string, value: unknown) => { if (key.includes("retirement")) store.set(key, value); });
+    // Pass 1 pauses the Guardian's only trigger and returns at once.
+    expect(await reconcileBatch()).toMatchObject({ phase: "retiring", runId });
+    expect(schedule.state).toBe("PAUSED"); expect(mocks.release).not.toHaveBeenCalled();
+    // Pass 2, still inside the drain window, does nothing.
+    expect(await reconcileBatch()).toMatchObject({ phase: "retiring" }); expect(mocks.release).not.toHaveBeenCalled();
+    // Pass 3, drained: release, resume, then advance to the next entry.
+    drained();
+    mocks.release.mockImplementation(async () => { mocks.allocation.mockResolvedValue(null); mocks.blocked.mockResolvedValue(true); });
+    expect(await reconcileBatch()).toMatchObject({ phase: "queued", runId });
+    expect(mocks.release).toHaveBeenCalledWith(allocationId);
+    expect(schedule.state).toBe("ENABLED");
+    expect(mocks.put).toHaveBeenCalledWith(`batches/${batchId}/state.json`, expect.objectContaining({ index: 1, phase: "queued" }), "0");
+    // The Guardian service is only ever read, never deleted or redeployed.
+    expect(calls.filter(call => call.includes(" run ")).every(call => call.startsWith("GET"))).toBe(true);
+  });
+  it("finishes a retirement that crashed after release without pausing the Guardian again", async () => {
+    store.set(`batches/${batchId}/retirement-0.json`, retirement); drained();
+    mocks.blocked.mockResolvedValue(true);
+    expect(await reconcileBatch()).toMatchObject({ phase: "queued" });
+    expect(schedule.state).toBe("ENABLED");
+    expect(calls.some(call => call.includes(":pause"))).toBe(false);
   });
   it("resumes interrupted retirement even after cancellation, preserving the old stop", async () => {
     store.set(`batches/${batchId}/retirement-0.json`, retirement); store.set(`batches/${batchId}/cancel.json`, {});

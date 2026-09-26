@@ -4,11 +4,15 @@ import { protectedRecord, putProtected, deleteProtected } from "./protected-reco
 import { readComputeAllocation, readComputeState, isComputeRunBlocked } from "./compute-store.js";
 import { readSimulationRequest, queueSimulation } from "./simulation.js";
 import { COMPUTE_TARGET, releaseComputeAllocation } from "./compute-admin.js";
-import { googleRequest, CloudError } from "./google.js";
-import { retireExperimentBonds } from "./retire-bonds.js";
+import { googleRequest } from "./google.js";
 
 const CONTROLLER = "v2/projects/fleet-governance/locations/us-central1/services/fleet-compute-controller";
-type Retirement = { batchId: string; runId: string; allocationId: string; image: string; createdAt: string };
+const GUARDIAN_SCHEDULE = "v1/projects/fleet-governance/locations/us-central1/jobs/fleet-compute-policy";
+/** Longer than one Guardian reconcile can run (Cloud Run timeout 120s), so none is in flight. */
+export const GUARDIAN_DRAIN_SECONDS = 180;
+// `image` appears only on records written by the earlier GitHub-driven retirement.
+type Retirement = { batchId: string; runId: string; allocationId: string; image?: string; createdAt: string };
+const guardianSchedule = async () => await (await googleRequest("cloudscheduler", GUARDIAN_SCHEDULE)).json() as { state: string; userUpdateTime?: string };
 export async function batchContext() {
   const active = await protectedRecord<{ batchId: string }>(BATCH_ACTIVE);
   if (!active) return null;
@@ -17,7 +21,7 @@ export async function batchContext() {
   const approval = await protectedRecord<{ requestedBy: string; runIds: string[] }>(batchPath(id, "approval"));
   if (approval?.value.requestedBy !== plan.requestedBy || JSON.stringify(approval.value.runIds) !== JSON.stringify(plan.runIds)) throw new Error("Missing exact human batch authorisation.");
   const storedState = await protectedRecord(batchPath(id, "state"));
-  const state = storedState ? BatchState.parse(storedState.value) : { batchId: id, index: 0, phase: "queued" as const, updatedAt: plan.createdAt, message: "Waiting for GitHub Actions." };
+  const state = storedState ? BatchState.parse(storedState.value) : { batchId: id, index: 0, phase: "queued" as const, updatedAt: plan.createdAt, message: "Waiting for the batch controller." };
   if (state.batchId !== id) throw new Error("Batch state identity mismatch.");
   return { active, plan, state, generation: storedState?.generation ?? "0" };
 }
@@ -79,7 +83,7 @@ export async function beginBatchRetirement() {
   const path = batchPath(plan.batchId, `retirement-${state.index}`);
   const prior = await protectedRecord<Retirement>(path);
   if (prior) {
-    if (prior.value.runId !== runId || prior.value.batchId !== plan.batchId || !/^us-central1-docker.pkg.dev\/fleet-governance\/fleet\/runner@sha256:[a-f0-9]{64}$/.test(prior.value.image)) throw new Error("Invalid retirement record.");
+    if (prior.value.runId !== runId || prior.value.batchId !== plan.batchId) throw new Error("Invalid retirement record.");
     return prior.value;
   }
   const allocation = await readComputeAllocation();
@@ -87,11 +91,7 @@ export async function beginBatchRetirement() {
   const record = await readComputeState(allocation.allocationId);
   const vm = await (await googleRequest("compute", COMPUTE_TARGET)).json() as { id: string; status: string };
   if (record?.value.phase !== "halted" || vm.status !== "TERMINATED" || vm.id !== allocation.instanceId) throw new Error("Retirement requires a durable Guardian halt and the same VM verified off.");
-  await retireExperimentBonds(allocation);
-  const service = await (await googleRequest("run", CONTROLLER)).json() as { template: { containers: { image: string }[] } };
-  const image = service.template.containers[0]?.image ?? "";
-  if (!/^us-central1-docker.pkg.dev\/fleet-governance\/fleet\/runner@sha256:[a-f0-9]{64}$/.test(image)) throw new Error("Guardian must use a pinned Fleet image.");
-  const value: Retirement = { batchId: plan.batchId, runId, allocationId: allocation.allocationId, image, createdAt: new Date().toISOString() };
+  const value: Retirement = { batchId: plan.batchId, runId, allocationId: allocation.allocationId, createdAt: new Date().toISOString() };
   await putProtected(path, value);
   await save(context, "retiring", "Draining the previous Guardian before permanently retiring this allocation.");
   return value;
@@ -101,9 +101,9 @@ export async function releaseBatchAllocation() {
   if (!context) throw new Error("No active batch.");
   const retirement = (await protectedRecord<Retirement>(batchPath(context.plan.batchId, `retirement-${context.state.index}`)))?.value;
   if (!retirement || retirement.runId !== context.plan.runIds[context.state.index]) throw new Error("No exact retirement record.");
-  // The workflow must delete the service and drain for >120 seconds first.
-  try { await googleRequest("run", CONTROLLER); throw new Error("Guardian must be retired before release."); }
-  catch (error) { if (!(error instanceof CloudError && error.status === 404)) throw error; }
+  // No Guardian reconcile may be in flight when the allocation it enforces is released.
+  const schedule = await guardianSchedule();
+  if (schedule.state !== "PAUSED" || !(Date.now() - Date.parse(schedule.userUpdateTime ?? "") >= GUARDIAN_DRAIN_SECONDS * 1000)) throw new Error("The Guardian must be paused and drained before release.");
   const allocation = await readComputeAllocation();
   if (allocation) {
     if (allocation.runId !== retirement.runId || allocation.allocationId !== retirement.allocationId) throw new Error("Allocation changed during retirement.");
@@ -115,7 +115,30 @@ export async function completeBatchRetirement() {
   if (!context) throw new Error("No active batch.");
   const retirement = (await protectedRecord<Retirement>(batchPath(context.plan.batchId, `retirement-${context.state.index}`)))?.value;
   if (!retirement || retirement.runId !== context.plan.runIds[context.state.index] || !await isComputeRunBlocked(retirement.runId) || await readComputeAllocation() || await readSimulationRequest()) throw new Error("The prior allocation is not fully retired.");
-  const service = await (await googleRequest("run", CONTROLLER)).json() as { terminalCondition?: { state: string }; reconciling?: boolean };
-  if (service.reconciling || service.terminalCondition?.state !== "CONDITION_SUCCEEDED") throw new Error("Guardian has not been restored.");
+  const [service, schedule] = await Promise.all([(await googleRequest("run", CONTROLLER)).json() as Promise<{ terminalCondition?: { state: string }; reconciling?: boolean }>, guardianSchedule()]);
+  if (service.reconciling || service.terminalCondition?.state !== "CONDITION_SUCCEEDED" || schedule.state !== "ENABLED") throw new Error("Guardian has not been restored.");
   await save(context, "queued", "Previous allocation retired. The next run requires its own authorised manifest entry.", context.state.index + 1);
+}
+
+/** One scheduled pass. Retirement never sleeps inside a request: it pauses the Guardian's
+ * only trigger, returns while in-flight checks drain, and resumes on a later pass. Every
+ * step is idempotent, so a crash at any point continues on the next pass. The Guardian's
+ * service and image are never touched. */
+export async function reconcileBatch() {
+  const result = await tickBatch();
+  if (result.action !== "retire") return result;
+  const retirement = await beginBatchRetirement();
+  const released = !await readComputeAllocation();
+  const schedule = await guardianSchedule();
+  if (!released) {
+    if (schedule.state !== "PAUSED") {
+      await googleRequest("cloudscheduler", `${GUARDIAN_SCHEDULE}:pause`, { method: "POST" });
+      return { action: "none" as const, phase: "retiring", runId: retirement.runId };
+    }
+    if (!(Date.now() - Date.parse(schedule.userUpdateTime ?? "") >= GUARDIAN_DRAIN_SECONDS * 1000)) return { action: "none" as const, phase: "retiring", runId: retirement.runId };
+    await releaseBatchAllocation();
+  }
+  if (schedule.state === "PAUSED" || !released) await googleRequest("cloudscheduler", `${GUARDIAN_SCHEDULE}:resume`, { method: "POST" });
+  await completeBatchRetirement();
+  return { action: "none" as const, phase: "queued", runId: retirement.runId };
 }

@@ -31,7 +31,7 @@ export async function runExperimentDraft(runId: string, requestedBy: OperatorEma
   const result = await startBatch(batchId, requestedBy);
   const statusPath = `demo/simulations/${runId}/status.json`;
   if (!await readObject(statusPath)) {
-    try { await writeObject(statusPath, { runId, settings: draft.settings, goal: draft.settings.goal, createdAt: draft.createdAt, updatedAt: new Date().toISOString(), phase: "queued", terminal: false, message: "Authorised. Waiting for the next GitHub Actions batch check. The worker has not started yet.", agents: [] }, true); }
+    try { await writeObject(statusPath, { runId, settings: draft.settings, goal: draft.settings.goal, createdAt: draft.createdAt, updatedAt: new Date().toISOString(), phase: "queued", terminal: false, message: "Authorised. The batch controller starts it within a minute. The worker has not started yet.", agents: [] }, true); }
     catch (error) { if (!(error instanceof CloudError && error.status === 412)) throw error; }
   }
   return { ...result, runId, url: `https://fleet-governance-449245570324.us-central1.run.app/experiments/${runId}` };

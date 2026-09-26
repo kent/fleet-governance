@@ -84,7 +84,7 @@ export async function queueSimulation(id: string, input: unknown, requestedBy: O
   if (active && !(await readObject<DemoStatus>(runPath(active.runId, "status.json")))?.terminal) throw new Error("An experiment is already running on the worker.");
   const service = await (await googleRequest("run", "v2/projects/fleet-governance/locations/us-central1/services/fleet-compute-controller")).json() as { terminalCondition?: { state: string }; reconciling?: boolean };
   const scheduler = await (await googleRequest("cloudscheduler", "v1/projects/fleet-governance/locations/us-central1/jobs/fleet-compute-policy")).json() as { state: string };
-  if (service.terminalCondition?.state !== "CONDITION_SUCCEEDED" || service.reconciling || scheduler.state !== "ENABLED") throw new Error("The independent shutdown controller is not ready. Complete its GitHub deployment before starting a simulation.");
+  if (service.terminalCondition?.state !== "CONDITION_SUCCEEDED" || service.reconciling || scheduler.state !== "ENABLED") throw new Error("The independent shutdown controller is not ready. Deploy it before starting a simulation.");
   await googleRequest("storage", `upload/storage/v1/b/${COMPUTE_BUCKET}/o?uploadType=media&name=${SIMULATION_QUEUE}&ifGenerationMatch=0`, { method: "POST", body: JSON.stringify(request) });
   await writeObject(simulationPath(id, "request.json"), request, true);
   await writeObject(simulationPath(id), { runId: id, settings: request.settings, createdAt: request.createdAt, phase: "provisioning", message: "Starting the fixed GCP worker and setting the task, constitution and proposal allowances. Agents will decide what to propose while working.", updatedAt: new Date().toISOString(), terminal: false, agents: [] });

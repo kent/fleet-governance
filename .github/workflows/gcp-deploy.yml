@@ -165,6 +165,9 @@ jobs:
       - name: Deploy fixed simulation preparation job
         if: ${{ !inputs.site_only && !inputs.history_only }}
         run: bash infra/gcp/deploy-simulation.sh
+      - name: Deploy the GCP batch controller after its Guardian and preparation job
+        if: ${{ !inputs.site_only && !inputs.history_only }}
+        run: bash infra/gcp/deploy-batch-controller.sh
       - name: Check and start the fixed worker
         if: ${{ !inputs.site_only && !inputs.history_only && !inputs.control_only }}
         run: |

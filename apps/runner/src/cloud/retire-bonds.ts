@@ -48,7 +48,7 @@ export async function retireExperimentBonds(allocation: ComputeAllocation) {
   if (BigInt(logs.length) !== count) throw new Error("Missing bond settlement evidence.");
   const events = logs.map(log => runEvent(allocation.runId, { component: "governance", type: "bond.retirement_verified", proposalId: log.args.proposalId.toString(),
     txHash: log.transactionHash, blockNumber: log.blockNumber.toString(), title: `FleetGov bond ${log.args.settlement === 1 ? "returned" : "forfeited"}`,
-    detail: "GitHub independently read the onchain settlement after the agent VM stopped. The old proposal policy is permanently closed; no new experiment was started.",
+    detail: "The batch controller independently read the onchain settlement after the agent VM stopped. The old proposal policy is permanently closed; no new experiment was started.",
     evidence: { amount: log.args.amount.toString(), settlement: log.args.settlement, proposer: log.args.proposer,
       participation: log.args.participation.toString(), requiredParticipation: log.args.requiredParticipation.toString() } }));
   await writeControlObject(path, { runId: allocation.runId, allocationId: allocation.allocationId, taskId: taskId.toString(), bank, token,

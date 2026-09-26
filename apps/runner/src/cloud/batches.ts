@@ -45,12 +45,12 @@ export async function startBatch(id: string, requestedBy: OperatorEmail) {
   if (plan.requestedBy !== OperatorEmail.parse(requestedBy)) throw new Error("Only this batch's creator can authorise it.");
   if (Date.parse(plan.expiresAt) <= Date.now() || await protectedRecord(batchPath(id, "cancel"))) throw new Error("This batch is expired or cancelled.");
   const current = await protectedRecord<{ batchId: string }>(BATCH_ACTIVE);
-  if (current?.value.batchId === id) return { batchId: id, phase: "queued", message: "Batch already authorised. GitHub Actions will reconcile its progress." };
+  if (current?.value.batchId === id) return { batchId: id, phase: "queued", message: "Batch already authorised. The batch controller checks it every minute." };
   if (current || await readComputeAllocation() || await readSimulationRequest()) throw new Error("Another batch or allocation owns the worker. Retire it before authorising a new batch.");
   if (await protectedRecord(batchPath(id, "approval"))) throw new Error("An approved batch cannot be restarted. Create a new batch.");
   await putProtected(batchPath(id, "approval"), { batchId: id, requestedBy, approvedAt: new Date().toISOString(), maxBudgetUsd: plan.maxBudgetUsd, runIds: plan.runIds });
   await putProtected(BATCH_ACTIVE, { batchId: id });
-  return { batchId: id, phase: "queued", message: "Authorised. GitHub Actions checks every five minutes; scheduling can be delayed. This batch continues with your computer off." };
+  return { batchId: id, phase: "queued", message: "Authorised. The batch controller on GCP checks every minute. This batch continues with your computer off." };
 }
 export async function cancelBatch(id: string, requestedBy: OperatorEmail) {
   OperatorEmail.parse(requestedBy);
