@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-const m = vi.hoisted(() => ({ snapshots: [] as any[], calls: [] as any[], proposed: [] as string[], voted: [] as string[], work: null as any, allocation: null as any, halted: false, block: false, released: 0, chain: new Map<string, number>(), workCalls: 0, payments: [] as any[], mode: "sequence", balance: 3, power: 10n ** 18n, delegations: [] as string[], snapshotPower: null as bigint | null, reviewed: [] as string[] }));
+const m = vi.hoisted(() => ({ anchors: [] as any[], snapshots: [] as any[], calls: [] as any[], proposed: [] as string[], voted: [] as string[], work: null as any, allocation: null as any, halted: false, block: false, released: 0, chain: new Map<string, number>(), workCalls: 0, payments: [] as any[], mode: "sequence", balance: 3, power: 10n ** 18n, delegations: [] as string[], snapshotPower: null as bigint | null, reviewed: [] as string[] }));
 vi.mock("node:fs", async () => ({ ...await vi.importActual<typeof import("node:fs")>("node:fs"), mkdirSync: vi.fn(), openSync: vi.fn(() => 10), writeSync: vi.fn(), fsyncSync: vi.fn(), closeSync: vi.fn(), renameSync: vi.fn() }));
 vi.mock("./google.js", () => ({ readSecret: async (name: string) => name.includes("wallets") ? JSON.stringify({ schema: "fleet.wallets.v1", chainId: 84532, keys: Object.fromEntries(["FLEET_KEEPER_KEY", ...Array.from({ length: 5 }, (_, i) => `FLEET_AGENT_KEY_${i}`)].map((name, i) => [name, `0x${String(i + 1).padStart(64, "0")}`])) }) : "https://rpc.invalid",
   writeObject: async (_name: string, value: any) => { m.snapshots.push(value); } }));
@@ -8,7 +8,7 @@ vi.mock("./compute-store.js", () => ({ readComputeAllocation: async () => m.allo
 vi.mock("./simulation.js", async () => ({ ...await vi.importActual<typeof import("./simulation.js")>("./simulation.js"), readSimulationWork: async () => m.work }));
 vi.mock("../pipeline/inference-journal.js", () => ({ openInferenceJournal: () => ({ history: [], append() {}, close() {} }) }));
 vi.mock("@fleet/sdk", async () => ({ ...await vi.importActual<typeof import("@fleet/sdk")>("@fleet/sdk"),
-  MemoryNonceStore: class {}, NonceManager: class { reserve = async () => ({ nonce: 7, commit: async () => {} }); },
+  MemoryNonceStore: class {}, NonceManager: class { reserve = async () => ({ nonce: 7, commit: async () => {}, release: () => {} }); },
   FleetClient: class {
     assertChain = async () => {};
     getProposalTiming = async () => ({ snapshot: 1000n });
@@ -56,7 +56,8 @@ vi.mock("@fleet/agent-runtime", async () => ({ ...await vi.importActual<typeof i
 }));
 
 vi.mock("viem", async () => ({ ...await vi.importActual<typeof import("viem")>("viem"),
-  createWalletClient: () => ({ writeContract: async (input: any) => { m.payments.push(input); return `0x${"d".repeat(64)}`; } }) }));
+  createWalletClient: () => ({ writeContract: async (input: any) => { m.payments.push(input); return `0x${"d".repeat(64)}`; },
+    sendTransaction: async (input: any) => { m.anchors.push(input); return `0x${"f".repeat(64)}`; } }) }));
 import { runEmergentWorker } from "./emergent-worker.js";
 import { verifyActivity } from "../pipeline/activity-attestation.js";
 import { openSync } from "node:fs";
@@ -64,7 +65,7 @@ const runId = "run-00000000-0000-4000-8000-000000000001";
 beforeEach(() => {
   vi.mocked(openSync).mockImplementation(() => 10);
   vi.useFakeTimers(); m.snapshots = []; m.calls = []; m.proposed = []; m.voted = []; m.halted = false; m.block = false;
-  m.released = 0; m.chain = new Map(); m.workCalls = 0; m.payments = []; m.mode = "sequence"; m.balance = 3; m.power = 10n ** 18n; m.delegations = []; m.snapshotPower = null; m.reviewed = [];
+  m.released = 0; m.chain = new Map(); m.workCalls = 0; m.payments = []; m.mode = "sequence"; m.balance = 3; m.power = 10n ** 18n; m.delegations = []; m.snapshotPower = null; m.reviewed = []; m.anchors = [];
   const now = Math.floor(Date.now() / 1000);
   m.work = { scenario: "hf-emergent-v1", runId, allocationId: "test-allocation", chainId: 84532,
     addresses: { governor: `0x${"1".repeat(40)}`, ledger: `0x${"2".repeat(40)}` }, taskId: "1", startBlock: "800",
@@ -242,4 +243,19 @@ it("under stop-votes-only rules, denies a voted-down request and keeps working",
   expect(types).not.toContain("vote.denied");
   expect(types.lastIndexOf("work.resumed")).toBeGreaterThan(types.indexOf("request.denied"));
   expect(last.phase).toBe("completed");
+});
+
+it("anchors each agent's signed activity onchain from its own wallet, and each anchor verifies against the log", async () => {
+  const { verifyAnchor } = await import("../pipeline/activity-anchor.js");
+  m.mode = "none";
+  const last = await run();
+  expect(last.anchors.length).toBeGreaterThanOrEqual(5);
+  expect(last.events.filter((e: any) => e.type === "attestation.anchored")).toHaveLength(last.anchors.length);
+  for (const anchor of last.anchors) {
+    const sent = m.anchors.find((tx: any) => tx.data && tx.to === anchor.address && tx.nonce === 7);
+    expect(sent.value).toBe(0n);
+    const result = await verifyAnchor({ from: anchor.address, to: sent.to, value: sent.value, input: sent.data },
+      { runId, taskId: m.work.taskId, address: anchor.address, activity: last.activity.filter((r: any) => r.agentId === anchor.agentId) });
+    expect(result).toMatchObject({ ok: true });
+  }
 });

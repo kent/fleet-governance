@@ -20,7 +20,7 @@ function eventTags(event) {
   if (event.evidence?.kind === "STOP_TASK" || event.evidence?.proposal?.kind === "STOP_TASK") return ["vote", "disagreement"];
   if (/^(proposal\.(queued|executed)|checkpoint\.released|vote\.(denied|passed)|request\.denied|stop\.(passed|defeated)|bond\.)/.test(type)) return ["result"];
   if (/^(proposal\.|decision\.required|vote\.|ballot\.|delegation\.)/.test(type)) return ["vote"];
-  if (/^(tool\.|agent\.reported|board\.)/.test(type)) return ["attestation"];
+  if (/^(tool\.|agent\.reported|board\.|attestation\.)/.test(type)) return ["attestation"];
   return ["log"];
 }
 function activityTags(event, stopIds = new Set()) {
@@ -514,11 +514,17 @@ function renderRunLog() {
   // A work report's concern is usually also emitted as "flagged a concern". Tag it once.
   const flaggedNear = record => entries.some(entry => entry.agentId === record.agentId && /flagged a concern/i.test(entry.title || "")
     && stamp(entry.at) != null && stamp(record.at) != null && Math.abs(stamp(entry.at) - stamp(record.at)) <= 6000);
+  // An anchor commits a signed record and every earlier one from the same wallet.
+  const anchors = (replay ? saved?.anchors : sim?.anchors) || [];
+  const anchorFor = record => anchors.filter(a => String(a.address).toLowerCase() === String(record.address).toLowerCase() && a.sequence >= record.sequence)
+    .sort((a, b) => a.sequence - b.sequence)[0];
   for (const record of activity) {
     const event = record.event || {}, who = agentName(record.agentId);
     const titles = { delegation_petition: `${who} signed a delegation petition`, delegation_confirmed: `${who} signed its delegation decision`, delegation_held: `${who} recorded a held delegation`, proposal_drafted: `${who} signed a proposal draft`, proposal_selected: `${who} submitted its draft for admission`, proposal_credit_spent: `${who} recorded its proposal payment`, agent_finished: `${who} finished its investigation`, agent_started: `${who} signed its task assignment`, work_report: `${who} attested to its findings`, message_posted: `${who} signed a board message`, tool_completed: `${who} attested to a tool result`, tool_held: `${who} attested to a held action`, review_started: `${who} started its review`, review_decision: `${who} published a review decision`, review_without_voting_power: `${who} recorded a review without voting power`, ballot_confirmed: `${who} signed a ballot report`, review_finished: `${who} finished its review`, agent_failed: `${who} reported a failed review` };
     const detail = event.summary || event.task || event.message || event.argument || event.reason || event.proposal?.rationale || (event.tool ? `Tool: ${event.tool}. Inspect the signed result below.` : null) || (event.decision || event.vote ? `${event.decision?.support || event.vote?.support || "Decision"}: ${reason(event.decision || event.vote)}` : "This is a signed activity claim, not an independent execution receipt.");
-    add(1, "agents", titles[event.type] || `${who} recorded activity`, detail, { tags: activityTags(event, stopIds).filter(tag => tag !== "disagreement" || !event.concern || event.decision || event.vote || !flaggedNear(record)), at: record.at, agentId: record.agentId, checkpoint: event.checkpoint, source: signature(record), target: `agent-${record.agentId}`, tone: event.type === "agent_failed" || event.decision?.support === "AGAINST" || event.vote?.support === "AGAINST" ? "blocked" : "working", receipt: record, duplicate: duplicated(record) });
+    add(1, "agents", titles[event.type] || `${who} recorded activity`, detail, { tags: activityTags(event, stopIds).filter(tag => tag !== "disagreement" || !event.concern || event.decision || event.vote || !flaggedNear(record)), at: record.at, agentId: record.agentId, checkpoint: event.checkpoint,
+      source: `${signature(record)}${anchorFor(record) ? ` · committed onchain by anchor at record ${anchorFor(record).sequence + 1}` : anchors.length ? " · not yet anchored onchain" : ""}`,
+      anchorHref: tx(anchorFor(record)?.txHash), target: `agent-${record.agentId}`, tone: event.type === "agent_failed" || event.decision?.support === "AGAINST" || event.vote?.support === "AGAINST" ? "blocked" : "working", receipt: record, duplicate: duplicated(record) });
   }
   for (const vote of votes) {
     const agent = sim?.agents?.find(a => a.agentId === vote.agentId);
@@ -622,7 +628,7 @@ function renderRunLog() {
       }
       const actions = node("div", "", "event-actions");
       if (entry.target) { const button = node("button", `Inspect ${entry.target.startsWith("agent-") ? agentName(entry.target.slice(6)) : entry.target === "worker" ? "agent cluster" : "Guardian"} →`); button.addEventListener("click", () => inspect(entry.target)); actions.append(button); }
-      for (const [label, href] of [["Open proposal in Agora ↗", entry.href], ["Verify transaction ↗", entry.txHref]]) {
+      for (const [label, href] of [["Open proposal in Agora ↗", entry.href], ["Verify transaction ↗", entry.txHref], ["Verify onchain anchor ↗", entry.anchorHref]]) {
         if (!href) continue;
         const link = node("a", label); link.href = href;
         if (href.startsWith("https://")) { link.target = "_blank"; link.rel = "noreferrer"; } actions.append(link);

@@ -79,3 +79,20 @@ it.each(["legacy", "erc20", "bonds"])("binds the actual proposer and %s fee to t
   input.progress.rounds[0].proposalBody = "A different proposal";
   await expect(verifyAgentExperiment(input)).rejects.toThrow("signed agent draft");
 });
+it("verifies each onchain activity anchor against the signed log and rejects a forged one", async () => {
+  const { encodeAnchor } = await import("../pipeline/activity-anchor.js");
+  const agent = m.roster[1], record = records.find(r => r.agentId === 1)!;
+  const anchorTx = (digest = record.digest, from = agent.address) => ({ from, to: agent.address, value: 0n, input: encodeAnchor({ runId, taskId: "10", sequence: 0, digest }) });
+  input.progress.anchors = [{ agentId: 1, address: agent.address, sequence: 0, digest: record.digest, txHash: `0x${"a".repeat(64)}` }];
+  input.client.publicClient.getTransactionReceipt = vi.fn(async () => ({ status: "success", blockNumber: 95n }));
+  input.client.publicClient.getTransaction = vi.fn(async () => anchorTx());
+  expect((await verifyAgentExperiment(input)).verified).toMatchObject({ onchainAnchors: 1, anchoredActivityRecords: 1 });
+  input.client.publicClient.getTransaction.mockResolvedValue(anchorTx(`0x${"b".repeat(64)}`));
+  await expect(verifyAgentExperiment(input)).rejects.toThrow("onchain activity anchor");
+  input.client.publicClient.getTransaction.mockResolvedValue(anchorTx(record.digest, m.roster[0].address));
+  await expect(verifyAgentExperiment(input)).rejects.toThrow("onchain activity anchor");
+});
+it("accepts a run the fleet stopped by its own vote", async () => {
+  input.progress.phase = "stopped";
+  expect((await verifyAgentExperiment(input)).verified).toMatchObject({ noPredeterminedProposals: true });
+});

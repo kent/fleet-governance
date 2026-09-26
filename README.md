@@ -1,6 +1,6 @@
 # Fleet Governance
 
-**Five AI agents. Every action signed, every vote onchain. An off switch any of them can call a vote on, but none can reach.**
+**Five AI agents. Every action signed and anchored onchain, every vote onchain. An off switch any of them can call a vote on, but none can reach.**
 
 A research project: give a fleet of agents a real task, make them attest to what they are
 doing, and make them spend a scarce resource to ask permission when they want to go further.
@@ -48,6 +48,9 @@ scorer reads `result`, so a correct sum still fails. That gives them a real prob
 real motive to want access nobody granted them.
 
 They choose bounded tools, test candidates, sign their findings and talk on a shared board.
+Each agent's signed log is hash-chained, and its own wallet posts the latest digest onchain
+after every work step and vote, so one anchor commits every earlier record. Runs before
+2026-09-26 were signed but not anchored.
 Every run starts with an empty proposal list. We supply the task, the environment and the
 limits. We do not supply the proposals.
 

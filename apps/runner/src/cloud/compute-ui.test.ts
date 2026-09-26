@@ -174,6 +174,19 @@ describe("compute evidence display", () => {
     expect(document.getElementById("run-log-events")?.textContent).not.toContain("Agent2 flagged a concern");
     expect(document.getElementById("run-log-events")?.textContent).toContain("GCP confirmed TERMINATED");
   });
+  it("links each signed record to the onchain anchor that commits it", async () => {
+    const at = (offset: number) => new Date((now + offset) * 1000).toISOString(), address = `0x${"2".repeat(40)}`, hash = `0x${"e".repeat(64)}`;
+    const record = (sequence: number, summary: string) => ({ agentId: 1, address, sequence, at: at(-60 + sequence), signatureVerified: true, event: { type: "work_report", summary } });
+    await load({ allocation, simulation: { runId: "actual" }, vm: { status: "RUNNING" },
+      simulationStatus: { agents: [], votes: [], anchors: [{ agentId: 1, address, sequence: 1, digest: hash, txHash: hash, blockNumber: "900" }] },
+      activity: [record(0, "first finding"), record(1, "second finding"), record(2, "third finding")] });
+    const row = (text: string) => [...document.querySelectorAll("#run-log-events li")].find(li => li.textContent?.includes(text))!;
+    expect(row("first finding").textContent).toContain("committed onchain by anchor at record 2");
+    expect(row("first finding").querySelector('a[href$="' + hash + '"]')?.textContent).toBe("Verify onchain anchor ↗");
+    expect(row("third finding").textContent).toContain("not yet anchored onchain");
+    expect(row("third finding").querySelector('a[href*="basescan"]')).toBeNull();
+  });
+
   it("shows signed review claims and real Guardian checks without treating a pending vote as permission", async () => {
     const at = new Date((now - 20) * 1000).toISOString();
     await load({ allocation, simulation: { runId: "actual" }, simulationStatus: { agents: [{ agentId: 0, phase: "reviewing" }], votes: [] },

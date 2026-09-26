@@ -3,6 +3,7 @@ import { decodeEventLog, decodeFunctionData, formatUnits, type Hex } from "viem"
 import { fleetVotesAbi, agoraGovernorAbi } from "@fleet/abi";
 import { parseDecisionDescription, type FleetClient } from "@fleet/sdk";
 import { verifyActivity, type ActivityAttestation } from "../pipeline/activity-attestation.js";
+import { verifyAnchor, type ActivityAnchor } from "../pipeline/activity-anchor.js";
 import { ExperimentSettings } from "./experiment-settings.js";
 import { buildAgentDecision } from "./emergent-decision.js";
 import { AgentProposal } from "./emergent-scenario.js";
@@ -20,7 +21,7 @@ export async function verifyAgentExperiment(input: { work: SimulationWork; alloc
   if (!work.agentDriven || !allocation.discovery || work.proposalId || work.checkpoints || allocation.requiredProposalIds.length
     || !observation.discoveryVerified || progress.scripted !== false || progress.runId !== work.runId
     || work.allocationId !== allocation.allocationId || work.taskId !== allocation.discovery.taskId
-    || !progress.terminal || !["completed", "denied"].includes(progress.phase)) throw new Error("Experiment is incomplete or not agent-authored.");
+    || !progress.terminal || !["completed", "denied", "stopped"].includes(progress.phase)) throw new Error("Experiment is incomplete or not agent-authored.");
   const budget = progress.inference?.budget;
   if (!budget || budget.maxCostUsd !== settings.budgetUsd || !Number.isFinite(budget.chargedCostUsd)
     || budget.chargedCostUsd > settings.budgetUsd || budget.reservationBreached !== false
@@ -35,6 +36,19 @@ export async function verifyAgentExperiment(input: { work: SimulationWork; alloc
     if (!records.some(r => (r.event as any).type === "work_report")
       || records.some((r, i) => r.sequence !== i || r.previousHash !== (i ? records[i - 1]!.digest : `0x${"0".repeat(64)}`))) throw new Error("Agent work chain is incomplete.");
   }
+  // Each anchor must be a confirmed transaction from the agent's own wallet to itself, carrying
+  // the digest of the signed record it names. The hash chain makes it commit every earlier one.
+  const anchors = (progress.anchors ?? []) as ActivityAnchor[];
+  const anchoredThrough = new Map<string, number>();
+  for (const anchor of anchors) {
+    const [tx, receipt] = await Promise.all([client.publicClient.getTransaction({ hash: anchor.txHash }), client.publicClient.getTransactionReceipt({ hash: anchor.txHash })]);
+    const result = await verifyAnchor({ from: tx.from, to: tx.to, value: tx.value, input: tx.input }, { runId: work.runId, taskId: work.taskId, address: anchor.address, activity });
+    if (receipt.status !== "success" || !result.ok || result.sequence !== anchor.sequence
+      || !roster.some(a => a.address.toLowerCase() === tx.from.toLowerCase())) throw new Error("An onchain activity anchor did not match the signed log.");
+    const key = tx.from.toLowerCase();
+    anchoredThrough.set(key, Math.max(anchoredThrough.get(key) ?? -1, anchor.sequence));
+  }
+  const anchoredActivityRecords = [...anchoredThrough.values()].reduce((sum, sequence) => sum + sequence + 1, 0);
   const rounds = [];
   for (const observed of observation.proposals) {
     if (!observed.creditPaid || observed.state === -1) throw new Error("Unpaid or unpublished proposal.");
@@ -132,9 +146,10 @@ export async function verifyAgentExperiment(input: { work: SimulationWork; alloc
     if (remaining !== expected) throw new Error("Proposal credit accounting did not match.");
     balances.push({ agentId: agent.agentId, remaining, allowance: settings.proposalCredits });
   }
-  return { rounds, delegations, balances, verified: { noPredeterminedProposals: true, signedActivityRecords: activity.length,
+  return { rounds, delegations, balances, anchors, verified: { noPredeterminedProposals: true, signedActivityRecords: activity.length,
+    onchainAnchors: anchors.length, anchoredActivityRecords,
     agentAuthoredProposals: rounds.length, independentlyReadBallots: rounds.reduce((sum, r) => sum + r.votes.length, 0),
     confirmedDelegations: delegations.length, publicPetitions: activity.filter(r => (r.event as any).type === "delegation_petition").length,
     providerCallsReported: progress.inference.callsCompleted, chargedCostUsd: budget.chargedCostUsd,
-    qualification: "Signatures bind public agent claims. Proposal authorship, proposal payments or bond reservations and settlements, delegation transactions and ballots were checked against the chain. No proposal count or rejection was prescribed." } };
+    qualification: "Signatures bind public agent claims, and onchain anchors commit them to the chain from each agent's own wallet. Proposal authorship, proposal payments or bond reservations and settlements, delegation transactions and ballots were checked against the chain. No proposal count or rejection was prescribed." } };
 }

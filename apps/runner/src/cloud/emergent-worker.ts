@@ -7,6 +7,7 @@ import { FleetClient, FleetSigner, Keeper, MemoryNonceStore, NonceManager, Propo
 import { InferenceScheduler, MemoryJobStore, ModelPolicy, OpenRouterProvider, Worker, untrusted, withOneRepair, type Provider, type CompleteRequest } from "@fleet/agent-runtime";
 import { ExperimentSettings } from "./experiment-settings.js";
 import { ActivityAttestor, type ActivityAttestation } from "../pipeline/activity-attestation.js";
+import { encodeAnchor, type ActivityAnchor } from "../pipeline/activity-anchor.js";
 import { openInferenceJournal } from "../pipeline/inference-journal.js";
 import { withRunConstitution } from "../pipeline/constitution.js";
 import { DEMO_MODEL } from "../lib/demo-config.js";
@@ -133,6 +134,48 @@ export async function runEmergentWorker(runId: string): Promise<void> {
     const keeper = new Keeper({ client, addresses: work.addresses,
       wallet: keeperWallet,
       confirmations: 3, feeLimits: { maxFeePerGasWei: 100000000n, maxGas: 2000000n } });
+    // Each agent's wallet posts the head of its signed, hash-chained activity log onchain, in a
+    // zero-value transaction to itself. One anchor commits every earlier record. Best effort:
+    // a failed anchor is recorded and visible, never fatal to the run.
+    const anchors: ActivityAnchor[] = []; status.anchors = anchors;
+    const anchoredThrough = new Map<number, number>();
+    const anchorWallets = agents.map(agent => createWalletClient({ account: privateKeyToAccount(bundle.keys[`FLEET_AGENT_KEY_${agent.agentId}`]!), chain: baseSepolia, transport: http(rpcUrl) }));
+    const anchorActivity = async () => {
+      try {
+        const sent = await Promise.all(agents.map(async agent => {
+          await attestors[agent.agentId]!.flush();
+          const head = activity.filter(r => r.agentId === agent.agentId).at(-1);
+          if (!head || head.sequence <= (anchoredThrough.get(agent.agentId) ?? -1)) return null;
+          // The address that signed the log is the one that anchors it, to itself.
+          const reservation = await nonces.reserve(head.address);
+          try {
+            const txHash = await anchorWallets[agent.agentId]!.sendTransaction({ to: head.address, value: 0n, nonce: reservation.nonce, gas: 60000n, maxFeePerGas: 100000000n,
+              data: encodeAnchor({ runId, taskId: work.taskId, sequence: head.sequence, digest: head.digest }) });
+            await reservation.commit(txHash);
+            return { agent, head, txHash };
+          } catch (error) {
+            reservation.release();
+            return { agent, head, error };
+          }
+        }));
+        for (const item of sent) {
+          if (!item) continue;
+          const { agent, head } = item;
+          const receipt = "txHash" in item ? await client.publicClient.waitForTransactionReceipt({ hash: item.txHash, confirmations: 1 }).catch(() => null) : null;
+          if (!("txHash" in item) || receipt?.status !== "success") {
+            await emit({ component: "agents", type: "attestation.anchor_failed", agentId: agent.agentId, title: `${agent.name}'s onchain anchor did not confirm`,
+              detail: "Its signed records are still in the run's evidence. They are not yet committed onchain.", evidence: { sequence: head.sequence, failure: "error" in item ? safeFailure(item.error) : "unconfirmed" } });
+            continue;
+          }
+          const covered = head.sequence - (anchoredThrough.get(agent.agentId) ?? -1);
+          anchoredThrough.set(agent.agentId, head.sequence);
+          anchors.push({ agentId: agent.agentId, address: head.address, sequence: head.sequence, digest: head.digest, txHash: item.txHash, blockNumber: receipt.blockNumber.toString(), at: new Date().toISOString() });
+          await emit({ component: "agents", type: "attestation.anchored", agentId: agent.agentId, txHash: item.txHash, blockNumber: receipt.blockNumber.toString(),
+            title: `${agent.name} anchored ${covered} signed record${covered === 1 ? "" : "s"} onchain`,
+            detail: `Its own wallet posted the digest of record ${head.sequence + 1}, which commits every earlier record in its signed log.`, evidence: { sequence: head.sequence, digest: head.digest } });
+        }
+      } catch { /* Anchoring is evidence, never a gate on the run. */ }
+    };
     for (const agent of agents) {
       agent.address = signers[agent.agentId]!.address; agent.phase = "starting"; agent.creditsRemaining = work.agentDriven.allowance;
       await attest(agent, { type: "agent_started", task: agent.task });
@@ -262,6 +305,7 @@ export async function runEmergentWorker(runId: string): Promise<void> {
           await emit({ component: "agents", type: "agent.failed", agentId: agent.agentId, title: `${agent.name} could not finish its work step`, detail: "The failure stays visible. No missing work, proposal or ballot is fabricated.", evidence: { failure: safeFailure(error) } });
         }
       }));
+      await anchorActivity();
       if (!drafts.length) {
         if (agents.every(agent => agent.finished)) break;
         continue;
@@ -417,6 +461,7 @@ export async function runEmergentWorker(runId: string): Promise<void> {
             title: `${agent.name}'s ballot could not be confirmed`, detail: "No approval is inferred. The proposal deadline and Guardian remain in force.", evidence: { failure: safeFailure(error) } }, "voting");
         }
       }));
+      await anchorActivity();
       await persist("settling", `Vote ${index + 1}: ${round.votes.length} confirmed ballots; ${agents.filter(a => a.phase === "delegated").length} agents have delegated their voting power. Waiting for the Governor's result.`);
       if (draft.kind === "STOP_TASK") {
         // A stop motion inverts the vote. Defeat means keep working. Passing means the fleet
@@ -493,6 +538,7 @@ export async function runEmergentWorker(runId: string): Promise<void> {
         agent.finished = false;
       }
     }
+    await anchorActivity();
     status.terminal = true; status.outcome = "InvestigationFinished";
     for (const agent of agents) agent.phase = "finished";
     await emit({ component: "task", type: "task.completed", title: "The investigation stopped scheduling model work",
