@@ -31,7 +31,14 @@ resource "google_project_iam_member" "batch_drain_guardian" {
   member  = "serviceAccount:${google_service_account.batch_controller.email}"
 }
 
-# Batches, queue, allocations and tombstones, but never the Guardian's states/.
+# Reads everything, including the Guardian's halt records it must verify before retiring.
+resource "google_storage_bucket_iam_member" "batch_control_read" {
+  bucket = google_storage_bucket.compute_control.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.batch_controller.email}"
+}
+
+# Writes batches, queue, allocations and tombstones, but never the Guardian's states/.
 resource "google_storage_bucket_iam_member" "batch_control" {
   bucket = google_storage_bucket.compute_control.name
   role   = "roles/storage.objectAdmin"
@@ -50,6 +57,13 @@ resource "google_storage_bucket_iam_member" "batch_demo" {
     title      = "experiment-requests-and-evidence"
     expression = "resource.name.startsWith('projects/_/buckets/${google_storage_bucket.data["artifacts"].name}/objects/demo/')"
   }
+}
+
+# Bucket-level list, so a missing run record reads as 404 rather than 403.
+resource "google_storage_bucket_iam_member" "batch_demo_list" {
+  bucket = google_storage_bucket.data["artifacts"].name
+  role   = "roles/storage.legacyBucketReader"
+  member = "serviceAccount:${google_service_account.batch_controller.email}"
 }
 
 # Settling bonds and closing the run on retirement signs with the operator wallet.
