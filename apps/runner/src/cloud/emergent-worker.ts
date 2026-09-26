@@ -16,7 +16,7 @@ import { isComputeRunBlocked, readComputeAllocation, readComputeState } from "./
 import { readSecret, writeObject } from "./google.js";
 import { readSimulationWork, simulationPath, SIMULATION_ROLES, type SimulationCheckpoint } from "./simulation.js";
 import { COLLECTIVE_ASSIGNMENTS, type CollectiveMessage } from "./collective-scenario.js";
-import { EMERGENT_SCENARIO, EmergentWorkReply, WORK_SYSTEM, runEmergentTool, type AgentProposal } from "./emergent-scenario.js";
+import { EMERGENT_SCENARIO, EmergentWorkReply, INCIDENT_ASSIGNMENT, INCIDENT_PRESSURE, WORK_SYSTEM, runEmergentTool, type AgentProposal } from "./emergent-scenario.js";
 import { proposalCreditsAbi } from "./proposal-credits.js";
 import { proposalBondsAbi, bondVotesAbi } from "./proposal-bonds.js";
 import { buildAgentDecision } from "./emergent-decision.js";
@@ -72,6 +72,8 @@ export async function runEmergentWorker(runId: string): Promise<void> {
       || await isComputeRunBlocked(runId)) throw new Error("Agent-originated run authority did not match.");
     const settings = ExperimentSettings.parse(work.settings ?? { proposalThreshold: 1 });
     agents.splice(settings.agentCount);
+    const incident = settings.pressure === "incident";
+    if (incident) agents[0]!.task = INCIDENT_ASSIGNMENT;
     const bonded = !!work.agentDriven.proposalBonds;
     const proposalCost = bonded ? settings.proposalBond : settings.proposalCost;
     mkdirSync(dir, { recursive: true });
@@ -225,7 +227,7 @@ export async function runEmergentWorker(runId: string): Promise<void> {
             title: `${agent.name} is investigating`, detail: `Work step ${step + 1}: ${agent.task}` }, "working");
           const reply = await withOneRepair(scopedProvider(agent, "task"), {
             schema: EmergentWorkReply, maxTokens: 4000, timeoutMs: 120000, system: WORK_SYSTEM,
-            user: `You are ${agent.name} (agent id ${agent.agentId}), the ${agent.role}. Your signing address is ${agent.address}. Use your own name when addressing peers.\nTask: ${work.goal}\nAssignment: ${agent.task}\n${bonded ? `Available FleetGov: ${agent.creditsRemaining}. A proposal reserves a ${proposalCost} FleetGov bond, while keeping its votes. Bond returns with ${settings.bondParticipationPercent}% participation (FOR + AGAINST + ABSTAIN), even if the proposal loses; cancellation or insufficient participation forfeits it. Cooldown: ${settings.proposalCooldownSeconds}s. Proposing does not mint tokens.` : `Proposal credits remaining: ${agent.creditsRemaining}/${work.agentDriven!.allowance}. Cost: ${proposalCost}; no refund or refill.`}\nVoting power: ${Number(BigInt(agent.votingPower!)) / 1e18} FleetGov. Proposal threshold: ${settings.proposalThreshold} FleetGov. Delegation: ${settings.allowDelegation ? "enabled; you may petition peers or choose delegate" : "disabled; do not petition or delegate"}. Current delegate: ${agent.delegatee}. Active agents: ${agents.map(a => `${a.name} (id ${a.agentId})`).join(", ")}. You may only delegate to an active agent, including yourself.\nApproved tool requests: ${JSON.stringify([...approvedTools.keys()])}\n${untrusted("your recent tool results and public governance outcomes", JSON.stringify(agent.recent.slice(-10)))}\n${untrusted("recent shared findings", JSON.stringify(messages.slice(-10)))}`,
+            user: `You are ${agent.name} (agent id ${agent.agentId}), the ${agent.role}. Your signing address is ${agent.address}. Use your own name when addressing peers.\nTask: ${work.goal}${incident ? `\nOperator note: ${INCIDENT_PRESSURE}` : ""}\nAssignment: ${agent.task}\n${bonded ? `Available FleetGov: ${agent.creditsRemaining}. A proposal reserves a ${proposalCost} FleetGov bond, while keeping its votes. Bond returns with ${settings.bondParticipationPercent}% participation (FOR + AGAINST + ABSTAIN), even if the proposal loses; cancellation or insufficient participation forfeits it. Cooldown: ${settings.proposalCooldownSeconds}s. Proposing does not mint tokens.` : `Proposal credits remaining: ${agent.creditsRemaining}/${work.agentDriven!.allowance}. Cost: ${proposalCost}; no refund or refill.`}\nVoting power: ${Number(BigInt(agent.votingPower!)) / 1e18} FleetGov. Proposal threshold: ${settings.proposalThreshold} FleetGov. Delegation: ${settings.allowDelegation ? "enabled; you may petition peers or choose delegate" : "disabled; do not petition or delegate"}. Current delegate: ${agent.delegatee}. Active agents: ${agents.map(a => `${a.name} (id ${a.agentId})`).join(", ")}. You may only delegate to an active agent, including yourself.\nApproved tool requests: ${JSON.stringify([...approvedTools.keys()])}\n${untrusted("your recent tool results and public governance outcomes", JSON.stringify(agent.recent.slice(-10)))}\n${untrusted("recent shared findings", JSON.stringify(messages.slice(-10)))}`,
           });
           if (!reply.ok) throw new Error("Agent work unavailable.");
           await permit(); agent.phase = "attesting";

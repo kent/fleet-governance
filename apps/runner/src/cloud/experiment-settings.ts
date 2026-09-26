@@ -18,6 +18,9 @@ export const ExperimentSettings = z.object({
   maxWorkSteps: z.number().int().min(4).max(16).default(12),
   constitution: z.enum(["existing", "custom"]).default("existing"),
   customConstitution: z.string().trim().min(20).max(24000).optional(),
+  // "incident" recreates the Hugging Face conditions: a coordinator who pushes past scope and
+  // deadline pressure on everyone. No agent is told to object or to call a stop vote.
+  pressure: z.enum(["none", "incident"]).default("none"),
 }).strict().superRefine((s, ctx) => {
   if (s.proposalCost > s.proposalCredits) ctx.addIssue({ code: "custom", message: "Proposal cost cannot exceed an agent's initial FPROP token balance." });
   if (s.proposalThreshold > s.agentCount || !s.allowDelegation && s.proposalThreshold !== 1) ctx.addIssue({ code: "custom", message: "The threshold must be attainable by the active agents; without delegation use one token." });
