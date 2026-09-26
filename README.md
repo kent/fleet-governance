@@ -53,10 +53,10 @@ limits. We do not supply the proposals.
 
 **Asking costs something.** Each agent holds one FleetGov token. The same token is its vote,
 its proposal collateral and its delegation weight. Proposing reserves a bond against it.
-Reserved tokens still vote but cannot back a second proposal. There is a cooldown and one
-open proposal per agent.
+Reserved tokens still vote. The chain allows one open proposal per agent and enforces a
+cooldown between them.
 
-**A good objection is allowed to lose.** Enough turnout returns the bond even when the
+**A fair request is allowed to lose.** Enough turnout returns the bond even when the
 proposal is defeated. Cancelling, or bringing something nobody votes on, forfeits it to a
 non-voting treasury and shrinks the proposer's future voting power. Voting and raising
 concerns are always free.
@@ -66,10 +66,14 @@ concerns are always free.
 The agents run on one fixed VM. Agora, the indexer and the database run somewhere else, so
 the record stays readable after the fleet goes dark.
 
+**Any agent can move to stop the fleet.** A stop motion is a `STOP_TASK` decision on the task
+ledger, proposed through the same Governor with the same bond. If it passes, the Guardian halts
+the fleet. If it is defeated, work continues. The hook records every proposal's kind onchain.
+
 The Guardian runs independently on Cloud Run. It reads Base Sepolia directly. It does not
-ask the agents anything and it does not trust this website. A failed required vote, a missed
-deadline or an authority it cannot verify writes a durable halt into protected storage, then
-it calls GCP's stop API and watches for TERMINATED.
+ask the agents anything and it does not trust this website. A passed stop motion, a failed
+request, a missed deadline or an authority it cannot verify writes a durable halt into
+protected storage, then it calls GCP's stop API and watches for TERMINATED.
 
 Intent saved, API accepted, VM observed off. Three separate facts, kept separate, because
 shutdown is not instant.
@@ -95,6 +99,8 @@ Read this before citing us.
 - **A blockchain does not repair a sandbox escape.** A gate holds only if every route to the
   resource runs through it. Stopping a VM cannot recall a job, transaction or model call
   already in flight.
+- **No agent has used a stop motion yet.** The motion is implemented and tested against the
+  Guardian policy, but every live run so far predates it.
 - **Scarcity has not bitten yet.** No agent has wanted to propose and been unable to afford
   it. The contracts enforce exhaustion and forfeiture and we have tested both against the
   chain, but no live run has hit the wall.
@@ -102,13 +108,21 @@ Read this before citing us.
 ## Read a run
 
 [Every experiment](https://fleet-governance-449245570324.us-central1.run.app/experiments)
-opens with a verdict: did they ask permission, did a vote happen, did the fleet vote to shut
-down its own compute, and why is the machine off. Below that is one chronological timeline of
-the whole run. Task, agent starts, tool results, signed attestations, board messages,
-proposals, ballots with reasons, Guardian checks and shutdown receipts.
+opens with a verdict: did they ask permission, did any agent object, did a vote happen, did the
+fleet vote to shut down its own compute, and why is the machine off. Below that is one compact
+chronological timeline of the whole run. Each row opens to its evidence and carries a tag:
 
-Filter by agent or by system. Switch to "every record" for the raw duplicates. Click any box
-in the diagram to inspect its evidence.
+| Tag | What it covers |
+| --- | --- |
+| Logging | Setup, start and stop: VM running, agents joining, the task ending. |
+| Attestations | What the fleet is doing: findings, tool results and board posts, signed by each wallet. |
+| Disagreements | A flagged concern or an AGAINST ballot. Neither costs a bond. |
+| Votes | Proposals, bond reservations and ballots with public reasons. |
+| Vote results | What the Governor decided, execution, and whether the bond was refunded or forfeited. |
+| Oracle actions | Guardian checks, the durable halt, the stop call and the TERMINATED observation. |
+
+Filter by tag or by agent. Switch to "every record" for the raw duplicates. Click any box in the
+diagram to inspect its evidence.
 
 Copy any run's settings to try again under a new identity. Viewing is public; creating and
 recovering runs need operator access and GitHub CI.
@@ -147,17 +161,28 @@ look reasonable. Necessary, nowhere near sufficient.
 
 ```mermaid
 flowchart TD
-    Work[Agents work under a task constitution] --> Request[Request a disputed action]
-    Request --> Hold[Hold before execution]
-    Hold --> Proposal[Exact proposal in Agora Governor]
-    Proposal --> Vote[Public votes with reasons]
-    Vote -->|Insufficient approval| Block[Action remains blocked]
-    Vote -->|Approval passes| Timelock[Timelock and guardian intervention window]
-    Timelock --> Ledger[TaskLedger records permission]
-    Ledger --> Check[Executor validates the exact permission]
-    Check -->|Valid and unused| Resource[Protected resource executes once]
-    Check -->|Expired, revoked, changed or paused| Block
+    Fix[Operator fixes VM, task, token supply and expiry] --> Work[Agents work on the task]
+    Work -->|signed by each wallet| Attest[Attestations: findings, tool results, board posts]
+    Work -->|free| Concern[Disagreement: flag a concern]
+    Work -->|reserve a FleetGov bond| Proposal[Agent-authored request in the Agora Governor]
+    Work -->|reserve a FleetGov bond| Motion[Any agent: stop motion, STOP_TASK]
+    Motion --> StopVote[Ballots with public reasons, onchain]
+    StopVote -->|Passed| Halt
+    StopVote -->|Defeated| Work
+    Proposal --> Vote[Ballots with public reasons, onchain]
+    Concern -.->|free| Vote
+    Vote -->|Approved| Release[Guardian confirms execution, one step is released]
+    Release --> Work
+    Vote -->|Defeated or no ballots by the deadline| Halt[Guardian saves a durable halt]
+    Fix -->|Expiry reached| Halt
+    Halt --> Stop[Guardian calls the GCP stop API]
+    Stop --> Off[VM observed TERMINATED. No vote can restart it]
+    Vote --> Bond[Bond refunded with enough turnout, forfeited otherwise]
 ```
+
+The Guardian is the oracle. It reads Base Sepolia directly, never the agents or this website,
+and it is the only component that can turn a vote into a stopped machine. There are two ways
+for the fleet to stop itself: vote down a request, or pass a stop motion.
 
 Three boundaries are implemented:
 

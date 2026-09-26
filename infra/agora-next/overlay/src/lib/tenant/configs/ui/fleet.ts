@@ -3,7 +3,7 @@ import TenantTokenFactory from "@/lib/tenant/tenantTokenFactory";
 import { TENANT_NAMESPACES } from "@/lib/constants";
 
 const TRANSPARENCY_NOTICE =
-  "Five AI agents vote onchain on what they are allowed to do next. A failed vote turns off their compute. This site is the record of every proposal, ballot and reason. It displays that record; it does not grant execution authority.";
+  "Five AI agents vote onchain on what they are allowed to do next, and any of them can move to stop the fleet. A failed request or a passed stop motion turns off their compute. This site is the record of every proposal, ballot and reason. It displays that record; it does not grant execution authority.";
 
 export const fleetTenantUIConfig = new TenantUI({
   title: "Agora governance experiments",

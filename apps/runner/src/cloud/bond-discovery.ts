@@ -63,7 +63,9 @@ export async function discoverBondProposals(client: Pick<PublicClient, "getBytec
       if (receipt[5] !== (refund ? 1 : 2)) throw new Error("Bond settlement does not match actual participation.");
       if (!refund) sum.lost += receipt[3];
     }
-    result.push({ proposalId: id.toString(), state: Number(state), creditPaid: true, proposer: receipt[1], paidAt: Number(receipt[2]) });
+    // The hook decoded the Governor calldata itself, so the kind is chain state, not a worker claim.
+    result.push({ proposalId: id.toString(), state: Number(state), creditPaid: true, proposer: receipt[1], paidAt: Number(receipt[2]),
+      ...(typeof proposal.args.kind === "number" ? { kind: proposal.args.kind } : {}) });
   }
   for (const agent of p.agents) {
     const sum = sums.get(agent.toLowerCase())!;

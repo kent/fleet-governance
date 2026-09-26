@@ -8,3 +8,12 @@
 .outcome-note{margin-top:7px!important;color:#77866f!important}
 /* Every run in the index shares the same task text. Show a line, keep the rest searchable. */
 .experiment-row p{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+/* The concept, before the index: five steps from compute to shutdown. */
+.intro-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:26px}
+.loop{margin:40px 0 28px;border-top:1px solid #d6e0cf;padding-top:24px}.loop h2{font-size:11px;letter-spacing:.18em}.loop ol{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px}.loop li{position:relative;background:#fff;border:1px solid #dfe6d9;border-radius:12px;padding:18px 16px 16px}.loop li:not(:last-child):after{content:"→";position:absolute;right:-13px;top:22px;color:#9aac95;font-size:14px}.loop-n{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:#e9f1e4;color:#416d39;font-size:11px;font-weight:700;margin-bottom:10px}.loop li:last-child .loop-n{background:#fae8e2;color:#a4402e}.loop strong{display:block;font-size:14px;line-height:1.35;margin-bottom:6px}.loop p{font-size:12.5px;line-height:1.6;color:#65735f;margin:0}
+.finding{background:#fff;border:1px solid #dfe6d9;border-left:4px solid #a4402e;border-radius:12px;padding:20px 24px;margin:0 0 24px}.finding .eyebrow{margin-bottom:8px}.finding p:not(.eyebrow){margin:0;font-size:14px;color:#4f5d4c;max-width:980px}
+.tags-intro{margin:0 0 40px}.tags-intro .eyebrow{margin-bottom:6px}.tags-intro p:not(.eyebrow){font-size:13px;color:#65735f;margin:0 0 10px}.tag-list{list-style:none;display:flex;flex-wrap:wrap;gap:6px;margin:0;padding:0}.tag-list li{font-size:11px;font-weight:650;padding:4px 10px;border-radius:999px;background:var(--tag-bg);color:var(--tag-fg)}
+[data-tag=log]{--tag-bg:#eef1ec;--tag-fg:#5c6b5f}[data-tag=attestation]{--tag-bg:#e7f0fa;--tag-fg:#2f5f8a}[data-tag=disagreement]{--tag-bg:#fdecdf;--tag-fg:#a0501a}[data-tag=vote]{--tag-bg:#efe9fb;--tag-fg:#5b3fa0}[data-tag=result]{--tag-bg:#e4f3e6;--tag-fg:#2a6a3a}[data-tag=oracle]{--tag-bg:#fbe5e2;--tag-fg:#a3352a}
+@media(max-width:1100px){.loop ol{grid-template-columns:repeat(2,minmax(0,1fr))}.loop li:after{display:none}}
+@media(max-width:600px){.loop ol{grid-template-columns:1fr}}
+.status.voted-off{color:#fff;background:#a4402e}

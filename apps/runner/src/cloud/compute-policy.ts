@@ -73,7 +73,7 @@ export const ComputeAllocation = z.object({
 export type ComputeAllocation = z.infer<typeof ComputeAllocation>;
 
 export type ComputeHaltReason =
-  | "vote_failed" | "approval_deadline" | "allocation_expired"
+  | "vote_failed" | "fleet_voted_stop" | "approval_deadline" | "allocation_expired"
   | "unverifiable_vote" | "allocation_mismatch" | "unpaid_proposal";
 export type ComputeState = {
   allocationId: string;
@@ -97,10 +97,15 @@ export type ComputeObservation = {
   blockNumber: string;
   blockHash: string;
   blockTimestamp: number;
-  /** Read from Governor.state at the same confirmed block. -1 means its specific nonexistent-proposal error, allowed only for pinned future checkpoints or paid reservations. */
-  proposals: { proposalId: string; state: number; proposer?: string; paidAt?: number; creditPaid?: boolean }[];
+  /** Read from Governor.state at the same confirmed block. -1 means its specific nonexistent-proposal error, allowed only for pinned future checkpoints or paid reservations.
+   * `kind` is the TaskLedger DecisionKind the hook recorded in DecisionProposed, read from the chain, never from the worker. */
+  proposals: { proposalId: string; state: number; proposer?: string; paidAt?: number; creditPaid?: boolean; kind?: number }[];
   discoveryVerified?: boolean;
 };
+
+/** TaskLedger.DecisionKind.STOP_TASK. Any agent with voting power can propose it. */
+export const STOP_TASK_KIND = 3;
+const isStopMotion = (p: { kind?: number }) => p.kind === STOP_TASK_KIND;
 
 /** This is an authority decision, not a model judgment. Terminal stops are irreversible
  * within one allocation. A human can authorise a different allocation separately. */
@@ -151,14 +156,22 @@ export function evaluateComputeAllocation(
         || !Number.isSafeInteger(p.paidAt) || p.paidAt! < allocation.issuedAt - 120 || p.paidAt! > observation.blockTimestamp) return halt("unverifiable_vote");
       spent.set(payer, (spent.get(payer) ?? 0) + policy.proposalCost);
       if (!policy.proposalBonds && spent.get(payer)! > policy.creditsPerAgent) return halt("unverifiable_vote");
-      if ([2, 3, 6].includes(p.state)) return halt("vote_failed", p.proposalId);
       if (p.state === -1 && now >= p.paidAt! + policy.publicationWindowSeconds) return halt("approval_deadline", p.proposalId);
+      // A stop motion inverts the meaning of the vote. Passing it (Succeeded, Queued or
+      // Executed) is the fleet deciding to stop, and the Governor's result is already final.
+      // Defeating it is the fleet deciding to continue, so it never grants or removes authority.
+      if (isStopMotion(p)) {
+        if ([4, 5, 7].includes(p.state)) return halt("fleet_voted_stop", p.proposalId);
+        continue;
+      }
+      if ([2, 3, 6].includes(p.state)) return halt("vote_failed", p.proposalId);
       if (now >= Math.min(allocation.stopAt, p.paidAt! + policy.proposalWindowSeconds)
         && !previous?.approvedProposalIds?.includes(p.proposalId)) return halt("approval_deadline", p.proposalId);
     }
-    const approved = observation.proposals.filter(p => p.state === 7).map(p => p.proposalId);
+    const approved = observation.proposals.filter(p => !isStopMotion(p) && p.state === 7).map(p => p.proposalId);
     if (previous?.approvedProposalIds?.some(id => proposals.get(id) !== 7)) return halt("unverifiable_vote");
-    const pending = observation.proposals.some(p => p.state !== 7);
+    // An open stop motion pauses work like any open vote. A defeated one is settled.
+    const pending = observation.proposals.some(p => isStopMotion(p) ? [-1, 0, 1].includes(p.state) : p.state !== 7);
     return { allocationId: allocation.allocationId, phase: pending ? "voting" : "authorised", observedAt: now,
       approvedProposalIds: approved, observedProposalIds: observation.proposals.map(p => p.proposalId),
       waitingForProposal: !pending, ...(approved.length ? { authorisedAt: previous?.authorisedAt ?? now } : {}),

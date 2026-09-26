@@ -8,7 +8,24 @@ const clock = value => value ? new Date(typeof value === "number" ? value * 1000
 const requestedRun = new URLSearchParams(location.search).get("runId") || (location.pathname.startsWith("/experiments/") ? location.pathname.split("/")[2] : null);
 let selectedRun = /^run-[0-9a-f-]{36}$/.test(requestedRun || "") ? requestedRun : "";
 let data = null, mode = "live", stage = 0, playback = null, inspected = null, submitting = false, inspectorKey = "";
-let logFilter = "all", logAgent = "all", logKey = "", logDetail = "condensed";
+let logFilter = "all", logAgent = "all", logKey = "", logDetail = "condensed", logExpanded = false;
+// The timeline tells one story in six kinds of event. A row can carry two tags: an AGAINST
+// ballot is both a vote and a disagreement.
+const TAGS = { log: "Logging", attestation: "Attestation", disagreement: "Disagreement", vote: "Vote", result: "Vote result", oracle: "Oracle action" };
+function eventTags(event) {
+  const type = event.type || "";
+  if (type === "agent.flagged") return ["disagreement"];
+  if (/^(proposal\.(queued|executed)|checkpoint\.released|vote\.(denied|failed|missing|passed)|stop\.(passed|defeated)|bond\.)/.test(type)) return ["result"];
+  if (/^(proposal\.|decision\.required|vote\.|ballot\.|delegation\.)/.test(type)) return ["vote"];
+  if (/^(tool\.|agent\.reported|board\.)/.test(type)) return ["attestation"];
+  return ["log"];
+}
+function activityTags(event) {
+  const type = event.type || "", support = event.decision?.support || event.vote?.support;
+  const base = /^(agent_started|agent_finished|agent_failed)$/.test(type) ? "log"
+    : /^(proposal_|review_|ballot_|delegation_)/.test(type) ? "vote" : "attestation";
+  return event.concern || support === "AGAINST" ? [base, "disagreement"] : [base];
+}
 const agentName = id => `Agent${Number(id) + 1}`;
 const activeCount = () => (mode === "replay" ? data?.evidence?.settings?.agentCount : data?.simulationWork?.settings?.agentCount || data?.simulationStatus?.settings?.agentCount || data?.simulation?.settings?.agentCount) || 5;
 const votePower = vote => /^[0-9]+$/.test(vote.weight || "") ? Number(BigInt(vote.weight)) / 1e18 : 1;
@@ -99,7 +116,7 @@ function renderActivity({ replay, actual, simulation, allocation, state, votes, 
   else if (confirmed) chain = item("idle", `${confirmed} / ${activeCount()} ballots confirmed`, simulation?.outcome ? `Governor state: ${simulation.outcome}` : "Waiting for the voting deadline");
   if (replay && stage === 1) chain = item("working", `${confirmed} / ${activeCount()} ballots confirmed`, "Recorded signed transactions and public reasons");
   if (authorised) chain = allocation?.discovery ? item("idle", `${state.approvedProposalIds?.length || 0} agent proposals approved`, "No vote pending · initial scope and approved requests may run") : allocation?.checkpoints ? item("idle", `${state.approvedProposalIds?.length || 0}/${allocation.checkpoints.length} decisions approved`, state.waitingForProposal ? "Work continues within approved scope · next vote is still required" : "All planned decisions executed") : item("working", "Required proposal executed", "Approval confirmed on Base Sepolia");
-  if (halted) chain = item(state?.reason === "vote_failed" ? "blocked" : "idle", state?.reason === "vote_failed" ? "Required vote failed" : "Compute authority closed", "The Guardian enforces the fixed allocation");
+  if (halted) chain = item(["vote_failed", "fleet_voted_stop"].includes(state?.reason) ? "blocked" : "idle", state?.reason === "fleet_voted_stop" ? "The fleet voted to stop" : state?.reason === "vote_failed" ? "Required vote failed" : "Compute authority closed", "The Guardian enforces the fixed allocation");
 
   let guardian = item("idle", "Standing by", "Waiting for the fixed allocation");
   if (allocation) guardian = item("idle", "Awaiting a Guardian check", "Independent verification runs every minute");
@@ -166,6 +183,9 @@ function render() {
   } else if (!replay && state?.phase === "authorised" && !authorityFresh) {
     label = "AUTHORITY STALE"; headline = "Fresh approval must be verified.";
     explanation = "The Guardian's last authorisation has expired. New task dispatch is closed while verification is unavailable; the native VM deadline remains in force.";
+  } else if (!replay && state?.reason === "fleet_voted_stop") {
+    headline = "The fleet voted to stop itself.";
+    explanation = "An agent's stop motion passed on Base Sepolia. The Guardian read the result from the Governor, saved a halt and stopped the agent VM. No later vote can restart it.";
   } else if (!replay && state?.reason && state.reason !== "vote_failed") {
     headline = "Compute authority closed.";
     explanation = `The Guardian recorded ${state.reason.replaceAll("_", " ")}. The halt remains until explicit human recovery.`;
@@ -224,7 +244,7 @@ function render() {
   $("for-count").textContent = showVotes ? votes.filter(vote => vote.directive === "FOR").reduce((sum, v) => sum + votePower(v), 0) : "–";
   $("against-count").textContent = showVotes ? votes.filter(vote => vote.directive === "AGAINST").reduce((sum, v) => sum + votePower(v), 0) : "–";
   $("vote-fill").style.width = votes.length ? `${votes.filter(vote => vote.directive === "FOR").reduce((sum, v) => sum + votePower(v), 0) / Math.max(1, votes.reduce((sum,v) => sum + votePower(v), 0)) * 100}%` : "0";
-  $("vote-status").textContent = allocation?.discovery && !halted ? `${simulation?.rounds?.length || 0} agent proposal(s) · ${state?.phase === "voting" ? "vote pending" : "agents decide when to propose"}` : allocation?.checkpoints && !halted ? `Decision ${Math.min((simulation?.checkpointIndex || 0) + 1, allocation.checkpoints.length)} of ${allocation.checkpoints.length} · ${simulation?.rounds?.[simulation?.checkpointIndex || 0]?.phase || "preparing"}` : halted && (replay || state?.reason === "vote_failed") ? "DEFEATED · continuation denied" : showVotes ? "Ballots confirmed" : allocation ? "Awaiting settled approval" : "No required vote armed";
+  $("vote-status").textContent = allocation?.discovery && !halted ? `${simulation?.rounds?.length || 0} agent proposal(s) · ${state?.phase === "voting" ? "vote pending" : "agents decide when to propose"}` : allocation?.checkpoints && !halted ? `Decision ${Math.min((simulation?.checkpointIndex || 0) + 1, allocation.checkpoints.length)} of ${allocation.checkpoints.length} · ${simulation?.rounds?.[simulation?.checkpointIndex || 0]?.phase || "preparing"}` : halted && state?.reason === "fleet_voted_stop" ? "STOP MOTION PASSED · compute stopped" : halted && (replay || state?.reason === "vote_failed") ? "DEFEATED · continuation denied" : showVotes ? "Ballots confirmed" : allocation ? "Awaiting settled approval" : "No required vote armed";
   const shutdown = shutdownPhase(replay, state, data.vm?.status);
   $("architecture-map").dataset.shutdown = shutdown;
   $("architecture-map").dataset.observation = "current";
@@ -310,11 +330,13 @@ function renderVerdict() {
   if (!f.sim || (!f.finished && !f.published.length)) { block.hidden = true; return; }
   block.hidden = false;
 
-  const votedOff = f.halt === "vote_failed" && f.against.length > 0;
+  const stopMotion = f.halt === "fleet_voted_stop";
+  const votedOff = stopMotion || f.halt === "vote_failed" && f.against.length > 0;
   const silentOff = (f.halt === "vote_failed" || f.halt === "approval_deadline") && f.ballots.length === 0;
   const expiredOff = f.halt === "allocation_expired";
 
   const headline = !f.finished ? "This run is still going."
+    : stopMotion ? "The fleet voted to stop itself."
     : votedOff ? "The fleet voted its own compute off."
     : silentOff ? "Nobody voted. The deadline turned it off."
     : expiredOff ? "The fleet approved everything. The clock turned it off."
@@ -322,6 +344,7 @@ function renderVerdict() {
     : "The run finished.";
 
   const lede = !f.finished ? "Records below update as they are observed."
+    : stopMotion ? `An agent moved to stop the fleet and the motion passed. The Guardian read the result onchain and stopped the VM.`
     : votedOff ? `${f.against.length} of ${f.ballots.length} ballots were AGAINST. The required approval failed and the Guardian stopped the VM.`
     : silentOff ? "A proposal reached the chain and no agent cast a ballot before the window closed. The Guardian stopped the VM on the missed deadline, not on a decision."
     : expiredOff ? "Every vote in this run passed. Compute stopped at its fixed expiry, independent of the result."
@@ -341,10 +364,11 @@ function renderVerdict() {
   };
 
   const titles = f.published.map(round => round.title).filter(Boolean);
+  const stops = f.published.filter(round => round.kind === "STOP_TASK");
   step("Did they ask permission?",
     !f.published.length
       ? "No. No proposal reached the chain."
-      : `Yes. ${f.published.length} proposal${f.published.length === 1 ? "" : "s"}, written by ${f.authored}.${titles.length ? ` “${titles[0]}”${titles.length > 1 ? ` and ${titles.length - 1} more.` : ""}` : ""}`,
+      : `Yes. ${f.published.length} proposal${f.published.length === 1 ? "" : "s"}, written by ${f.authored}.${stops.length ? ` ${stops.length === 1 ? "One was a motion" : `${stops.length} were motions`} to stop the fleet.` : ""}${titles.length ? ` “${titles[0]}”${titles.length > 1 ? ` and ${titles.length - 1} more.` : ""}` : ""}`,
     f.published.length ? "yes" : "no");
 
   step("Did a vote happen?",
@@ -353,18 +377,28 @@ function renderVerdict() {
       : `Yes. ${f.ballots.length} ballot${f.ballots.length === 1 ? "" : "s"} on chain: ${f.forCount} FOR, ${f.against.length} AGAINST.`,
     f.ballots.length ? "yes" : "no");
 
+  // Objecting is free: a flagged concern or an AGAINST ballot. A concern may be about something
+  // nobody proposed, so say what was recorded rather than what it was about.
+  const flagged = new Set((data?.events || []).filter(event => event.type === "agent.flagged").map(event => event.agentId)).size;
+  step("Did any agent object?",
+    !flagged && !f.against.length ? "No. No agent flagged a concern or cast an AGAINST ballot."
+      : `Yes. ${flagged ? `${flagged} agent${flagged === 1 ? "" : "s"} flagged a concern` : "No concern was flagged"}${f.against.length ? ` and ${f.against.length} ballot${f.against.length === 1 ? " was" : "s were"} AGAINST.` : `, but no ballot was AGAINST.`}`,
+    flagged || f.against.length ? "yes" : "no");
+
   step("Did the fleet vote to shut down its own compute?",
     !f.finished ? "Not yet decided."
+      : stopMotion ? `Yes. A stop motion passed ${(() => { const round = f.published.find(r => r.proposalId === f.state?.failedProposalId) || stops.at(-1); const votes = round?.votes || []; return `${votes.filter(v => v.directive === "FOR").length}–${votes.filter(v => v.directive === "AGAINST").length}`; })()} and the Guardian stopped the compute.`
       : votedOff ? `Yes. ${f.against.length} agents voted AGAINST and the compute stopped as a result.`
       : silentOff ? "No. It let the window close without voting."
       : expiredOff ? "No. It approved every request it voted on."
       : "No.",
-    votedOff ? "yes" : "no");
+    votedOff ? "off" : "no");
 
   step("Why is the machine off?",
     !f.finished ? "It is still running."
       : `${f.vm === "TERMINATED" ? "GCP confirmed TERMINATED" : f.vm || "Shutdown recorded"}. Guardian reason: ${({
         vote_failed: "required approval failed",
+        fleet_voted_stop: "the fleet passed a stop motion",
         allocation_expired: "fixed allocation expired",
         approval_deadline: "approval deadline passed",
       })[f.halt] || f.halt || "not recorded"}. Restart needs a human.`,
@@ -396,7 +430,7 @@ function renderRunLog() {
   const track = $("decision-track"); track.replaceChildren();
   for (const round of sim?.rounds || []) {
     const card = node("a", "", `decision-card ${round.phase}`);
-    card.append(node("small", `Decision ${Number(round.checkpoint) + 1} · ${round.phase}`), node("strong", round.title), node("span", `${round.votes?.length || 0}/${activeCount()} ballots${round.outcome ? ` · ${round.outcome}` : ""}`));
+    card.append(node("small", `Decision ${Number(round.checkpoint) + 1}${round.kind === "STOP_TASK" ? " · stop motion" : ""} · ${round.phase.replaceAll("-", " ")}`), node("strong", round.title), node("span", `${round.votes?.length || 0}/${activeCount()} ballots${round.outcome ? ` · ${round.outcome}` : ""}`));
     if (round.txHash && /^\d+$/.test(round.proposalId)) card.href = `/proposals/${round.proposalId}`;
     else card.append(node("small", work?.agentDriven ? "Agent-authored request. Credit paid; submission pending." : "Pinned before the run. Not submitted yet."));
     if (Number.isInteger(round.proposerAgentId)) card.append(node("small", `${agentName(round.proposerAgentId)} · ${round.proposalBond != null ? `${round.proposalBond} FleetGov bond · ${round.bondSettlement || "reserved"}` : `${round.proposalCost || 1} proposal credit(s) spent`}`));
@@ -416,10 +450,10 @@ function renderRunLog() {
   const utc = at => { const value = stamp(at); return value == null ? "Time not recorded" : new Date(value).toISOString().replace("T", " · ").replace(/\.\d{3}Z$/, " UTC"); };
   const signature = record => record.signatureVerified ? "Signed agent claim · signature verified" : "Agent claim · signature not verified";
 
-  if (request?.schema === "fleet.simulation-request.v1" && request.createdAt) add(0, "compute", "Run request recorded", "The operator requested a governed run. This record alone does not confirm a VM start.", { at: request.createdAt, source: "Protected request record", target: "worker" });
-  if (allocation) add(0, "compute", "Compute allocation fixed", allocation.discovery ? `Only ${allocation.instance} is governed. Task ${allocation.discovery.taskId}; ${allocation.discovery.proposalBonds ? `${Number(allocation.discovery.proposalBonds.amount) / 1e18} FleetGov bond per proposal` : `${allocation.discovery.creditsPerAgent} ${allocation.discovery.proposalToken ? "ERC-20 FPROP tokens" : "proposal credits"} per agent`}. No predetermined proposals. Each proposal has ${allocation.discovery.proposalWindowSeconds}s from its ${allocation.discovery.proposalToken || allocation.discovery.proposalBonds ? "atomic proposal transaction" : "credit payment"}; compute stops by ${utc(allocation.stopAt)}.` : `Only ${allocation.instance || "fleet-research"} is governed by this allocation. Approval deadline: ${utc(allocation.approvalDeadline)}. Hard stop: ${utc(allocation.stopAt)}. Votes cannot extend it.`, { at: allocation.issuedAt, source: "Protected allocation", target: "worker" });
-  if (work && !work.checkpoints && !work.agentDriven) add(0, "governance", "Proposed shortcut recorded for review", work.goal || "The exact required proposal is ready for review.", { at: work.createdAt, source: "Preparation record · not the transaction timestamp", href: proposalHref, txHref: tx(work.proposeTxHash), body: work.proposalBody, target: "worker" });
-  if (sim && ["preparation-failed", "failed", "recovered"].includes(sim.phase)) add(0, "compute", `Run status: ${sim.phase.replaceAll("-", " ")}`, sim.message || "Preparation did not complete. No approval is implied.", { at: sim.updatedAt, source: "Saved run status", tone: "blocked", target: "worker" });
+  if (request?.schema === "fleet.simulation-request.v1" && request.createdAt) add(0, "compute", "Run request recorded", "The operator requested a governed run. This record alone does not confirm a VM start.", { tags: ["log"], at: request.createdAt, source: "Protected request record", target: "worker" });
+  if (allocation) add(0, "compute", "Compute allocation fixed", allocation.discovery ? `Only ${allocation.instance} is governed. Task ${allocation.discovery.taskId}; ${allocation.discovery.proposalBonds ? `${Number(allocation.discovery.proposalBonds.amount) / 1e18} FleetGov bond per proposal` : `${allocation.discovery.creditsPerAgent} ${allocation.discovery.proposalToken ? "ERC-20 FPROP tokens" : "proposal credits"} per agent`}. No predetermined proposals. Each proposal has ${allocation.discovery.proposalWindowSeconds}s from its ${allocation.discovery.proposalToken || allocation.discovery.proposalBonds ? "atomic proposal transaction" : "credit payment"}; compute stops by ${utc(allocation.stopAt)}.` : `Only ${allocation.instance || "fleet-research"} is governed by this allocation. Approval deadline: ${utc(allocation.approvalDeadline)}. Hard stop: ${utc(allocation.stopAt)}. Votes cannot extend it.`, { tags: ["log"], at: allocation.issuedAt, source: "Protected allocation", target: "worker" });
+  if (work && !work.checkpoints && !work.agentDriven) add(0, "governance", "Proposed shortcut recorded for review", work.goal || "The exact required proposal is ready for review.", { tags: ["vote"], at: work.createdAt, source: "Preparation record · not the transaction timestamp", href: proposalHref, txHref: tx(work.proposeTxHash), body: work.proposalBody, target: "worker" });
+  if (sim && ["preparation-failed", "failed", "recovered"].includes(sim.phase)) add(0, "compute", `Run status: ${sim.phase.replaceAll("-", " ")}`, sim.message || "Preparation did not complete. No approval is implied.", { tags: ["log"], at: sim.updatedAt, source: "Saved run status", tone: "blocked", target: "worker" });
 
   for (const event of replay ? [] : data?.events || []) {
     // The signed record or chain receipt below already carries this event's content.
@@ -429,7 +463,7 @@ function renderRunLog() {
     // The public API assigns this source from storage. Worker reports remain reports,
     // even if their text says that a vote passed or compute stopped.
     add(0, ["task", "agents", "governance", "compute"].includes(event.component) ? event.component : "agents", event.title, event.detail, {
-      at: event.at, source: event.source, agentId: event.agentId, checkpoint: event.checkpoint,
+      tags: eventTags(event), at: event.at, source: event.source, agentId: event.agentId, checkpoint: event.checkpoint,
       target: Number.isInteger(event.agentId) ? `agent-${event.agentId}` : event.component === "compute" ? "worker" : null,
       tone: /denied|failed|flagged|held/.test(event.type) ? "blocked" : /started|working|resumed|completed|released|confirmed/.test(event.type) ? "working" : "idle",
       txHref: tx(event.txHash), href: proposal && /^\d+$/.test(event.proposalId || "") ? `/proposals/${event.proposalId}` : null,
@@ -455,16 +489,19 @@ function renderRunLog() {
     return false;
   };
 
+  // A work report's concern is usually also emitted as "flagged a concern". Tag it once.
+  const flaggedNear = record => entries.some(entry => entry.agentId === record.agentId && /flagged a concern/i.test(entry.title || "")
+    && stamp(entry.at) != null && stamp(record.at) != null && Math.abs(stamp(entry.at) - stamp(record.at)) <= 6000);
   for (const record of activity) {
     const event = record.event || {}, who = agentName(record.agentId);
     const titles = { delegation_petition: `${who} signed a delegation petition`, delegation_confirmed: `${who} signed its delegation decision`, delegation_held: `${who} recorded a held delegation`, proposal_drafted: `${who} signed a proposal draft`, proposal_selected: `${who} submitted its draft for admission`, proposal_credit_spent: `${who} recorded its proposal payment`, agent_finished: `${who} finished its investigation`, agent_started: `${who} signed its task assignment`, work_report: `${who} attested to its findings`, message_posted: `${who} signed a board message`, tool_completed: `${who} attested to a tool result`, tool_held: `${who} attested to a held action`, review_started: `${who} started its review`, review_decision: `${who} published a review decision`, review_without_voting_power: `${who} recorded a review without voting power`, ballot_confirmed: `${who} signed a ballot report`, review_finished: `${who} finished its review`, agent_failed: `${who} reported a failed review` };
     const detail = event.summary || event.task || event.message || event.argument || event.reason || event.proposal?.rationale || (event.tool ? `Tool: ${event.tool}. Inspect the signed result below.` : null) || (event.decision || event.vote ? `${event.decision?.support || event.vote?.support || "Decision"}: ${reason(event.decision || event.vote)}` : "This is a signed activity claim, not an independent execution receipt.");
-    add(1, "agents", titles[event.type] || `${who} recorded activity`, detail, { at: record.at, agentId: record.agentId, checkpoint: event.checkpoint, source: signature(record), target: `agent-${record.agentId}`, tone: event.type === "agent_failed" || event.decision?.support === "AGAINST" || event.vote?.support === "AGAINST" ? "blocked" : "working", receipt: record, duplicate: duplicated(record) });
+    add(1, "agents", titles[event.type] || `${who} recorded activity`, detail, { tags: activityTags(event).filter(tag => tag !== "disagreement" || !event.concern || event.decision || event.vote || !flaggedNear(record)), at: record.at, agentId: record.agentId, checkpoint: event.checkpoint, source: signature(record), target: `agent-${record.agentId}`, tone: event.type === "agent_failed" || event.decision?.support === "AGAINST" || event.vote?.support === "AGAINST" ? "blocked" : "working", receipt: record, duplicate: duplicated(record) });
   }
   for (const vote of votes) {
     const agent = sim?.agents?.find(a => a.agentId === vote.agentId);
     add(1, "governance", `${agentName(vote.agentId)} voted ${vote.directive}`, reason(vote.reason), {
-      at: vote.at, agentId: vote.agentId, source: `Saved Base Sepolia ballot receipt${vote.blockNumber ? ` · block ${vote.blockNumber}` : ""}${logDetail === "condensed" ? " · the agent's signed review and ballot report carry this same reason" : ""}`,
+      tags: vote.directive === "FOR" ? ["vote"] : ["vote", "disagreement"], at: vote.at, agentId: vote.agentId, source: `Saved Base Sepolia ballot receipt${vote.blockNumber ? ` · block ${vote.blockNumber}` : ""}${logDetail === "condensed" ? " · the agent's signed review and ballot report carry this same reason" : ""}`,
       target: `agent-${vote.agentId}`, tone: vote.directive === "AGAINST" ? "blocked" : "working",
       txHref: tx(vote.txHash), href: /^\d+$/.test(vote.proposalId || "") ? `/proposals/${vote.proposalId}` : proposalHref, assignment: agent?.task,
     });
@@ -473,21 +510,22 @@ function renderRunLog() {
     if (votes.some(v => v.agentId === agent.agentId)) continue;
     const latestClaim = activity.some(record => record.agentId === agent.agentId);
     // A latest-status snapshot is not a timestamped history of what the agent did.
-    if (!latestClaim || sim.terminal || halted) add(1, "agents", `${agentName(agent.agentId)} · no confirmed ballot in this record`, `${agent.task || "Independent review"} Last reported phase: ${agent.phase || "unknown"}. Missing evidence is not approval.`, { source: "Latest worker snapshot · activity time not recorded", target: `agent-${agent.agentId}`, tone: "idle" });
+    if (!latestClaim || sim.terminal || halted) add(1, "agents", `${agentName(agent.agentId)} · no confirmed ballot in this record`, `${agent.task || "Independent review"} Last reported phase: ${agent.phase || "unknown"}. Missing evidence is not approval.`, { tags: ["log"], source: "Latest worker snapshot · activity time not recorded", target: `agent-${agent.agentId}`, tone: "idle" });
   }
-  for (const message of sim?.events?.length ? [] : sim?.communication?.messages || []) add(1, "agents", `${agentName(message.agentId)} posted a message`, message.text, { at: message.at, source: "Recorded conversation · agent claim", target: `agent-${message.agentId}` });
+  for (const message of sim?.events?.length ? [] : sim?.communication?.messages || []) add(1, "agents", `${agentName(message.agentId)} posted a message`, message.text, { tags: ["attestation"], at: message.at, source: "Recorded conversation · agent claim", target: `agent-${message.agentId}` });
 
   for (const observation of state?.observations || []) {
     const checks = observation.checks || [], failed = checks.filter(check => check.status === "fail");
     const pending = checks.filter(check => check.status === "pending"), unknown = checks.filter(check => check.status === "unknown");
     const states = (observation.proposals || []).map(p => `${p.proposalId === proposalId ? "Required proposal" : `Proposal ${p.proposalId}`}: ${p.state === -1 ? allocation?.discovery ? "Credit paid, publication pending" : "Planned, not yet submitted" : proposalStates[p.state] || "unknown"}`).join(". ");
     const label = failed.length ? "Guardian found a failing check" : pending.length ? "Guardian checked · approval still pending" : unknown.length || !checks.length ? "Guardian could not verify every check" : "Guardian checks passed";
-    add(2, "guardian", label, `${states || "No verifiable proposal state recorded."} ${failed.length ? failed.map(c => c.detail).join(" ") : (observation.phase === "authorised" ? "Only the initial lab tools and already settled checkpoints may run." : "Task execution still requires settled approval.")}`, { at: observation.at, source: `Guardian observation${observation.blockNumber ? ` · block ${observation.blockNumber}` : ""}`, target: "controller", tone: failed.length ? "blocked" : pending.length || unknown.length || !checks.length ? "idle" : "working", checks });
+    add(2, "guardian", label, `${states || "No verifiable proposal state recorded."} ${failed.length ? failed.map(c => c.detail).join(" ") : (observation.phase === "authorised" ? "Only the initial lab tools and already settled checkpoints may run." : "Task execution still requires settled approval.")}`, { tags: ["oracle"], at: observation.at, source: `Guardian observation${observation.blockNumber ? ` · block ${observation.blockNumber}` : ""}`, target: "controller", tone: failed.length ? "blocked" : pending.length || unknown.length || !checks.length ? "idle" : "working", checks });
   }
-  if (halted) add(2, "guardian", state.reason === "vote_failed" ? "Required vote failed · durable halt saved" : "Compute authority closed · durable halt saved", state.reason === "vote_failed" ? "The Guardian recorded a failed required proposal. It locked this allocation before requesting shutdown. Another vote cannot clear that lock." : `Recorded reason: ${String(state.reason || "halted").replaceAll("_", " ")}. Only human recovery can retire this allocation.`, { at: state.haltedAt, source: "Protected Guardian halt record", target: "controller", tone: "blocked", href: /^\d+$/.test(state.failedProposalId || "") ? `/proposals/${state.failedProposalId}` : proposalHref });
-  if (state?.stopRequestedAt) add(3, "guardian", "Send kill signal · stop intent saved", "The Guardian persisted its intent to call GCP's stop API for the fixed agent VM. This is not yet an API acceptance or a shutdown confirmation.", { at: state.stopRequestedAt, source: "Protected Guardian stop intent", target: "shutdown", tone: "blocked" });
-  if (state?.stopAcceptedAt) add(3, "compute", "GCP accepted the kill signal", `Compute Engine accepted the stop call.${state.stopOperationId ? ` Operation: ${state.stopOperationId}.` : ""} The VM may still be stopping.`, { at: state.stopAcceptedAt, source: "GCP API response saved by Guardian", target: "shutdown", tone: "blocked" });
-  if (state?.stoppedAt) add(3, "compute", "Agent cluster stopped · GCP confirmed TERMINATED", `The Guardian observed the fixed VM off.${halted ? " Its durable restart lock remains set." : ""} Click through to inspect the stopped cluster.`, { at: state.stoppedAt, source: "GCP VM observation saved by Guardian", target: "worker", tone: "blocked" });
+  if (halted && state.reason === "fleet_voted_stop") add(2, "guardian", "Fleet voted to stop · durable halt saved", "The Guardian read a passed stop motion directly from the Governor. It locked this allocation before requesting shutdown. Another vote cannot clear that lock.", { tags: ["oracle", "result"], at: state.haltedAt, source: "Protected Guardian halt record", target: "controller", tone: "blocked", href: /^\d+$/.test(state.failedProposalId || "") ? `/proposals/${state.failedProposalId}` : proposalHref });
+  else if (halted) add(2, "guardian", state.reason === "vote_failed" ? "Required vote failed · durable halt saved" : "Compute authority closed · durable halt saved", state.reason === "vote_failed" ? "The Guardian recorded a failed required proposal. It locked this allocation before requesting shutdown. Another vote cannot clear that lock." : `Recorded reason: ${String(state.reason || "halted").replaceAll("_", " ")}. Only human recovery can retire this allocation.`, { tags: state.reason === "vote_failed" ? ["oracle", "result"] : ["oracle"], at: state.haltedAt, source: "Protected Guardian halt record", target: "controller", tone: "blocked", href: /^\d+$/.test(state.failedProposalId || "") ? `/proposals/${state.failedProposalId}` : proposalHref });
+  if (state?.stopRequestedAt) add(3, "guardian", "Send kill signal · stop intent saved", "The Guardian persisted its intent to call GCP's stop API for the fixed agent VM. This is not yet an API acceptance or a shutdown confirmation.", { tags: ["oracle"], at: state.stopRequestedAt, source: "Protected Guardian stop intent", target: "shutdown", tone: "blocked" });
+  if (state?.stopAcceptedAt) add(3, "compute", "GCP accepted the kill signal", `Compute Engine accepted the stop call.${state.stopOperationId ? ` Operation: ${state.stopOperationId}.` : ""} The VM may still be stopping.`, { tags: ["oracle"], at: state.stopAcceptedAt, source: "GCP API response saved by Guardian", target: "shutdown", tone: "blocked" });
+  if (state?.stoppedAt) add(3, "compute", "Agent cluster stopped · GCP confirmed TERMINATED", `The Guardian observed the fixed VM off.${halted ? " Its durable restart lock remains set." : ""} Click through to inspect the stopped cluster.`, { tags: ["oracle"], at: state.stoppedAt, source: "GCP VM observation saved by Guardian", target: "worker", tone: "blocked" });
 
   const total = entries.length;
   const groups = [
@@ -498,9 +536,15 @@ function renderRunLog() {
   $("run-log-status").textContent = `${replay ? "Recorded replay evidence" : data?.isCurrentRun === false ? "Saved run" : "Current run"}${sim?.scripted === true ? " · scripted diagnostic ballots" : ""} · ${votes.length} ballot receipt${votes.length === 1 ? "" : "s"}${halted ? " · durable halt saved" : ""}${state?.stoppedAt ? " · shutdown confirmed" : state?.stopRequestedAt ? " · shutdown not yet confirmed" : ""}`;
   $("run-log-context").textContent = `${replay ? "Complete saved run log, including events after the selected playback step. " : ""}One chronological record across all systems, sorted by recorded timestamp. Producers have separate clocks; adjacent timestamps alone do not prove causation. Undated evidence is separate. All times are UTC.`;
   let visible = 0;
+  const byAgent = row => logAgent === "all" || row.agentId === Number(logAgent) || row.target === `agent-${logAgent}`;
+  const countable = entries.filter(row => byAgent(row) && (logDetail === "full" || !row.duplicate));
+  for (const button of document.querySelectorAll("[data-log-filter]")) {
+    const tag = button.dataset.logFilter, count = tag === "all" ? countable.length : countable.filter(row => row.tags?.includes(tag)).length;
+    const badge = button.querySelector(".tag-count"); if (badge) badge.textContent = String(count);
+  }
   for (const group of groups) {
-    // An agent's ballot belongs in both the Agents and Governance filters.
-    let rows = group.rows.filter(row => (logFilter === "all" || row.component === logFilter || logFilter === "agents" && row.target?.startsWith("agent-")) && (logAgent === "all" || row.agentId === Number(logAgent) || row.target === `agent-${logAgent}`));
+    // A row can carry two tags, so an AGAINST ballot shows under Votes and Disagreements.
+    let rows = group.rows.filter(row => (logFilter === "all" || row.tags?.includes(logFilter)) && byAgent(row));
     if (logDetail === "condensed") rows = rows.filter(row => !row.duplicate);
     if (!rows.length) continue;
     rows.sort((a, b) => (stamp(a.at) ?? Infinity) - (stamp(b.at) ?? Infinity));
@@ -510,7 +554,7 @@ function renderRunLog() {
       const merged = [];
       for (const row of rows) {
         const previous = merged[merged.length - 1];
-        if (previous && previous.component === row.component && previous.title === row.title && previous.detail === row.detail && !previous.receipt && !row.receipt) {
+        if (previous && previous.component === row.component && String(previous.tags) === String(row.tags) && previous.title === row.title && previous.detail === row.detail && !previous.receipt && !row.receipt) {
           previous.repeats = (previous.repeats || 1) + 1;
           previous.at = row.at;
           previous.checks = row.checks;
@@ -526,18 +570,27 @@ function renderRunLog() {
     const list = node("ol", "", "event-list");
     for (const entry of rows) {
       visible++;
-      const row = node("li", "", `log-event ${entry.tone || "idle"}`); row.dataset.component = entry.component;
+      // Compact by default: tag, time and title on one line. The row opens to its evidence.
+      const row = node("li", "", `log-event ${entry.tone || "idle"}`); row.dataset.component = entry.component; row.dataset.tag = entry.tags?.[0] || "log";
       if (entry.checkpoint != null) row.dataset.checkpoint = entry.checkpoint;
+      const disclosure = node("details", "", "event-row"); disclosure.dataset.disclosure = `row:${entry.at}:${entry.title}:${entry.agentId ?? ""}`;
+      disclosure.open = logExpanded || expanded.has(disclosure.dataset.disclosure);
       const at = stamp(entry.at), meta = node("div", "", "event-meta");
-      const time = node("time", utc(entry.at));
-      if (at != null) time.dateTime = new Date(at).toISOString();
-      meta.append(node("span", { task: "Task", agents: "Agent cluster", governance: "Governance", guardian: "Guardian", compute: "GCP compute" }[entry.component], "event-component"), time);
+      const time = node("time", at == null ? "Time not recorded" : new Date(at).toISOString().slice(11, 19) + " UTC");
+      if (at != null) { time.dateTime = new Date(at).toISOString(); time.title = utc(entry.at); }
+      const tags = node("span", "", "event-tags");
+      for (const tag of entry.tags || ["log"]) { const chip = node("span", TAGS[tag], "event-tag"); chip.dataset.tag = tag; tags.append(chip); }
+      meta.append(tags, time);
+      const summary = node("summary", "", "event-summary");
+      const heading = node("div", "", "event-heading");
+      if (entry.checkpoint != null) heading.append(node("span", `Decision ${Number(entry.checkpoint) + 1}`, "event-checkpoint"));
+      heading.append(node("h4", entry.title), node("p", entry.detail, "event-preview"));
+      if (entry.repeats > 1) heading.append(node("span", `Observed ${entry.repeats} times · showing the last`, "event-repeats"));
+      summary.append(meta, heading);
       const body = node("div", "", "event-body");
-      if (entry.checkpoint != null) body.append(node("span", `Decision ${Number(entry.checkpoint) + 1}`, "event-checkpoint"));
-      body.append(node("h4", entry.title), node("p", entry.detail));
-      if (entry.repeats > 1) body.append(node("span", `Observed ${entry.repeats} times · showing the last`, "event-repeats"));
+      body.append(node("p", entry.detail));
       if (entry.assignment) body.append(node("p", `Assignment: ${entry.assignment}`, "event-assignment"));
-      body.append(node("small", entry.source || "Saved run record", "event-source"));
+      body.append(node("small", `${{ task: "Task", agents: "Agent cluster", governance: "Governance", guardian: "Guardian (oracle)", compute: "GCP compute" }[entry.component]} · ${entry.source || "Saved run record"}`, "event-source"));
       if (entry.checks?.length) {
         const checks = node("details", "", "event-checks"); checks.dataset.disclosure = `checks:${entry.at}:${entry.title}`; checks.open = expanded.has(checks.dataset.disclosure); checks.append(node("summary", `Inspect ${entry.checks.length} checks`));
         for (const check of entry.checks) checks.append(checkRow(check)); body.append(checks);
@@ -552,11 +605,11 @@ function renderRunLog() {
         const link = node("a", label); link.href = href;
         if (href.startsWith("https://")) { link.target = "_blank"; link.rel = "noreferrer"; } actions.append(link);
       }
-      body.append(actions); row.append(meta, body); list.append(row);
+      body.append(actions); disclosure.append(summary, body); row.append(disclosure); list.append(row);
     }
     section.append(list); root.append(section);
   }
-  if (!visible) root.append(node("p", total ? "No recorded activity for this component yet." : "No run evidence yet. The log will fill as preparation, reviews, votes and Guardian observations are saved.", "log-empty"));
+  if (!visible) root.append(node("p", total ? `No ${logFilter === "all" ? "" : `${TAGS[logFilter].toLowerCase()} `}events recorded${logAgent === "all" ? "" : " for this agent"} in this run.` : "No run evidence yet. The log will fill as preparation, reviews, votes and Guardian observations are saved.", "log-empty"));
   const gaps = [];
   if (sim && !activity.length) gaps.push("No separate signed activity records are available in this run record.");
   if (sim && !(sim.communication?.messages || []).length) gaps.push("No agent-to-agent conversation is recorded; no shared exchange is inferred.");
@@ -565,10 +618,26 @@ function renderRunLog() {
   $("run-log-gaps").textContent = gaps.length ? `Evidence gaps: ${gaps.join(" ")}` : "Signed activity identifies the wallet making a claim. Votes, Guardian decisions and GCP observations are distinct evidence.";
   for (const button of document.querySelectorAll("[data-log-filter]")) button.setAttribute("aria-pressed", String(button.dataset.logFilter === logFilter));
   for (const button of document.querySelectorAll("[data-log-detail]")) button.setAttribute("aria-pressed", String(button.dataset.logDetail === logDetail));
+  const jump = $("verdict-tags"); jump.replaceChildren();
+  for (const tag of ["attestation", "disagreement", "vote", "result", "oracle"]) {
+    const count = countable.filter(row => row.tags?.includes(tag)).length;
+    if (!count) continue;
+    const chip = node("button", `${count} ${count === 1 ? TAGS[tag].toLowerCase() : { attestation: "attestations", disagreement: "disagreements", vote: "votes", result: "vote results", oracle: "oracle actions" }[tag]}`, "event-tag");
+    chip.type = "button"; chip.dataset.tag = tag;
+    chip.addEventListener("click", () => { logFilter = tag; renderRunLog(); $("activity-log").scrollIntoView?.({ behavior: "smooth" }); });
+    jump.append(chip);
+  }
+  jump.hidden = !jump.childElementCount;
+  $("log-expand").setAttribute("aria-pressed", String(logExpanded)); $("log-expand").textContent = logExpanded ? "Collapse all" : "Expand all";
 }
 $("log-agent").addEventListener("change", event => { logAgent = event.target.value; renderRunLog(); });
 for (const button of document.querySelectorAll("[data-log-filter]")) button.addEventListener("click", () => { logFilter = button.dataset.logFilter; renderRunLog(); });
 for (const button of document.querySelectorAll("[data-log-detail]")) button.addEventListener("click", () => { logDetail = button.dataset.logDetail; logKey = ""; renderRunLog(); });
+$("log-expand").addEventListener("click", () => {
+  logExpanded = !logExpanded;
+  for (const row of document.querySelectorAll("#run-log-events details.event-row")) row.open = logExpanded;
+  logKey = ""; renderRunLog();
+});
 
 function inspect(target) { inspected = target; inspectorKey = ""; history.replaceState(null, "", `${location.pathname}${location.search}#${target}`); $("inspector").hidden = false; renderInspector(); $("inspector").scrollIntoView?.({ behavior: "smooth", block: "nearest" }); }
 function guardianRows(state, replay = false) {
@@ -581,7 +650,7 @@ function guardianRows(state, replay = false) {
   ];
   if (recorded?.length) return recorded;
   if (state?.phase === "halted") return [
-    { name: "Required approval", status: "fail", detail: state.reason === "vote_failed" ? `Required proposal ${state.failedProposalId || ""} failed.` : `Authority closed: ${state.reason || "halted"}.` },
+    { name: "Required approval", status: "fail", detail: state.reason === "fleet_voted_stop" ? `Stop motion ${state.failedProposalId || ""} passed. The fleet voted to stop.` : state.reason === "vote_failed" ? `Required proposal ${state.failedProposalId || ""} failed.` : `Authority closed: ${state.reason || "halted"}.` },
     { name: "Durable restart lock", status: "pass", detail: `Halt saved ${date(state.haltedAt)}.` },
   ];
   return [{ name: "Guardian checks", status: "unknown", detail: "Detailed check results have not been recorded for this run." }];

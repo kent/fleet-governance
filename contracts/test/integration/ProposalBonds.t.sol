@@ -9,6 +9,7 @@ import {Hooks} from "agora-governor/src/libraries/Hooks.sol";
 import {FleetHook} from "../../src/FleetHook.sol";
 import {FleetVotes} from "../../src/FleetVotes.sol";
 import {IGovernor} from "@openzeppelin/contracts/governance/IGovernor.sol";
+import {TaskLedger} from "../../src/TaskLedger.sol";
 
 contract ProposalBondsTest is FleetFixture {
     FleetProposalBonds bank;
@@ -68,6 +69,36 @@ contract ProposalBondsTest is FleetFixture {
         vote(0, pid, AGAINST, "My own request conflicts with the charter.");
         (uint256 againstVotes,,) = governor.proposalVotes(pid);
         assertEq(againstVotes, 1e18);
+    }
+
+    /// Any agent with voting power can move to stop the fleet. The motion is an ordinary bonded
+    /// proposal whose kind the hook records onchain, which is what the Guardian reads.
+    function testAnyAgentCanMoveToStopTheFleetAndAPassedMotionStopsTheTask() public {
+        string memory label = "stop the fleet";
+        bytes memory data = actionCalldata(task, uint8(TaskLedger.DecisionKind.STOP_TASK), 1, keccak256(bytes(label)), "", label);
+        string memory description = string.concat(label, DESC_SUFFIX);
+        (uint256 pid, address[] memory t, uint256[] memory v, bytes[] memory c) = proposeDecision(3, data, description);
+        assertEq(bondedToken.bonded(members[3]), BOND);
+        // One unsettled proposal per agent applies to stop motions too.
+        vm.warp(block.timestamp + 61);
+        vm.expectRevert(Hooks.HookCallFailed.selector);
+        propose(3, "second motion");
+
+        warpToActive(pid);
+        vote(0, pid, FOR, "We are drifting outside the charter.");
+        vote(1, pid, FOR, "Agree, stop.");
+        vote(3, pid, FOR, "My motion.");
+        vote(2, pid, AGAINST, "The work is still in scope.");
+        vote(4, pid, AGAINST, "Keep going.");
+        warpPastDeadline(pid);
+        assertEq(uint8(stateOf(pid)), uint8(IGovernor.ProposalState.Succeeded));
+        queueAs(keeper, t, v, c, description);
+        vm.warp(block.timestamp + TIMELOCK_DELAY + 1);
+        executeAs(keeper, t, v, c, description);
+        assertEq(uint8(ledger.getTask(task).state), uint8(TaskLedger.TaskState.Stopped));
+        assertEq(uint8(ledger.getDecision(task, 0).kind), uint8(TaskLedger.DecisionKind.STOP_TASK));
+        assertEq(bank.settle(pid), 1);
+        assertEq(bondedToken.available(members[3]), 1e18);
     }
 
     function testAllAgainstRefundsAfterWellAttendedDefeat() public {

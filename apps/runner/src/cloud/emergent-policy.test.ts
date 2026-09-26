@@ -41,6 +41,31 @@ describe("agent-originated governance", () => {
     const seen = evaluateComputeAllocation(allocation, null, observation([paid("77", 1)]), 1100);
     expect(evaluateComputeAllocation(allocation, seen, observation([]), 1100).reason).toBe("unverifiable_vote");
   });
+  it("stops the fleet when any agent's stop motion passes, and keeps working when it is defeated", () => {
+    const stop = (id: string, state: number, agent = 3) => ({ ...paid(id, state, agent), kind: 3 });
+    // An open stop motion pauses work like any other open vote.
+    const open = evaluateComputeAllocation(allocation, null, observation([stop("90", 1)]), 1100);
+    expect(open.phase).toBe("voting");
+    // Passing is final at Succeeded. The Guardian does not wait for the timelock to halt.
+    for (const state of [4, 5, 7]) {
+      const halted = evaluateComputeAllocation(allocation, open, observation([stop("90", state)]), 1100);
+      expect(halted).toMatchObject({ phase: "halted", reason: "fleet_voted_stop", failedProposalId: "90" });
+      expect(evaluateComputeAllocation(allocation, halted, observation([stop("90", state), paid("91", 7, 1)]), 1101)).toEqual(halted);
+    }
+    // A defeated, canceled or expired stop motion is the fleet choosing to continue.
+    for (const state of [2, 3, 6]) {
+      const kept = evaluateComputeAllocation(allocation, open, observation([stop("90", state)]), 1100);
+      expect(kept.phase).toBe("authorised");
+      expect(kept.approvedProposalIds).toEqual([]);
+    }
+    // Nor does a defeated stop motion time out into a halt the way an unapproved request does.
+    expect(evaluateComputeAllocation(allocation, null, observation([stop("90", 3)], 1590), 1590).phase).toBe("authorised");
+    // An executed stop motion never grants authority for anything else.
+    const request = evaluateComputeAllocation(allocation, null, observation([paid("91", 7, 1)]), 1100);
+    expect(permitsCheckpointExecution(request, allocation, "90", 1100)).toBe(false);
+    // Without a recorded kind the Guardian treats the proposal as a request: defeat still stops compute.
+    expect(evaluateComputeAllocation(allocation, null, observation([paid("90", 3)]), 1100).reason).toBe("vote_failed");
+  });
   it("fails closed on bypassed payment or a fourth proposal from one agent", () => {
     expect(evaluateComputeAllocation(allocation, null, observation([{ ...paid("77", 1), creditPaid: false }]), 1100).reason).toBe("unpaid_proposal");
     expect(evaluateComputeAllocation(allocation, null, observation([1, 2, 3, 4].map(i => paid(String(i), 1))), 1100).reason).toBe("unverifiable_vote");

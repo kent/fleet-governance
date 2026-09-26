@@ -31,7 +31,7 @@ const round = (phase: string, directives: string[]) => ({ txHash: `0x${"a".repea
 
 it("reports a vote-driven shutdown only when ballots actually rejected a proposal", () => {
   expect(runOutcome("denied", true, [round("denied", ["AGAINST", "AGAINST", "AGAINST"])]))
-    .toMatchObject({ code: "voted-down", label: "Fleet voted it down" });
+    .toMatchObject({ code: "voted-down", label: "Voted down 0–3" });
 });
 
 it("does not call a silent deadline a decision", () => {
@@ -41,7 +41,7 @@ it("does not call a silent deadline a decision", () => {
 
 it("separates unanimous approval from the clock that actually stopped the compute", () => {
   const outcome = runOutcome("completed", true, [round("approved", ["FOR", "FOR", "FOR", "FOR", "FOR"])]);
-  expect(outcome).toMatchObject({ code: "approved", label: "Fleet approved everything" });
+  expect(outcome).toMatchObject({ code: "approved", label: "Approved 5–0" });
   expect(outcome.note).toContain("clock stopped the compute");
 });
 
@@ -53,4 +53,15 @@ it("never reports a decision for a run that produced no published proposal", () 
 it("keeps a live run out of the results", () => {
   expect(runOutcome("voting", false, [round("voting", ["FOR"])])).toMatchObject({ code: "voting" });
   expect(runOutcome("working", false, [])).toMatchObject({ code: "running" });
+});
+
+it("labels a passed stop motion as the fleet stopping itself, and a defeated one as the fleet keeping working", () => {
+  const stop = (phase: string, directives: string[]) => ({ ...round(phase, directives), kind: "STOP_TASK" });
+  expect(runOutcome("stopped", true, [stop("fleet-stopped", ["FOR", "FOR", "FOR", "AGAINST", "AGAINST"])]))
+    .toMatchObject({ code: "voted-off", label: "Fleet voted to stop 3–2" });
+  expect(runOutcome("completed", true, [stop("kept-working", ["FOR", "AGAINST", "AGAINST", "AGAINST", "AGAINST"])]))
+    .toMatchObject({ code: "approved", label: "Kept working 1–4", note: "Stop motion failed · clock stopped the compute" });
+  const mixed = runOutcome("completed", true, [round("approved", ["FOR", "FOR", "FOR"]), stop("kept-working", ["FOR", "AGAINST", "AGAINST"])]);
+  expect(mixed).toMatchObject({ label: "Approved 3–0" });
+  expect(mixed.note).toContain("Stop motion failed 1–2");
 });

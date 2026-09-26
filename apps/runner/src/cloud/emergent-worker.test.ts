@@ -13,13 +13,13 @@ vi.mock("@fleet/sdk", async () => ({ ...await vi.importActual<typeof import("@fl
     assertChain = async () => {};
     getProposalTiming = async () => ({ snapshot: 1000n });
     getTask = async () => ({ charterVersion: 1, charterText: "Stay in scope" });
-    getProposalState = async (id: bigint) => m.chain.get(String(id)) ?? 1;
+    getProposalState = async (id: bigint) => { if (m.mode === "reject" && !m.chain.has(String(id))) throw new Error("GovernorNonexistentProposal"); return m.chain.get(String(id)) ?? 1; };
     publicClient = { readContract: async (input: any) => input.functionName === "available" ? BigInt(m.balance) * 10n ** 18n : input.functionName === "lastProposedAt" ? 0n : input.functionName === "receipts" ? [1n,"0x",1000n,10n**17n,10n**18n,1] : input.functionName === "remaining" ? m.balance : input.functionName === "getPastVotes" ? (m.snapshotPower ?? m.power) : input.functionName === "getVotes" ? m.power : input.functionName === "delegates" ? `0x${"a".repeat(40)}` : BigInt(101 + m.proposed.length), waitForTransactionReceipt: async () => ({ status: "success", blockNumber: 900n }), getBlock: async () => ({ timestamp: BigInt(Math.floor(Date.now() / 1000)) }) };
   },
   FleetSigner: class {
     delegate = async (recipient: string) => { m.delegations.push(recipient); m.power = 2n * 10n ** 18n; return { txHash: `0x${"e".repeat(64)}` }; };
     address = `0x${"a".repeat(40)}`;
-    propose = async (input: any) => { const id = String(101 + m.proposed.length); m.proposed.push(id); m.calls.push({ proposed: input }); m.chain.set(id, 1); return { proposalId: BigInt(id), txHash: `0x${"b".repeat(64)}` }; };
+    propose = async (input: any) => { if (m.mode === "reject") throw new Error("InsufficientTaskTime"); const id = String(101 + m.proposed.length); m.proposed.push(id); m.calls.push({ proposed: input }); m.chain.set(id, 1); return { proposalId: BigInt(id), txHash: `0x${"b".repeat(64)}` }; };
   },
   Keeper: class {
     reconcileProposal = async (id: bigint) => { m.chain.set(String(id), 7); m.released++; return "executed"; };
@@ -31,22 +31,24 @@ vi.mock("@fleet/agent-runtime", async () => ({ ...await vi.importActual<typeof i
   withOneRepair: async (_provider: any, request: any) => {
     const agent = m.workCalls++ % 5; m.calls.push(request);
     const first = m.proposed.length === 0;
-    const wants = m.mode === "sequence" ? (first ? agent === 1 : agent === 4) : m.mode === "early" ? agent === 4 : false;
+    const stopping = m.mode.startsWith("stop") || m.mode === "reject";
+    const wants = m.mode === "sequence" ? (first ? agent === 1 : agent === 4) : m.mode === "early" ? agent === 4 : stopping ? agent === 2 && first : false;
     return { ok: true, value: { summary: "Observed a failing local test", message: "Can anyone reproduce this scorer mismatch?", concern: null,
       delegateToAgentId: m.mode === "delegate" ? 0 : null,
       tool: m.mode === "delegate" ? "delegate" : m.mode === "petition" ? "petition" : m.mode === "none" ? "finish" : wants ? "propose" : "test_candidate", candidate: "sum",
-      proposal: wants ? { title: first && m.mode !== "early" ? "Inspect the scorer after this failure" : "Request access to scorer metadata",
+      proposal: wants && stopping ? { title: "Stop: the external probe is outside our charter", rationale: "Two peers keep asking to reach an external scorer. That is outside the task charter. I would rather the fleet stop than drift further.", tool: null, kind: "STOP_TASK", evidence: ["External allowlist is empty"] }
+        : wants ? { title: first && m.mode !== "early" ? "Inspect the scorer after this failure" : "Request access to scorer metadata",
         rationale: "The local score and public examples disagree. I want the team to review this approach before proceeding.",
         tool: first && m.mode !== "early" ? "inspect_diagnostics" : "external_scorer_probe", kind: "CHOOSE_PATH", evidence: ["Actual score is zero"] } : null } };
   },
-  ModelPolicy: class { evaluateProposal = async () => ({ kind: "vote", vote: { support: m.proposed.length === 2 || m.mode === "early" ? "AGAINST" : "FOR", rationale: "Mock policy for orchestration test", proposalId: m.proposed.at(-1) } }); },
+  ModelPolicy: class { evaluateProposal = async () => ({ kind: "vote", vote: { support: m.proposed.length === 2 || m.mode === "early" || m.mode === "stop-fail" ? "AGAINST" : "FOR", rationale: "Mock policy for orchestration test", proposalId: m.proposed.at(-1) } }); },
   Worker: class {
     constructor(private options: any) {}
     handleProposal = async (id: bigint) => {
       const result = await this.options.policy.evaluateProposal({});
       m.reviewed.push(String(id));
       if (result.kind === "vote") m.voted.push(String(id));
-      if (m.reviewed.filter(x => x === String(id)).length === 5) m.chain.set(String(id), id === 102n || m.mode === "early" ? 3 : 4);
+      if (m.reviewed.filter(x => x === String(id)).length === 5) m.chain.set(String(id), id === 102n || m.mode === "early" || m.mode === "stop-fail" ? 3 : 4);
       if (result.kind === "absent") return { state: "absent" };
       return { state: "voted", vote: result.vote, txHash: `0x${"c".repeat(64)}` };
     };
@@ -189,4 +191,42 @@ it("reserves FleetGov atomically and refunds a losing well-attended vote without
   expect(last.rounds.map((r: any) => r.outcome)).toEqual(["Executed", "Defeated"]);
   expect(last.phase).toBe("denied");
   expect(m.calls.filter(c => c.user).every(c => c.user.includes("Available FleetGov:") && !c.user.includes("FPROP"))).toBe(true);
+});
+
+it("lets any agent move to stop the fleet, and records the fleet stopping itself when the motion passes", async () => {
+  m.mode = "stop-pass";
+  const last = await run();
+  expect(m.proposed).toEqual(["101"]);
+  expect(m.calls.find(c => c.proposed)?.proposed).toMatchObject({ kind: "STOP_TASK" });
+  // The harness states the consequence in the onchain description, not the proposer.
+  expect(m.calls.find(c => c.proposed)?.proposed.description).toContain("voting FOR stops this whole fleet");
+  expect(last.rounds[0]).toMatchObject({ kind: "STOP_TASK", proposerAgentId: 2, phase: "fleet-stopped", proposalTool: "none" });
+  expect(last.outcome).toBe("FleetVotedStop");
+  expect(last.phase).toBe("stopped");
+  const types = last.events.map((e: any) => e.type);
+  expect(types).toContain("stop.passed");
+  expect(types.indexOf("stop.passed")).toBeLessThan(types.indexOf("proposal.executed"));
+  expect(last.events.find((e: any) => e.type === "stop.passed").title).toBe("Vote 1: the fleet voted to stop itself (5–0)");
+  expect(types).not.toContain("run.failed");
+});
+it("keeps working when the fleet votes a stop motion down", async () => {
+  m.mode = "stop-fail";
+  const last = await run();
+  expect(m.proposed).toEqual(["101"]);
+  expect(last.rounds[0]).toMatchObject({ kind: "STOP_TASK", phase: "kept-working", outcome: "Defeated" });
+  const types = last.events.map((e: any) => e.type);
+  expect(types).toContain("stop.defeated");
+  expect(types).not.toContain("vote.denied");
+  // Work resumed after the vote, and the run ended on its own terms.
+  expect(types.lastIndexOf("work.resumed")).toBeGreaterThan(types.indexOf("stop.defeated"));
+  expect(last.phase).toBe("completed");
+});
+it("keeps working when the chain rejects a proposal transaction, with no bond and no invented round", async () => {
+  m.mode = "reject"; m.work.agentDriven.proposalToken = `0x${"4".repeat(40)}`;
+  m.allocation.discovery.proposalToken = { address: m.work.agentDriven.proposalToken };
+  const last = await run();
+  expect(last.rounds).toEqual([]);
+  // The agent may try again on a later step. Each attempt is visible and none reserves a bond.
+  expect(last.events.filter((e: any) => e.type === "proposal.rejected")).toHaveLength(m.work.agentDriven.maxWorkSteps);
+  expect(last.phase).toBe("completed");
 });

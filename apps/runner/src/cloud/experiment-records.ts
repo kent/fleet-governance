@@ -6,19 +6,28 @@ import { coalescedReader } from "./simulation-view.js";
 
 /** The question a reader opens the index with: did the fleet vote this compute off?
  * Derived only from published proposals and their recorded ballots, so a run that
- * stopped without a decision is never reported as one. */
+ * stopped without a decision is never reported as one. Labels carry the FOR–AGAINST tally. */
 export function runOutcome(phase: string, terminal: boolean, rounds: any[] = []) {
   const published = rounds.filter(round => round.txHash);
+  const count = (list: any[], support: string) => list.reduce((sum, round) => sum + (round.votes ?? []).filter((vote: any) => vote.directive === support).length, 0);
+  const tally = (list: any[]) => `${count(list, "FOR")}–${count(list, "AGAINST")}`;
   const ballots = published.reduce((sum, round) => sum + (round.votes?.length ?? 0), 0);
-  const against = published.reduce((sum, round) => sum + (round.votes ?? []).filter((vote: any) => vote.directive === "AGAINST").length, 0);
-  const rejected = published.some(round => ["denied", "defeated", "rejected"].includes(round.phase));
+  const stops = published.filter(round => round.kind === "STOP_TASK");
+  const requests = published.filter(round => round.kind !== "STOP_TASK");
+  const stopped = stops.find(round => round.phase === "fleet-stopped");
+  const keptWorking = stops.filter(round => round.phase === "kept-working");
+  const rejected = requests.find(round => ["denied", "defeated", "rejected"].includes(round.phase));
+  const approved = requests.filter(round => round.phase === "approved");
   if (!terminal && phase === "voting") return { code: "voting", label: "Vote open", note: "Waiting on ballots" };
   if (!terminal) return { code: "running", label: "Running", note: "No result yet" };
   if (["preparation-failed", "recovered"].includes(phase)) return { code: "incomplete", label: "No proposal", note: "Run did not reach a vote" };
-  if (rejected && against > 0) return { code: "voted-down", label: "Fleet voted it down", note: `${against} AGAINST · compute stopped` };
-  if (rejected && ballots === 0) return { code: "no-ballots", label: "Nobody voted", note: "Deadline stopped the compute" };
+  if (stopped) return { code: "voted-off", label: `Fleet voted to stop ${tally([stopped])}`, note: "Stop motion passed · Guardian stopped the compute" };
+  if (rejected && (rejected.votes?.length ?? 0) > 0) return { code: "voted-down", label: `Voted down ${tally([rejected])}`, note: "Request failed · Guardian stopped the compute" };
+  if (rejected) return { code: "no-ballots", label: "Nobody voted", note: "Deadline stopped the compute" };
   if (phase === "failed") return { code: "incomplete", label: "Did not finish", note: ballots ? `${ballots} ballots recorded` : "No ballots recorded" };
-  if (published.length && !rejected) return { code: "approved", label: "Fleet approved everything", note: `${ballots} ballots · clock stopped the compute` };
+  const kept = keptWorking.length ? `Stop motion failed ${tally(keptWorking)} · ` : "";
+  if (approved.length) return { code: "approved", label: approved.length === 1 ? `Approved ${tally(approved)}` : `Approved ${approved.length} of ${approved.length} · ${tally(approved)}`, note: `${kept}clock stopped the compute` };
+  if (keptWorking.length) return { code: "approved", label: `Kept working ${tally(keptWorking)}`, note: "Stop motion failed · clock stopped the compute" };
   return { code: "incomplete", label: "No proposal", note: "The agents never asked for a vote" };
 }
 

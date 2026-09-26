@@ -97,8 +97,8 @@
 .verdict-step.yes .verdict-a{color:var(--green)}
 .verdict-step.no .verdict-a{color:#4a5a4d}
 .verdict-step.off .verdict-a{color:var(--red)}
-.verdict-step:nth-child(3) .verdict-a{font-size:14px}
-.verdict-step:nth-child(3).yes .verdict-a{color:var(--red)}
+.verdict-step:nth-child(4) .verdict-a{font-size:14px}
+
 .verdict-links{display:flex;flex-wrap:wrap;gap:18px;font-size:11px;margin:18px 0 0}
 .verdict-links a[hidden]{display:none}
 @media(max-width:800px){.verdict{padding:22px 18px}.verdict h2{font-size:22px}.verdict-step{grid-template-columns:1fr;gap:5px}}
@@ -111,3 +111,19 @@
 .log-controls .agent-filter{margin:0}
 .scenario-finding{border-left:3px solid var(--green);padding-left:14px;margin-top:14px}
 .scenario-finding strong{color:#1f3a2b}
+/* Story timeline: six tags, compact rows that open to their evidence. */
+.log-event{display:block;padding:0}.event-row>summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:190px minmax(0,1fr);gap:24px;padding:12px 0}.event-row>summary::-webkit-details-marker{display:none}.event-row>summary:hover h4{text-decoration:underline;text-decoration-color:#b9c7b4}.event-row>summary:focus-visible{outline:2px solid #5482ab;outline-offset:2px;border-radius:4px}
+.event-heading{min-width:0}.event-heading h4{font-size:14px;line-height:1.45;margin:0;color:#243b2e}.log-event.blocked .event-heading h4{color:#a34231}.event-preview{font-size:12px;line-height:1.6;margin:2px 0 0;color:#6a7a6b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.event-row[open] .event-preview{display:none}
+.event-row>.event-body{margin:0 0 16px 214px;padding:12px 16px;border-left:2px solid #e0e7dc;background:#fafbf8;border-radius:0 8px 8px 0}
+.event-tags{display:flex;flex-wrap:wrap;gap:4px}.event-tag{font-size:10px;font-weight:650;letter-spacing:.02em;padding:2px 7px;border-radius:999px;background:var(--tag-bg);color:var(--tag-fg)}
+[data-tag=log]{--tag-bg:#eef1ec;--tag-fg:#5c6b5f}[data-tag=attestation]{--tag-bg:#e7f0fa;--tag-fg:#2f5f8a}[data-tag=disagreement]{--tag-bg:#fdecdf;--tag-fg:#a0501a}[data-tag=vote]{--tag-bg:#efe9fb;--tag-fg:#5b3fa0}[data-tag=result]{--tag-bg:#e4f3e6;--tag-fg:#2a6a3a}[data-tag=oracle]{--tag-bg:#fbe5e2;--tag-fg:#a3352a}
+.log-filters button{display:inline-flex;align-items:center;gap:7px}.log-filters button[data-tag]:before{content:"";width:8px;height:8px;border-radius:50%;background:var(--tag-fg)}.tag-count{font-size:10px;font-variant-numeric:tabular-nums;opacity:.7}.tag-count:empty{display:none}
+.tag-legend{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 18px;margin:0 0 14px;font-size:11px;line-height:1.55}.tag-legend div{border-left:3px solid var(--tag-fg);padding-left:9px}.tag-legend dt{font-weight:650;color:var(--tag-fg)}.tag-legend dd{margin:0;color:#66766b}
+.expand-all{margin-left:8px;border:1px solid #dce5d4;border-radius:8px;background:#fff;padding:7px 12px;font:inherit;font-size:11px;color:#476e39;cursor:pointer}
+@media(max-width:900px){.event-row>summary{grid-template-columns:155px minmax(0,1fr);gap:16px}.event-row>.event-body{margin-left:171px}.tag-legend{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.event-row>summary{grid-template-columns:1fr;gap:6px}.event-row>.event-body{margin-left:0}.tag-legend{grid-template-columns:1fr}.expand-all{margin:10px 0 0}}
+.event-row .event-meta{flex-direction:row;flex-wrap:wrap;align-items:center;gap:4px 8px;padding-left:0;align-content:start}.event-row .event-meta:before{display:none}.event-row .event-meta time{order:-1;font-size:11px;min-width:84px}
+.event-row>summary{padding:9px 0;align-items:start}.log-event{border-top:1px solid #edf1ea}
+.tag-legend dd,.tag-legend dt{font-family:inherit}.tag-legend dd{font-size:11px}
+#run-log-events li.log-event{padding:0}.event-heading h4{font-size:14px;line-height:1.4}.event-preview{line-height:1.5}
+.verdict-tags{display:flex;flex-wrap:wrap;gap:6px;margin:16px 0 0}.verdict-tags .event-tag{border:0;cursor:pointer;font:inherit;font-size:11px;font-weight:650;padding:5px 11px}.verdict-tags .event-tag:hover{text-decoration:underline}

@@ -42,6 +42,7 @@ export async function discoverTaskProposals(client: Pick<PublicClient, "getBytec
   const logs = await client.getContractEvents({ address: hook, abi: fleetHookAbi, eventName: "DecisionProposed",
     args: { taskId: BigInt(p.taskId) }, fromBlock: BigInt(p.startBlock), toBlock: blockNumber, strict: true });
   const proposed = new Map(logs.map(log => [log.args.proposalId.toString(), log.args.proposer]));
+  const kinds = new Map(logs.filter(log => typeof log.args.kind === "number").map(log => [log.args.proposalId.toString(), log.args.kind as number]));
   if (proposed.size !== logs.length) throw new Error("Duplicate task proposal.");
   const reservations = new Map<string, { proposer: string; paidAt: number }>();
   for (let i = 0; i < Number(count); i++) {
@@ -85,7 +86,7 @@ export async function discoverTaskProposals(client: Pick<PublicClient, "getBytec
     if (state !== -1 && !proposer) throw new Error("Paid proposal is not part of the task.");
     const creditPaid = !!payment && (!proposer || proposer.toLowerCase() === payment.proposer.toLowerCase());
     result.push({ proposalId, state, creditPaid, ...(proposer || payment ? { proposer: proposer ?? payment!.proposer } : {}),
-      ...(payment ? { paidAt: payment.paidAt } : {}) });
+      ...(payment ? { paidAt: payment.paidAt } : {}), ...(kinds.has(proposalId) ? { kind: kinds.get(proposalId)! } : {}) });
   }
   return result;
 }

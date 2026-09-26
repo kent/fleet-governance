@@ -10,7 +10,7 @@ const recordSchema = z.object({
   allocationId: uuid, phase: z.enum(["voting", "authorised", "halted"]),
   observedAt: z.number().int().nonnegative(), authorisedAt: z.number().int().nonnegative().optional(),
   haltedAt: z.number().int().nonnegative().optional(),
-  reason: z.enum(["vote_failed", "approval_deadline", "allocation_expired", "unverifiable_vote", "allocation_mismatch", "unpaid_proposal"]).optional(),
+  reason: z.enum(["vote_failed", "fleet_voted_stop", "approval_deadline", "allocation_expired", "unverifiable_vote", "allocation_mismatch", "unpaid_proposal"]).optional(),
   failedProposalId: z.string().regex(/^[0-9]+$/).optional(),
   blockNumber: z.string().regex(/^[0-9]+$/).optional(), blockHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(),
   checkpointIndex: z.number().int().min(0).max(8).optional(),

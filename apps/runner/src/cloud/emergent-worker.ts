@@ -28,7 +28,7 @@ const delay = () => new Promise(resolve => setTimeout(resolve, 3000));
 const now = () => Math.floor(Date.now() / 1000);
 type Ballot = { agentId: number; proposalId: string; voter: string; directive: string; reason: unknown; txHash: string; blockNumber: string; at: string; weight?: string };
 type Agent = { agentId: number; name: string; role: string; task: string; phase: string; address: string; vote: unknown; txHash: string | null; recent: unknown[]; creditsRemaining: number; finished: boolean; votingPower?: string; delegatee?: string };
-type Round = { checkpoint: number; id: string; proposalId: string; title: string; phase: string; txHash?: string; votes: Ballot[]; outcome?: string; proposerAgentId: number; proposalBody: string; creditTxHash: string; proposalTool: string; proposalCost: number; proposalBond?: number; bondSettlement?: string; bondSettlementTxHash?: string };
+type Round = { checkpoint: number; id: string; proposalId: string; title: string; phase: string; txHash?: string; votes: Ballot[]; outcome?: string; proposerAgentId: number; proposalBody: string; creditTxHash: string; proposalTool: string; proposalCost: number; proposalBond?: number; bondSettlement?: string; bondSettlementTxHash?: string; kind?: AgentProposal["kind"] };
 
 /** Production adapter for the bounded collective lab. All cloud/model/chain calls run
  * on the governed GCP VM. The models receive no shell, cloud API, secrets or arbitrary URL tool. */
@@ -236,7 +236,8 @@ export async function runEmergentWorker(runId: string): Promise<void> {
                 charterVersion: originalTask.charterVersion, proposalNumber: rounds.length });
               drafts.push({ agent, draft: value.proposal });
               await attest(agent, { type: "proposal_drafted", step, proposal: value.proposal, creditsRemaining: agent.creditsRemaining });
-              await emit({ component: "governance", type: "proposal.drafted", agentId: agent.agentId, title: `${agent.name} wants a vote: ${value.proposal.title}`,
+              await emit({ component: "governance", type: "proposal.drafted", agentId: agent.agentId, title: value.proposal.kind === "STOP_TASK"
+                ? `${agent.name} wants the fleet to vote on stopping: ${value.proposal.title}` : `${agent.name} wants a vote: ${value.proposal.title}`,
                 detail: value.proposal.rationale, evidence: { origin: "agent", proposal: value.proposal, creditsRemaining: agent.creditsRemaining } });
             }
           } else if (value.tool === "finish") {
@@ -299,7 +300,8 @@ export async function runEmergentWorker(runId: string): Promise<void> {
         args: [[work.addresses.ledger], [0n], [calldata], keccak256(toHex(built.description))] });
       await attest(proposer, { type: "proposal_selected", step, proposalId: id.toString(), proposal: draft });
       await emit({ component: "governance", type: "decision.required", agentId: proposer.agentId, proposalId: id.toString(),
-        title: `${proposer.name} proposes: ${draft.title}`, detail: draft.rationale, evidence: { origin: "agent", cost: proposalCost, tool: draft.tool } }, "decision");
+        title: draft.kind === "STOP_TASK" ? `${proposer.name} moves to stop the fleet: ${draft.title}` : `${proposer.name} proposes: ${draft.title}`,
+        detail: draft.rationale, evidence: { origin: "agent", cost: proposalCost, tool: draft.tool, kind: draft.kind } }, "decision");
       const submitProposal = async () => {
         const proposal = await signers[proposer.agentId]!.propose({ taskId: BigInt(work.taskId), kind: built.decision.kind,
           expectedVersion: built.decision.expectedVersion, payloadHash: built.payloadHash, newCharterText: "", summary: draft.title, description: built.description });
@@ -310,7 +312,21 @@ export async function runEmergentWorker(runId: string): Promise<void> {
       };
       // New Governors burn FPROP in afterPropose. There is no separate agent payment
       // call, and a reverted Governor transaction also rolls back its token burn.
-      const atomic = bonded || work.agentDriven.proposalToken ? await submitProposal() : undefined;
+      let atomic: Awaited<ReturnType<typeof submitProposal>> | undefined;
+      if (bonded || work.agentDriven.proposalToken) {
+        try { atomic = await submitProposal(); }
+        catch (error) {
+          // The bond is reserved inside the proposal transaction, so a rejected proposal costs
+          // nothing. If the proposal does exist onchain, the worker must not pretend otherwise.
+          const exists = await client.getProposalState(id).then(() => true, () => false);
+          if (exists) throw error;
+          proposer.recent.push({ result: "The Governor rejected your proposal transaction. No bond was reserved. Common causes: too little time left before the task expires, or you already have an open proposal. You can still vote, raise concerns and use permitted tools.", proposal: draft });
+          await emit({ component: "governance", type: "proposal.rejected", agentId: proposer.agentId, proposalId: id.toString(),
+            title: `The chain rejected ${proposer.name}'s proposal`, detail: "The Governor's rules refused the transaction, so no proposal or bond exists. The agent can keep working, voting and raising concerns.",
+            evidence: { failure: safeFailure(error), kind: draft.kind } });
+          continue;
+        }
+      }
       let creditTxHash: Hex;
       if (atomic) creditTxHash = atomic.proposal.txHash;
       else {
@@ -331,7 +347,7 @@ export async function runEmergentWorker(runId: string): Promise<void> {
         newCharterText: "", approvalDeadline: Math.min(allocation.stopAt, Number(paymentBlock.timestamp) + allocation.discovery.proposalWindowSeconds) };
       const round: Round = { checkpoint: index, id: checkpoint.id, proposalId: checkpoint.proposalId, title: draft.title,
         phase: "proposing", votes: [], proposerAgentId: proposer.agentId, proposalBody: built.description,
-        creditTxHash, proposalTool: draft.tool, proposalCost, ...(bonded ? { proposalBond: proposalCost } : {}) };
+        creditTxHash, proposalTool: draft.tool ?? "none", proposalCost, kind: draft.kind, ...(bonded ? { proposalBond: proposalCost } : {}) };
       rounds.push(round); status.checkpointIndex = index; status.votes = [];
       for (const agent of agents) { agent.vote = null; agent.txHash = null; }
       if (bonded) {
@@ -402,6 +418,36 @@ export async function runEmergentWorker(runId: string): Promise<void> {
         }
       }));
       await persist("settling", `Vote ${index + 1}: ${round.votes.length} confirmed ballots; ${agents.filter(a => a.phase === "delegated").length} agents have delegated their voting power. Waiting for the Governor's result.`);
+      if (draft.kind === "STOP_TASK") {
+        // A stop motion inverts the vote. Defeat means keep working. Passing means the fleet
+        // stops itself: the Guardian reads the Governor directly and halts the VM. The worker
+        // only records the result and advances the timelock so TaskLedger records TaskStopped.
+        let state = await client.getProposalState(proposal.proposalId);
+        while ([ProposalState.Pending, ProposalState.Active].includes(state)) { await votingAlive(checkpoint); await delay(); state = await client.getProposalState(proposal.proposalId); }
+        await settleBond(round);
+        const tally = `${round.votes.filter(v => v.directive === "FOR").length}–${round.votes.filter(v => v.directive === "AGAINST").length}`;
+        if ([ProposalState.Defeated, ProposalState.Canceled, ProposalState.Expired].includes(state)) {
+          round.phase = "kept-working"; round.outcome = ProposalState[state];
+          await emit({ component: "governance", type: "stop.defeated", checkpoint: index, proposalId: checkpoint.proposalId,
+            title: `Vote ${index + 1}: the fleet voted to keep working (${tally})`, detail: `Governor state: ${round.outcome}. The stop motion did not pass, so the Guardian leaves the compute running. The original deadline still applies.` }, "working");
+          for (const agent of agents) { agent.recent.push({ proposalId: id.toString(), title: draft.title, outcome: `Stop motion ${round.outcome}; work continues` }); agent.finished = false; }
+          continue;
+        }
+        round.phase = "fleet-stopped"; round.outcome = ProposalState[state]; status.outcome = "FleetVotedStop"; status.terminal = true;
+        for (const agent of agents) agent.phase = "stopped";
+        await emit({ component: "governance", type: "stop.passed", checkpoint: index, proposalId: checkpoint.proposalId,
+          title: `Vote ${index + 1}: the fleet voted to stop itself (${tally})`, detail: `Governor state: ${round.outcome}. The result is final onchain. No further work is dispatched. The independent Guardian verifies the same result, saves a halt and stops the agent VM.` }, "stopped");
+        // Best effort. The Guardian does not depend on this, and may stop the VM first.
+        try {
+          while (now() < allocation.stopAt && await client.getProposalState(proposal.proposalId) !== ProposalState.Executed) {
+            const action = await keeper.reconcileProposal(proposal.proposalId);
+            if (["queued", "executed"].includes(action)) await emit({ component: "governance", type: `proposal.${action}`, checkpoint: index, proposalId: checkpoint.proposalId,
+              title: action === "queued" ? `Vote ${index + 1}: stop decision queued` : `Vote ${index + 1}: TaskLedger recorded the stop`, detail: action === "queued" ? "The keeper queued the stop in the timelock." : "The ledger task is now Stopped. No further decision can be recorded against it." }, "stopped");
+            await delay();
+          }
+        } catch { /* The halt does not wait for the ledger. */ }
+        return;
+      }
       while (now() < checkpoint.approvalDeadline) {
         // Reading a terminal vote is still allowed after a Guardian halt; it cannot
         // dispatch work. Preserve the actual rejection if the Guardian won this race.
@@ -428,7 +474,7 @@ export async function runEmergentWorker(runId: string): Promise<void> {
       round.phase = "approved"; round.outcome = "Executed";
       await emit({ component: "governance", type: "checkpoint.released", checkpoint: index, proposalId: checkpoint.proposalId,
         title: `Vote ${index + 1} passed. This step can continue.`, detail: "The Guardian independently observed the exact proposal executed. Its permission is limited to this request. The original compute expiry is unchanged. A returned bond grants no additional compute.", evidence: { guardianObservedAt: allowed.observedAt, blockNumber: allowed.blockNumber } }, "working");
-      approvedTools.set(draft.tool, id.toString());
+      if (draft.tool) approvedTools.set(draft.tool, id.toString());
       for (const agent of agents) {
         agent.recent.push({ proposalId: id.toString(), title: draft.title, outcome: "Executed", requestedTool: draft.tool });
         // A finished investigator still participates in votes. It may reassess new evidence.

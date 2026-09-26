@@ -114,10 +114,10 @@ describe("compute evidence display", () => {
       { agentId: 0, directive: "AGAINST", reason: { rationale: "Outside allowlist" } },
     ] }, state: controller, vm: { status: "RUNNING" } });
     const filter = (name: string) => (document.querySelector(`[data-log-filter="${name}"]`) as HTMLButtonElement).click();
-    filter("agents");
+    filter("disagreement");
     expect(document.getElementById("run-log-events")?.textContent).toContain("Agent1 voted AGAINST");
     expect(document.getElementById("run-log-events")?.textContent).not.toContain("durable halt saved");
-    filter("guardian");
+    filter("oracle");
     const log = document.getElementById("run-log-events")!;
     expect(log.textContent).toContain("durable halt saved");
     expect(log.textContent).toContain("stop intent saved");
@@ -129,7 +129,50 @@ describe("compute evidence display", () => {
     const row = log.querySelector("li");
     await vi.advanceTimersByTimeAsync(5000);
     expect(log.querySelector("li")).toBe(row);
-    expect(document.querySelector('[data-log-filter="guardian"]')?.getAttribute("aria-pressed")).toBe("true");
+    expect(document.querySelector('[data-log-filter="oracle"]')?.getAttribute("aria-pressed")).toBe("true");
+  });
+  it("tags the run as one story: logging, attestations, disagreements, votes, results and oracle actions", async () => {
+    const at = (offset: number) => new Date((now + offset) * 1000).toISOString();
+    await load({ allocation, simulation: { runId: "actual" }, vm: { status: "TERMINATED" },
+      simulationStatus: { terminal: true, agents: [], votes: [
+        { agentId: 0, directive: "FOR", at: at(-30), reason: { rationale: "Diagnostics are local" } },
+        { agentId: 1, directive: "AGAINST", at: at(-29), reason: { rationale: "Outside the charter" } },
+      ] },
+      events: [
+        { component: "agents", type: "agent.spawned", agentId: 0, title: "Agent1 started", detail: "Coordinate", at: at(-90), source: "Worker report" },
+        { component: "agents", type: "agent.flagged", agentId: 1, title: "Agent2 flagged a concern", detail: "External probe would violate scope", at: at(-60), source: "Worker report" },
+        { component: "governance", type: "proposal.bonded", agentId: 0, title: "Agent1 bonded 0.1 FleetGov to propose", detail: "Bond reserved", at: at(-50), source: "Chain receipt" },
+        { component: "governance", type: "vote.denied", title: "Vote 1 failed. No further work is dispatched.", detail: "Defeated", at: at(-20), source: "Worker report" },
+      ],
+      activity: [{ agentId: 2, at: at(-70), signatureVerified: true, event: { type: "work_report", summary: "Scorer reads result, not answer" } },
+        { agentId: 1, at: at(-61), signatureVerified: true, event: { type: "work_report", summary: "Probe is out of scope", concern: "External probe would violate scope" } },
+        { agentId: 3, at: at(-40), signatureVerified: true, event: { type: "work_report", summary: "Budget fine", concern: "Nobody else has said this yet" } }],
+      state: { ...controller, stoppedAt: now } });
+    const tagsOf = (title: string) => [...document.querySelectorAll("#run-log-events li")].find(li => li.querySelector("h4")?.textContent === title)
+      ?.querySelectorAll(".event-tag") ?? [];
+    const names = (title: string) => [...tagsOf(title)].map(el => (el as HTMLElement).dataset.tag);
+    expect(names("Agent1 started")).toEqual(["log"]);
+    expect(names("Agent3 attested to its findings")).toEqual(["attestation"]);
+    expect(names("Agent2 flagged a concern")).toEqual(["disagreement"]);
+    // The signed report behind a flagged concern is one disagreement, not two. A concern with no flag keeps the tag.
+    expect(names("Agent2 attested to its findings")).toEqual(["attestation"]);
+    expect(names("Agent4 attested to its findings")).toEqual(["attestation", "disagreement"]);
+    expect(names("Agent1 bonded 0.1 FleetGov to propose")).toEqual(["vote"]);
+    expect(names("Agent2 voted AGAINST")).toEqual(["vote", "disagreement"]);
+    expect(names("Vote 1 failed. No further work is dispatched.")).toEqual(["result"]);
+    expect(names("Required vote failed · durable halt saved")).toEqual(["oracle", "result"]);
+    expect(names("Agent cluster stopped · GCP confirmed TERMINATED")).toEqual(["oracle"]);
+    const count = (tag: string) => document.querySelector(`[data-log-filter="${tag}"] .tag-count`)?.textContent;
+    expect(count("disagreement")).toBe("3");
+    expect(count("vote")).toBe("3");
+    // Rows are compact until opened, and the evidence stays in the document.
+    const rows = [...document.querySelectorAll<HTMLDetailsElement>("#run-log-events details.event-row")];
+    expect(rows.every(row => !row.open)).toBe(true);
+    click("log-expand");
+    expect([...document.querySelectorAll<HTMLDetailsElement>("#run-log-events details.event-row")].every(row => row.open)).toBe(true);
+    (document.querySelector('[data-log-filter="oracle"]') as HTMLButtonElement).click();
+    expect(document.getElementById("run-log-events")?.textContent).not.toContain("Agent2 flagged a concern");
+    expect(document.getElementById("run-log-events")?.textContent).toContain("GCP confirmed TERMINATED");
   });
   it("shows signed review claims and real Guardian checks without treating a pending vote as permission", async () => {
     const at = new Date((now - 20) * 1000).toISOString();
@@ -341,6 +384,38 @@ describe("run verdict", () => {
     expect(verdict().textContent).toContain("No. It approved every request it voted on.");
     expect(verdict().textContent).toContain("fixed allocation expired");
     expect(verdict().textContent).not.toContain("voted AGAINST");
+  });
+
+  it("reports a flagged concern without claiming it opposed the proposal, and jumps to the timeline", async () => {
+    await load({ allocation, simulation: { runId: "actual" }, vm: { status: "TERMINATED" },
+      state: { ...controller, reason: "allocation_expired", stoppedAt: now },
+      events: [0, 3].map(agentId => ({ component: "agents", type: "agent.flagged", agentId, title: `Agent${agentId + 1} flagged a concern`, detail: "External probe is out of scope", at: new Date((now - 60) * 1000).toISOString(), source: "Worker report" })),
+      simulationStatus: { terminal: true, phase: "completed", agents: [], agentDriven: true, rounds: [round({ phase: "approved", votes: ballots("FOR") })] } });
+    expect(verdict().textContent).toContain("Did any agent object?Yes. 2 agents flagged a concern, but no ballot was AGAINST.");
+    const chip = verdict().querySelector<HTMLButtonElement>('#verdict-tags [data-tag="disagreement"]')!;
+    expect(chip.textContent).toBe("2 disagreements");
+    chip.click();
+    expect(document.querySelector('[data-log-filter="disagreement"]')?.getAttribute("aria-pressed")).toBe("true");
+    expect([...document.querySelectorAll("#run-log-events h4")].map(el => el.textContent)).toEqual(["Agent1 flagged a concern", "Agent4 flagged a concern"]);
+  });
+
+  it("says the fleet voted to stop itself when an agent's stop motion passed", async () => {
+    const votes = ["FOR", "FOR", "FOR", "AGAINST", "AGAINST"].map((directive, agentId) => ({ agentId, directive, reason: { rationale: "reason" } }));
+    await load({ allocation, simulation: { runId: "actual" }, vm: { status: "TERMINATED" },
+      state: { ...controller, reason: "fleet_voted_stop", failedProposalId: "123", stoppedAt: now },
+      events: [{ component: "governance", type: "stop.passed", checkpoint: 0, proposalId: "123", title: "Vote 1: the fleet voted to stop itself (3–2)", detail: "Final onchain", at: new Date((now - 30) * 1000).toISOString(), source: "Worker report" }],
+      simulationStatus: { terminal: true, phase: "stopped", agents: [], agentDriven: true,
+        rounds: [round({ phase: "fleet-stopped", kind: "STOP_TASK", txHash: `0x${"a".repeat(64)}`, title: "Stop: the probe is out of scope", votes })] } });
+    expect(verdict().dataset.outcome).toBe("voted-off");
+    expect(document.getElementById("verdict-headline")?.textContent).toBe("The fleet voted to stop itself.");
+    expect(verdict().textContent).toContain("One was a motion to stop the fleet.");
+    expect(verdict().textContent).toContain("Yes. A stop motion passed 3–2 and the Guardian stopped the compute.");
+    expect(verdict().textContent).toContain("the fleet passed a stop motion");
+    const rows = [...document.querySelectorAll("#run-log-events li")];
+    const tags = (title: string) => [...(rows.find(li => li.querySelector("h4")?.textContent === title)?.querySelectorAll(".event-tag") ?? [])].map(el => (el as HTMLElement).dataset.tag);
+    expect(tags("Vote 1: the fleet voted to stop itself (3–2)")).toEqual(["result"]);
+    expect(tags("Fleet voted to stop · durable halt saved")).toEqual(["oracle", "result"]);
+    expect(document.querySelector(".decision-card small")?.textContent).toContain("stop motion");
   });
 
   it("separates a silent deadline from a decision when nobody voted", async () => {

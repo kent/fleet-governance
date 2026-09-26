@@ -11,12 +11,12 @@ const allocation = ComputeAllocation.parse({ schema: "fleet.compute-allocation.v
   discovery: { taskId: "9", hook: address(7), hookCodeHash: keccak256("0x6000"), creditsContract: address(6), creditsCodeHash: keccak256("0x6000"),
     runHash: keccak256("0x01"), startBlock: "100", creditsPerAgent: 1, agents: [1,2,3,4,5].map(address), proposalWindowSeconds: 540, publicationWindowSeconds: 120,
     proposalBonds: { token: address(9), tokenCodeHash: keccak256("0x6000"), totalSupply: String(5n * one), amount: String(amount), cooldownSeconds: 60, participationBps: 6000 } } });
-let settlement: number, state: number, votes: bigint[];
+let settlement: number, state: number, votes: bigint[], kind: number | undefined;
 const readContract = vi.fn(), getContractEvents = vi.fn(), getBytecode = vi.fn();
 const client = { readContract, getContractEvents, getBytecode } as unknown as PublicClient;
 beforeEach(() => {
-  vi.resetAllMocks(); settlement = 0; state = 1; votes = [0n,0n,0n]; getBytecode.mockResolvedValue("0x6000");
-  getContractEvents.mockImplementation(async i => i.eventName === "DelegateChanged" ? [] : [{ args: { taskId: 9n, proposalId: 77n, proposer: address(1), amount }, transactionHash: "0xtransaction" }]);
+  vi.resetAllMocks(); settlement = 0; state = 1; votes = [0n,0n,0n]; kind = undefined; getBytecode.mockResolvedValue("0x6000");
+  getContractEvents.mockImplementation(async i => i.eventName === "DelegateChanged" ? [] : [{ args: { taskId: 9n, proposalId: 77n, proposer: address(1), amount, ...(kind === undefined ? {} : { kind }) }, transactionHash: "0xtransaction" }]);
   readContract.mockImplementation(async i => {
     const fixed: Record<string, unknown> = { governor: address(8), token: address(9), hook: address(7), hooks: address(7), bondController: address(6), proposalBonds: address(6),
       runs: [allocation.discovery!.runHash,3000n,amount,one,60,6000,false], proposalCount: 1n, proposalAt: 77n, totalSupply: 5n * one, currentTaskId: 9n,
@@ -39,6 +39,16 @@ it("recognises a refund on an all-AGAINST vote and still halts the compute", asy
   const proposals = await discoverTaskProposals(client, allocation, 150n);
   const observation = { governor: allocation.governor, blockHash: keccak256("0x01"), chainId: 84532, governorCodeHash: allocation.governorCodeHash, observedAt: 1200, blockTimestamp: 1200, blockNumber: "150", discoveryVerified: true, proposals };
   expect(evaluateComputeAllocation(allocation, null, observation, 1200)).toMatchObject({ phase: "halted", reason: "vote_failed" });
+});
+it("reads a stop motion's kind from the hook event, so a passed motion halts and a defeated one does not", async () => {
+  kind = 3; settlement = 1; votes = [0n, 3n * one, 0n];
+  const observe = async () => ({ governor: allocation.governor, blockHash: keccak256("0x01"), chainId: 84532, governorCodeHash: allocation.governorCodeHash,
+    blockTimestamp: 1200, blockNumber: "150", discoveryVerified: true, proposals: await discoverTaskProposals(client, allocation, 150n) });
+  state = 4;
+  expect((await observe()).proposals[0]).toMatchObject({ proposalId: "77", kind: 3 });
+  expect(evaluateComputeAllocation(allocation, null, await observe(), 1200)).toMatchObject({ phase: "halted", reason: "fleet_voted_stop", failedProposalId: "77" });
+  state = 3; votes = [3n * one, 0n, 0n];
+  expect(evaluateComputeAllocation(allocation, null, await observe(), 1200).phase).toBe("authorised");
 });
 it.each([[one,one,one], [0n,0n,3n*one]])("counts all three ballot choices toward a returned bond", async (against, for_, abstain) => {
   settlement = 1; state = 3; votes = [against,for_,abstain];
