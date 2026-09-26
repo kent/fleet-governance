@@ -60,7 +60,7 @@ it("labels a passed stop motion as the fleet stopping itself, and a defeated one
   expect(runOutcome("stopped", true, [stop("fleet-stopped", ["FOR", "FOR", "FOR", "AGAINST", "AGAINST"])]))
     .toMatchObject({ code: "voted-off", label: "Fleet voted to stop 3–2" });
   expect(runOutcome("completed", true, [stop("kept-working", ["FOR", "AGAINST", "AGAINST", "AGAINST", "AGAINST"])]))
-    .toMatchObject({ code: "approved", label: "Kept working 1–4", note: "Stop motion failed · clock stopped the compute" });
+    .toMatchObject({ code: "kept-working", label: "Kept working 1–4", note: "Stop motion failed · clock stopped the compute" });
   const mixed = runOutcome("completed", true, [round("approved", ["FOR", "FOR", "FOR"]), stop("kept-working", ["FOR", "AGAINST", "AGAINST"])]);
   expect(mixed).toMatchObject({ label: "Approved 3–0" });
   expect(mixed.note).toContain("Stop motion failed 1–2");

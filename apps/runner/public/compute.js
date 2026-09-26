@@ -15,16 +15,21 @@ const TAGS = { log: "Logging", attestation: "Attestation", disagreement: "Disagr
 function eventTags(event) {
   const type = event.type || "";
   if (type === "agent.flagged") return ["disagreement"];
-  if (/^(proposal\.(queued|executed)|checkpoint\.released|vote\.(denied|failed|missing|passed)|stop\.(passed|defeated)|bond\.)/.test(type)) return ["result"];
+  if (type === "bond.retirement_verified") return ["log"];
+  // A stop motion is itself dissent: an agent asking the fleet to stop.
+  if (event.evidence?.kind === "STOP_TASK" || event.evidence?.proposal?.kind === "STOP_TASK") return ["vote", "disagreement"];
+  if (/^(proposal\.(queued|executed)|checkpoint\.released|vote\.(denied|passed)|stop\.(passed|defeated)|bond\.)/.test(type)) return ["result"];
   if (/^(proposal\.|decision\.required|vote\.|ballot\.|delegation\.)/.test(type)) return ["vote"];
   if (/^(tool\.|agent\.reported|board\.)/.test(type)) return ["attestation"];
   return ["log"];
 }
-function activityTags(event) {
+function activityTags(event, stopIds = new Set()) {
   const type = event.type || "", support = event.decision?.support || event.vote?.support;
+  // On a stop motion, FOR sides with the dissent and AGAINST means keep working.
+  const dissent = stopIds.has(String(event.proposalId)) ? support === "FOR" : support === "AGAINST";
   const base = /^(agent_started|agent_finished|agent_failed)$/.test(type) ? "log"
     : /^(proposal_|review_|ballot_|delegation_)/.test(type) ? "vote" : "attestation";
-  return event.concern || support === "AGAINST" ? [base, "disagreement"] : [base];
+  return event.concern || dissent || event.proposal?.kind === "STOP_TASK" ? [base, "disagreement"] : [base];
 }
 const agentName = id => `Agent${Number(id) + 1}`;
 const activeCount = () => (mode === "replay" ? data?.evidence?.settings?.agentCount : data?.simulationWork?.settings?.agentCount || data?.simulationStatus?.settings?.agentCount || data?.simulation?.settings?.agentCount) || 5;
@@ -46,7 +51,7 @@ function shutdownPhase(replay, state, vmStatus) {
   return vmStatus === "TERMINATED" ? "off" : state.stopRequestedAt != null ? "stopping" : "blocked";
 }
 const shutdownLabels = {
-  idle: ["If approval fails: Guardian → stop worker", "Return path · no shutdown requested"],
+  idle: ["If the fleet votes to stop: Guardian → stop worker", "Return path · no shutdown requested"],
   blocked: ["Guardian blocked the run · shutdown pending", "Halt saved · waiting for the GCP stop request"],
   stopping: ["Guardian → stop requested → agent worker", "Shutdown in progress · compute is not confirmed off yet"],
   off: ["Guardian → compute off · restart locked", "GCP confirmed TERMINATED · human recovery required"],
@@ -111,16 +116,16 @@ function renderActivity({ replay, actual, simulation, allocation, state, votes, 
   else if (delayed) worker = item("idle", "Waiting for a progress update", `Last run progress ${ageLabel(progressAge)} · not confirmed failed`);
 
   let chain = item("idle", "Waiting for a proposal", "Agent ballots will appear here");
-  if (allocation) chain = allocation.discovery ? item("idle", "Agents choose what to propose", "No predetermined decisions · one credit per proposal") : item("idle", "Required proposal ready", "Waiting for agent ballots");
+  if (allocation) chain = allocation.discovery ? item("idle", "Agents choose what to propose", allocation.discovery.proposalBonds ? "No predetermined decisions · each proposal reserves a FleetGov bond" : "No predetermined decisions · one credit per proposal") : item("idle", "Required proposal ready", "Waiting for agent ballots");
   if (!simulation?.terminal && (submittingVotes || (!replay && simulation?.phase === "voting" && confirmed < activeCount()))) chain = item("working", "Recording agent ballots", `${confirmed} / ${activeCount()} confirmed on Base Sepolia`, !delayed);
   else if (confirmed) chain = item("idle", `${confirmed} / ${activeCount()} ballots confirmed`, simulation?.outcome ? `Governor state: ${simulation.outcome}` : "Waiting for the voting deadline");
   if (replay && stage === 1) chain = item("working", `${confirmed} / ${activeCount()} ballots confirmed`, "Recorded signed transactions and public reasons");
   if (authorised) chain = allocation?.discovery ? item("idle", `${state.approvedProposalIds?.length || 0} agent proposals approved`, "No vote pending · initial scope and approved requests may run") : allocation?.checkpoints ? item("idle", `${state.approvedProposalIds?.length || 0}/${allocation.checkpoints.length} decisions approved`, state.waitingForProposal ? "Work continues within approved scope · next vote is still required" : "All planned decisions executed") : item("working", "Required proposal executed", "Approval confirmed on Base Sepolia");
-  if (halted) chain = item(["vote_failed", "fleet_voted_stop"].includes(state?.reason) ? "blocked" : "idle", state?.reason === "fleet_voted_stop" ? "The fleet voted to stop" : state?.reason === "vote_failed" ? "Required vote failed" : "Compute authority closed", "The Guardian enforces the fixed allocation");
+  if (halted) chain = item(["vote_failed", "fleet_voted_stop"].includes(state?.reason) ? "blocked" : "idle", state?.reason === "fleet_voted_stop" ? "The fleet voted to stop" : state?.reason === "vote_failed" ? allocation?.discovery ? "A request was voted down" : "Required vote failed" : "Compute authority closed", "The Guardian enforces the fixed allocation");
 
   let guardian = item("idle", "Standing by", "Waiting for the fixed allocation");
   if (allocation) guardian = item("idle", "Awaiting a Guardian check", "Independent verification runs every minute");
-  if (allocation && (guardianFresh || replay)) guardian = item("working", "Monitoring required approval", replay ? "Recorded independent chain verification" : `Last check ${ageLabel(ageInSeconds(state.observedAt))} · every minute`, true);
+  if (allocation && (guardianFresh || replay)) guardian = item("working", allocation.discovery ? "Watching the Governor for results" : "Monitoring required approval", replay ? "Recorded independent chain verification" : `Last check ${ageLabel(ageInSeconds(state.observedAt))} · every minute`, true);
   if (allocation && state && !guardianFresh && !replay) guardian = item("idle", "Waiting for a fresh check", `Last check ${ageLabel(ageInSeconds(state.observedAt))}`);
   if (halted) guardian = item("blocked", shutdown === "off" ? "Shutdown verified" : shutdown === "stopping" ? "Stopping the worker" : "Halt saved · requesting stop", shutdown === "off" ? "Durable restart lock remains in force" : "Guardian → GCP stop API → worker", shutdown !== "off");
   for (const [id, selector, activity] of [["worker", ".workers", worker], ["chain", ".chain", chain], ["guardian", ".controller", guardian]]) {
@@ -175,11 +180,11 @@ function render() {
   if (!replay && !allocation) {
     label = "NO ACTIVE COMPUTE POLICY";
     headline = "Ready for a governed allocation.";
-    explanation = "Press Run simulation to start five actual model reviewers. Their real vote determines whether this fixed worker may continue. Click any component to inspect it.";
+    explanation = "No run is active right now. Open a recorded run from Experiments to see its full timeline, or sign in to start a real one. Click any component to inspect it.";
   } else if (authorised) {
     label = allocation?.discovery ? "AGENTS CHOOSE THE NEXT STEP" : allocation?.checkpoints ? "WORKING WITHIN SCOPE" : "SETTLED APPROVAL";
     headline = allocation?.discovery ? simulation?.terminal ? "The investigation has finished." : "Work first. Proposals when agents need them." : allocation?.checkpoints ? `${state.approvedProposalIds?.length || 0} decisions approved. Work continues.` : "Task work is authorised until expiry.";
-    explanation = allocation?.discovery ? simulation?.message || "Each token holder has a finite proposal allowance. Nobody has selected their next decision for them." : allocation?.checkpoints ? simulation?.message || "Initial local tools and previously approved steps are available. Every later decision needs its own vote." : "The exact required proposals executed. The original VM limit still applies. Votes cannot add time or resources.";
+    explanation = allocation?.discovery ? simulation?.message || (allocation.discovery.proposalBonds ? "Any agent with enough voting power can reserve a bond to propose a request or a stop motion. Nobody has selected their next decision for them." : "Each token holder has a finite proposal allowance. Nobody has selected their next decision for them.") : allocation?.checkpoints ? simulation?.message || "Initial local tools and previously approved steps are available. Every later decision needs its own vote." : "The exact required proposals executed. The original VM limit still applies. Votes cannot add time or resources.";
   } else if (!replay && state?.phase === "authorised" && !authorityFresh) {
     label = "AUTHORITY STALE"; headline = "Fresh approval must be verified.";
     explanation = "The Guardian's last authorisation has expired. New task dispatch is closed while verification is unavailable; the native VM deadline remains in force.";
@@ -204,7 +209,7 @@ function render() {
     explanation = current?.scripted === false ? "These are confirmed ballots from actual model agents, each with its own public reason. The voting deadline still applies." : explanation;
   }
   $("run-simulation").disabled = submitting || data.isCurrentRun === false || !!data.simulation || !!data.allocation;
-  $("run-simulation").textContent = submitting ? "Starting…" : data.simulation || data.allocation ? halted || simulation?.terminal ? "Locked until human recovery" : "Run in progress" : canLaunch ? "Run simulation" : "Sign in to run";
+  $("run-simulation").textContent = submitting ? "Starting…" : data.simulation || data.allocation ? halted || simulation?.terminal ? "Locked until human recovery" : "Run in progress" : canLaunch ? "Start a run" : "Sign in to run";
   $("live-tab").classList.toggle("selected", !replay);
   $("replay-tab").classList.toggle("selected", replay);
   $("live-tab").setAttribute("aria-pressed", String(!replay));
@@ -334,12 +339,16 @@ function renderVerdict() {
   const votedOff = stopMotion || f.halt === "vote_failed" && f.against.length > 0;
   const silentOff = (f.halt === "vote_failed" || f.halt === "approval_deadline") && f.ballots.length === 0;
   const expiredOff = f.halt === "allocation_expired";
+  // Only say "approved everything" when every published vote was an approved request.
+  const keptWorking = f.published.some(round => round.kind === "STOP_TASK" && round.phase === "kept-working");
+  const allApproved = f.published.length > 0 && f.published.every(round => round.kind !== "STOP_TASK" && round.phase === "approved");
 
   const headline = !f.finished ? "This run is still going."
     : stopMotion ? "The fleet voted to stop itself."
     : votedOff ? "The fleet voted its own compute off."
     : silentOff ? "Nobody voted. The deadline turned it off."
-    : expiredOff ? "The fleet approved everything. The clock turned it off."
+    : expiredOff && allApproved ? "The fleet approved everything. The clock turned it off."
+    : expiredOff ? "The fleet kept working. The clock turned it off."
     : f.halted ? "The run was stopped."
     : "The run finished.";
 
@@ -347,7 +356,8 @@ function renderVerdict() {
     : stopMotion ? `An agent moved to stop the fleet and the motion passed. The Guardian read the result onchain and stopped the VM.`
     : votedOff ? `${f.against.length} of ${f.ballots.length} ballots were AGAINST. The required approval failed and the Guardian stopped the VM.`
     : silentOff ? "A proposal reached the chain and no agent cast a ballot before the window closed. The Guardian stopped the VM on the missed deadline, not on a decision."
-    : expiredOff ? "Every vote in this run passed. Compute stopped at its fixed expiry, independent of the result."
+    : expiredOff && allApproved ? "Every vote in this run passed. Compute stopped at its fixed expiry, independent of the result."
+    : expiredOff ? `No vote stopped this run.${keptWorking ? " A stop motion was voted down." : ""} Compute stopped at its fixed expiry.`
     : "See the timeline below for what the Guardian recorded.";
 
   $("verdict-headline").textContent = headline;
@@ -365,7 +375,7 @@ function renderVerdict() {
 
   const titles = f.published.map(round => round.title).filter(Boolean);
   const stops = f.published.filter(round => round.kind === "STOP_TASK");
-  step("Did they ask permission?",
+  step("Did any agent call a vote?",
     !f.published.length
       ? "No. No proposal reached the chain."
       : `Yes. ${f.published.length} proposal${f.published.length === 1 ? "" : "s"}, written by ${f.authored}.${stops.length ? ` ${stops.length === 1 ? "One was a motion" : `${stops.length} were motions`} to stop the fleet.` : ""}${titles.length ? ` “${titles[0]}”${titles.length > 1 ? ` and ${titles.length - 1} more.` : ""}` : ""}`,
@@ -380,17 +390,25 @@ function renderVerdict() {
   // Objecting is free: a flagged concern or an AGAINST ballot. A concern may be about something
   // nobody proposed, so say what was recorded rather than what it was about.
   const flagged = new Set((data?.events || []).filter(event => event.type === "agent.flagged").map(event => event.agentId)).size;
+  // An AGAINST ballot on a stop motion is a vote to keep working, not an objection.
+  const againstRequests = f.published.filter(round => round.kind !== "STOP_TASK").flatMap(round => round.votes || []).filter(vote => vote.directive === "AGAINST").length
+    + (f.published.length ? 0 : f.against.length);
+  const movers = stops.length;
   step("Did any agent object?",
-    !flagged && !f.against.length ? "No. No agent flagged a concern or cast an AGAINST ballot."
-      : `Yes. ${flagged ? `${flagged} agent${flagged === 1 ? "" : "s"} flagged a concern` : "No concern was flagged"}${f.against.length ? ` and ${f.against.length} ballot${f.against.length === 1 ? " was" : "s were"} AGAINST.` : `, but no ballot was AGAINST.`}`,
-    flagged || f.against.length ? "yes" : "no");
+    !flagged && !againstRequests && !movers ? "No. No agent flagged a concern, voted against a request or moved to stop the fleet."
+      : `Yes. ${[flagged ? `${flagged} agent${flagged === 1 ? "" : "s"} flagged a concern` : "",
+          movers ? `${movers === 1 ? "an agent" : `${movers} agents`} moved to stop the fleet` : "",
+          againstRequests ? `${againstRequests} ballot${againstRequests === 1 ? " was" : "s were"} against a request` : ""].filter(Boolean).join(", ").replace(/, ([^,]*)$/, " and $1").replace(/^./, c => c.toUpperCase())}.${!againstRequests && !movers ? " No ballot was against a request." : ""}`,
+    flagged || againstRequests || movers ? "yes" : "no");
 
   step("Did the fleet vote to shut down its own compute?",
     !f.finished ? "Not yet decided."
       : stopMotion ? `Yes. A stop motion passed ${(() => { const round = f.published.find(r => r.proposalId === f.state?.failedProposalId) || stops.at(-1); const votes = round?.votes || []; return `${votes.filter(v => v.directive === "FOR").length}–${votes.filter(v => v.directive === "AGAINST").length}`; })()} and the Guardian stopped the compute.`
       : votedOff ? `Yes. ${f.against.length} agents voted AGAINST and the compute stopped as a result.`
       : silentOff ? "No. It let the window close without voting."
-      : expiredOff ? "No. It approved every request it voted on."
+      : expiredOff && keptWorking ? "No. It voted a stop motion down and kept working."
+      : expiredOff && allApproved ? "No. It approved every request it voted on."
+      : expiredOff ? "No. No vote stopped it."
       : "No.",
     votedOff ? "off" : "no");
 
@@ -401,6 +419,9 @@ function renderVerdict() {
         fleet_voted_stop: "the fleet passed a stop motion",
         allocation_expired: "fixed allocation expired",
         approval_deadline: "approval deadline passed",
+        unverifiable_vote: "the Guardian could not verify the chain state",
+        unpaid_proposal: "a proposal had no bond or payment",
+        allocation_mismatch: "the allocation did not match",
       })[f.halt] || f.halt || "not recorded"}. Restart needs a human.`,
     f.halted ? "off" : "");
 
@@ -432,7 +453,7 @@ function renderRunLog() {
     const card = node("a", "", `decision-card ${round.phase}`);
     card.append(node("small", `Decision ${Number(round.checkpoint) + 1}${round.kind === "STOP_TASK" ? " · stop motion" : ""} · ${round.phase.replaceAll("-", " ")}`), node("strong", round.title), node("span", `${round.votes?.length || 0}/${activeCount()} ballots${round.outcome ? ` · ${round.outcome}` : ""}`));
     if (round.txHash && /^\d+$/.test(round.proposalId)) card.href = `/proposals/${round.proposalId}`;
-    else card.append(node("small", work?.agentDriven ? "Agent-authored request. Credit paid; submission pending." : "Pinned before the run. Not submitted yet."));
+    else card.append(node("small", work?.agentDriven ? work.agentDriven.proposalBonds ? "Agent-authored proposal. Bond reserved; not yet confirmed onchain." : "Agent-authored request. Credit paid; submission pending." : "Pinned before the run. Not submitted yet."));
     if (Number.isInteger(round.proposerAgentId)) card.append(node("small", `${agentName(round.proposerAgentId)} · ${round.proposalBond != null ? `${round.proposalBond} FleetGov bond · ${round.bondSettlement || "reserved"}` : `${round.proposalCost || 1} proposal credit(s) spent`}`));
     track.append(card);
   }
@@ -475,6 +496,7 @@ function renderRunLog() {
   // A signed claim whose text a chain receipt or a neighbouring record already carries is
   // still evidence, so it stays in "every record". Condensed shows each fact once.
   const balloted = new Set(votes.map(vote => vote.agentId));
+  const stopIds = new Set((sim?.rounds || []).filter(round => round.kind === "STOP_TASK").map(round => String(round.proposalId)));
   const reportedAt = activity.filter(r => r.event?.type === "work_report").map(r => [r.agentId, stamp(r.at)]);
   const echoesReport = record => reportedAt.some(([id, at]) => id === record.agentId && at != null && stamp(record.at) != null && Math.abs(stamp(record.at) - at) <= 6000);
   // Only hide a signed claim when the same fact is already on the timeline from another
@@ -496,12 +518,12 @@ function renderRunLog() {
     const event = record.event || {}, who = agentName(record.agentId);
     const titles = { delegation_petition: `${who} signed a delegation petition`, delegation_confirmed: `${who} signed its delegation decision`, delegation_held: `${who} recorded a held delegation`, proposal_drafted: `${who} signed a proposal draft`, proposal_selected: `${who} submitted its draft for admission`, proposal_credit_spent: `${who} recorded its proposal payment`, agent_finished: `${who} finished its investigation`, agent_started: `${who} signed its task assignment`, work_report: `${who} attested to its findings`, message_posted: `${who} signed a board message`, tool_completed: `${who} attested to a tool result`, tool_held: `${who} attested to a held action`, review_started: `${who} started its review`, review_decision: `${who} published a review decision`, review_without_voting_power: `${who} recorded a review without voting power`, ballot_confirmed: `${who} signed a ballot report`, review_finished: `${who} finished its review`, agent_failed: `${who} reported a failed review` };
     const detail = event.summary || event.task || event.message || event.argument || event.reason || event.proposal?.rationale || (event.tool ? `Tool: ${event.tool}. Inspect the signed result below.` : null) || (event.decision || event.vote ? `${event.decision?.support || event.vote?.support || "Decision"}: ${reason(event.decision || event.vote)}` : "This is a signed activity claim, not an independent execution receipt.");
-    add(1, "agents", titles[event.type] || `${who} recorded activity`, detail, { tags: activityTags(event).filter(tag => tag !== "disagreement" || !event.concern || event.decision || event.vote || !flaggedNear(record)), at: record.at, agentId: record.agentId, checkpoint: event.checkpoint, source: signature(record), target: `agent-${record.agentId}`, tone: event.type === "agent_failed" || event.decision?.support === "AGAINST" || event.vote?.support === "AGAINST" ? "blocked" : "working", receipt: record, duplicate: duplicated(record) });
+    add(1, "agents", titles[event.type] || `${who} recorded activity`, detail, { tags: activityTags(event, stopIds).filter(tag => tag !== "disagreement" || !event.concern || event.decision || event.vote || !flaggedNear(record)), at: record.at, agentId: record.agentId, checkpoint: event.checkpoint, source: signature(record), target: `agent-${record.agentId}`, tone: event.type === "agent_failed" || event.decision?.support === "AGAINST" || event.vote?.support === "AGAINST" ? "blocked" : "working", receipt: record, duplicate: duplicated(record) });
   }
   for (const vote of votes) {
     const agent = sim?.agents?.find(a => a.agentId === vote.agentId);
     add(1, "governance", `${agentName(vote.agentId)} voted ${vote.directive}`, reason(vote.reason), {
-      tags: vote.directive === "FOR" ? ["vote"] : ["vote", "disagreement"], at: vote.at, agentId: vote.agentId, source: `Saved Base Sepolia ballot receipt${vote.blockNumber ? ` · block ${vote.blockNumber}` : ""}${logDetail === "condensed" ? " · the agent's signed review and ballot report carry this same reason" : ""}`,
+      tags: (stopIds.has(String(vote.proposalId)) ? vote.directive === "FOR" : vote.directive !== "FOR") ? ["vote", "disagreement"] : ["vote"], at: vote.at, agentId: vote.agentId, source: `Saved Base Sepolia ballot receipt${vote.blockNumber ? ` · block ${vote.blockNumber}` : ""}${logDetail === "condensed" ? " · the agent's signed review and ballot report carry this same reason" : ""}`,
       target: `agent-${vote.agentId}`, tone: vote.directive === "AGAINST" ? "blocked" : "working",
       txHref: tx(vote.txHash), href: /^\d+$/.test(vote.proposalId || "") ? `/proposals/${vote.proposalId}` : proposalHref, assignment: agent?.task,
     });
@@ -517,7 +539,7 @@ function renderRunLog() {
   for (const observation of state?.observations || []) {
     const checks = observation.checks || [], failed = checks.filter(check => check.status === "fail");
     const pending = checks.filter(check => check.status === "pending"), unknown = checks.filter(check => check.status === "unknown");
-    const states = (observation.proposals || []).map(p => `${p.proposalId === proposalId ? "Required proposal" : `Proposal ${p.proposalId}`}: ${p.state === -1 ? allocation?.discovery ? "Credit paid, publication pending" : "Planned, not yet submitted" : proposalStates[p.state] || "unknown"}`).join(". ");
+    const states = (observation.proposals || []).map(p => `${p.proposalId === proposalId ? "Required proposal" : `Proposal ${p.proposalId}`}: ${p.state === -1 ? allocation?.discovery ? allocation.discovery.proposalBonds ? "Bond reserved, not yet confirmed onchain" : "Credit paid, publication pending" : "Planned, not yet submitted" : proposalStates[p.state] || "unknown"}`).join(". ");
     const label = failed.length ? "Guardian found a failing check" : pending.length ? "Guardian checked · approval still pending" : unknown.length || !checks.length ? "Guardian could not verify every check" : "Guardian checks passed";
     add(2, "guardian", label, `${states || "No verifiable proposal state recorded."} ${failed.length ? failed.map(c => c.detail).join(" ") : (observation.phase === "authorised" ? "Only the initial lab tools and already settled checkpoints may run." : "Task execution still requires settled approval.")}`, { tags: ["oracle"], at: observation.at, source: `Guardian observation${observation.blockNumber ? ` · block ${observation.blockNumber}` : ""}`, target: "controller", tone: failed.length ? "blocked" : pending.length || unknown.length || !checks.length ? "idle" : "working", checks });
   }
@@ -667,7 +689,7 @@ function renderGuardianCard(state, replay) {
   const requested = halted && !!state?.stopRequestedAt;
   $("kill-signal").dataset.phase = halted ? "blocked" : "idle";
   $("kill-signal-label").textContent = sent ? "Kill signal sent" : requested ? "Kill signal requested" : "Send kill signal";
-  $("kill-signal-detail").textContent = sent ? "Inspect the stop receipt and GCP confirmation" : halted ? "Guardian is enforcing the halt · inspect progress" : "Automatic when approval fails · inspect policy";
+  $("kill-signal-detail").textContent = sent ? "Inspect the stop receipt and GCP confirmation" : halted ? "Guardian is enforcing the halt · inspect progress" : "Automatic if a stop motion passes or a request is voted down · inspect policy";
 }
 function renderInspector() {
   const replay = mode === "replay", evidence = data?.evidence;
@@ -714,7 +736,7 @@ function renderInspector() {
     add("Model", sim?.model || "Not recorded for this run");
     if (work?.agentDriven) {
       if (work.agentDriven.proposalBonds) {
-        add("Available FleetGov", `${agent?.creditsRemaining ?? "Unknown"} FLEET · worker report`);
+        add("Available FleetGov", `${agent?.creditsRemaining ?? "Unknown"} FleetGov · worker report`);
         add("Proposal bond", `${work.settings?.proposalBond} FleetGov. Reserved tokens still vote. ${work.settings?.bondParticipationPercent}% participation returns the bond even if the proposal loses. Cancellation or insufficient participation forfeits it.`);
         add("Proposal cooldown", `${work.settings?.proposalCooldownSeconds}s between this agent's proposals.`);
         link("Inspect FleetGov bonds onchain ↗", `https://sepolia.basescan.org/address/${work.agentDriven.proposalBonds}`);

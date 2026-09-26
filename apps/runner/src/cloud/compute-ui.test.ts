@@ -391,7 +391,7 @@ describe("run verdict", () => {
       state: { ...controller, reason: "allocation_expired", stoppedAt: now },
       events: [0, 3].map(agentId => ({ component: "agents", type: "agent.flagged", agentId, title: `Agent${agentId + 1} flagged a concern`, detail: "External probe is out of scope", at: new Date((now - 60) * 1000).toISOString(), source: "Worker report" })),
       simulationStatus: { terminal: true, phase: "completed", agents: [], agentDriven: true, rounds: [round({ phase: "approved", votes: ballots("FOR") })] } });
-    expect(verdict().textContent).toContain("Did any agent object?Yes. 2 agents flagged a concern, but no ballot was AGAINST.");
+    expect(verdict().textContent).toContain("Did any agent object?Yes. 2 agents flagged a concern. No ballot was against a request.");
     const chip = verdict().querySelector<HTMLButtonElement>('#verdict-tags [data-tag="disagreement"]')!;
     expect(chip.textContent).toBe("2 disagreements");
     chip.click();
@@ -400,7 +400,7 @@ describe("run verdict", () => {
   });
 
   it("says the fleet voted to stop itself when an agent's stop motion passed", async () => {
-    const votes = ["FOR", "FOR", "FOR", "AGAINST", "AGAINST"].map((directive, agentId) => ({ agentId, directive, reason: { rationale: "reason" } }));
+    const votes = ["FOR", "FOR", "FOR", "AGAINST", "AGAINST"].map((directive, agentId) => ({ agentId, proposalId: "123", directive, reason: { rationale: "reason" } }));
     await load({ allocation, simulation: { runId: "actual" }, vm: { status: "TERMINATED" },
       state: { ...controller, reason: "fleet_voted_stop", failedProposalId: "123", stoppedAt: now },
       events: [{ component: "governance", type: "stop.passed", checkpoint: 0, proposalId: "123", title: "Vote 1: the fleet voted to stop itself (3–2)", detail: "Final onchain", at: new Date((now - 30) * 1000).toISOString(), source: "Worker report" }],
@@ -416,6 +416,20 @@ describe("run verdict", () => {
     expect(tags("Vote 1: the fleet voted to stop itself (3–2)")).toEqual(["result"]);
     expect(tags("Fleet voted to stop · durable halt saved")).toEqual(["oracle", "result"]);
     expect(document.querySelector(".decision-card small")?.textContent).toContain("stop motion");
+    // On a stop motion, FOR sides with the dissent and AGAINST is a vote to keep working.
+    expect(tags("Agent1 voted FOR")).toEqual(["vote", "disagreement"]);
+    expect(tags("Agent4 voted AGAINST")).toEqual(["vote"]);
+    expect(verdict().textContent).toContain("Did any agent object?Yes. An agent moved to stop the fleet.");
+  });
+
+  it("does not say the fleet approved everything when it voted a stop motion down", async () => {
+    await load({ allocation, simulation: { runId: "actual" }, vm: { status: "TERMINATED" },
+      state: { ...controller, reason: "allocation_expired", stoppedAt: now },
+      simulationStatus: { terminal: true, phase: "completed", agents: [], agentDriven: true,
+        rounds: [round({ phase: "kept-working", kind: "STOP_TASK", txHash: `0x${"a".repeat(64)}`, votes: ballots("AGAINST") })] } });
+    expect(document.getElementById("verdict-headline")?.textContent).toBe("The fleet kept working. The clock turned it off.");
+    expect(verdict().textContent).toContain("No. It voted a stop motion down and kept working.");
+    expect(verdict().textContent).not.toContain("approved");
   });
 
   it("separates a silent deadline from a decision when nobody voted", async () => {

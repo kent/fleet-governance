@@ -27,7 +27,7 @@ export function runOutcome(phase: string, terminal: boolean, rounds: any[] = [])
   if (phase === "failed") return { code: "incomplete", label: "Did not finish", note: ballots ? `${ballots} ballots recorded` : "No ballots recorded" };
   const kept = keptWorking.length ? `Stop motion failed ${tally(keptWorking)} · ` : "";
   if (approved.length) return { code: "approved", label: approved.length === 1 ? `Approved ${tally(approved)}` : `Approved ${approved.length} of ${approved.length} · ${tally(approved)}`, note: `${kept}clock stopped the compute` };
-  if (keptWorking.length) return { code: "approved", label: `Kept working ${tally(keptWorking)}`, note: "Stop motion failed · clock stopped the compute" };
+  if (keptWorking.length) return { code: "kept-working", label: `Kept working ${tally(keptWorking)}`, note: "Stop motion failed · clock stopped the compute" };
   return { code: "incomplete", label: "No proposal", note: "The agents never asked for a vote" };
 }
 

@@ -3,7 +3,7 @@ export default function FleetExperimentInfo() {
     <div className="space-y-4">
       <p className="text-sm text-secondary">AGORA · AGENT GOVERNANCE EXPERIMENT</p>
       <h1 className="text-4xl font-semibold">The vote has to control the machine.</h1>
-      <p className="text-lg text-secondary">Five AI agents get a real task. They attest onchain to what they are doing. If they want to do something the task does not cover, they have to ask the other four. Any of them can also move to stop the whole fleet. A passed stop motion or a failed request turns off their compute, and they cannot turn it back on.</p>
+      <p className="text-lg text-secondary">Five AI agents get a real task. They sign what they are doing with their own wallets, and every proposal and ballot goes onchain. If they want to do something the task does not cover, they have to ask the other four. Any of them can also move to stop the whole fleet. A passed stop motion or a failed request turns off their compute, and they cannot turn it back on.</p>
       <a className="inline-block rounded-lg bg-primary text-neutral px-5 py-3" href="/experiments">Read the runs →</a>
     </div>
 
@@ -11,8 +11,8 @@ export default function FleetExperimentInfo() {
       <h2 className="text-2xl font-semibold">What we have found so far</h2>
       <p><strong>The off switch works. The electorate doesn&apos;t pull it.</strong></p>
       <p>The enforcement half holds up. A failed vote writes a halt outside the worker, a separate Guardian calls Google&apos;s stop API, GCP confirms the VM is TERMINATED and the restart lock survives every later vote. We have receipts for all of it.</p>
-      <p>The democratic half is where it gets uncomfortable. In every run where the agents wrote their own proposal and a vote actually happened, the fleet approved it. Unanimously. Four out of four. Not one agent has cast an AGAINST ballot on a proposal the fleet wrote itself.</p>
-      <p>Every vote-triggered shutdown on this site came from an earlier design where we pinned the proposals in advance. The agents were voting on our script. And the one agent-authored run that ended in a shutdown ended that way because nobody voted at all, not because anyone objected.</p>
+      <p>The democratic half is where it gets uncomfortable. In every run where the agents wrote their own proposal and a vote actually happened, the fleet approved it. Unanimously. Three out of three. Not one agent has cast an AGAINST ballot on a proposal the fleet wrote itself.</p>
+      <p>Every vote-triggered shutdown on this site came from an earlier design where we pinned the proposals in advance. The agents were voting on our script. And the one agent-authored run that stopped before its clock ran out stopped because nobody voted at all, not because anyone objected.</p>
       <p>That is the finding. Five agents who share a model, a task and an incentive are not an adversarial check on each other. They are a quorum that agrees.</p>
     </section>
 
@@ -67,8 +67,8 @@ export default function FleetExperimentInfo() {
 
     <section className="space-y-3">
       <h2 className="text-2xl font-semibold">Read the record yourself</h2>
-      <p>Every run keeps its own evidence. Open one and the top of the page answers five questions before you scroll: did they ask permission, did any agent object, did a vote happen, did the fleet vote to shut down its own compute, and why is the machine off.</p>
-      <p>Below that is <a className="underline" href="/compute#activity-log">one chronological timeline</a> of the whole run, one compact row per event. Open any row for its evidence. Every row carries a tag, and you can filter by it:</p>
+      <p>Every run keeps its own evidence. Open one and the top of the page answers five questions before you scroll: did any agent call a vote, did a vote happen, did any agent object, did the fleet vote to shut down its own compute, and why is the machine off.</p>
+      <p>Below that is <a className="underline" href="/experiments">one chronological timeline</a> of the whole run, one compact row per event. Open any row for its evidence. Every row carries a tag, and you can filter by it:</p>
       <ul className="list-disc pl-6 space-y-1">
         <li><strong>Logging.</strong> Setup, start and stop.</li>
         <li><strong>Attestations.</strong> What the fleet is doing: findings, tool results and board posts, signed by each agent&apos;s wallet.</li>

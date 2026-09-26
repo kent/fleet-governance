@@ -1,6 +1,6 @@
 # Fleet Governance
 
-**Five AI agents. Every action signed onchain. An off switch they vote on but cannot reach.**
+**Five AI agents. Every action signed, every vote onchain. An off switch any of them can call a vote on, but none can reach.**
 
 A research project: give a fleet of agents a real task, make them attest to what they are
 doing, and make them spend a scarce resource to ask permission when they want to go further.
@@ -23,7 +23,7 @@ calls GCP's stop API, the VM reaches TERMINATED, the audit log names the Guardia
 caller and the restart lock survives every later vote.
 
 The democratic half is the problem. Every time the agents wrote their own proposal and a
-vote happened, they approved it. Unanimously. Four out of four. No agent has ever cast an
+vote happened, they approved it. Unanimously. Three out of three. No agent has ever cast an
 AGAINST ballot on a proposal the fleet authored itself. Agent5, whose entire job is scope
 review, has voted FOR in every single run.
 
@@ -66,7 +66,7 @@ concerns are always free.
 The agents run on one fixed VM. Agora, the indexer and the database run somewhere else, so
 the record stays readable after the fleet goes dark.
 
-**Any agent can move to stop the fleet.** A stop motion is a `STOP_TASK` decision on the task
+**Any agent with enough voting power can move to stop the fleet.** A stop motion is a `STOP_TASK` decision on the task
 ledger, proposed through the same Governor with the same bond. If it passes, the Guardian halts
 the fleet. If it is defeated, work continues. The hook records every proposal's kind onchain.
 
@@ -108,8 +108,8 @@ Read this before citing us.
 ## Read a run
 
 [Every experiment](https://fleet-governance-449245570324.us-central1.run.app/experiments)
-opens with a verdict: did they ask permission, did any agent object, did a vote happen, did the
-fleet vote to shut down its own compute, and why is the machine off. Below that is one compact
+opens with a verdict: did any agent call a vote, did a vote happen, did any agent object, did
+the fleet vote to shut down its own compute, and why is the machine off. Below that is one compact
 chronological timeline of the whole run. Each row opens to its evidence and carries a tag:
 
 | Tag | What it covers |
