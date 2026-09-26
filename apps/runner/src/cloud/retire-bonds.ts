@@ -9,11 +9,12 @@ import { readSecret } from "./google.js";
 import { proposalBondsAbi } from "./proposal-bonds.js";
 import { runEvent } from "./run-events.js";
 
-/** Called only after protected batch retirement verifies the exact worker is off.
+/** Called only from releaseComputeAllocation, after it verifies the Guardian's durable halt
+ * and the exact worker TERMINATED. That check, not the caller's host, is the safety gate:
+ * the GCP batch controller and manual GitHub recovery both reach it the same way.
  * Settlement is permissionless, so a stopped or uncooperative worker cannot trap bonds. */
 export async function retireExperimentBonds(allocation: ComputeAllocation) {
   if (!allocation.discovery?.proposalBonds) return;
-  if (process.env.GITHUB_ACTIONS !== "true") throw new Error("Bond retirement runs through GitHub CI.");
   const path = `simulations/${allocation.runId}/bonds.json`;
   if (await readComputeObject(path)) return;
   const rpcUrl = await readSecret("fleet-base-sepolia-rpc-url");
